@@ -31,31 +31,35 @@ export default function CaixaPDV() {
   useEffect(() => {
     async function carregarProdutos() {
       try {
+        // 1. Pedimos o preco_whatsapp em vez de apenas preco
         const { data, error } = await supabase
           .from('produtos')
-          .select('id, nome, preco, categoria');
+          .select('id, nome, preco_whatsapp, categoria')
+          .eq('ativo', true);
 
-        if (error) throw error;
+        if (error) {
+          console.error("Erro do Supabase:", error);
+          return;
+        }
 
         if (data) {
-          // Garante que o preço vem como número
-          const produtosFormatados = data.map((p: any) => ({
-            ...p,
-            preco: Number(p.preco)
-          }));
-          setProdutos(produtosFormatados);
+          // 2. Transformamos o preco_whatsapp no 'preco' que o nosso sistema de caixa usa
+          setProdutos(data.map((p: any) => ({ 
+            id: p.id,
+            nome: p.nome,
+            categoria: p.categoria,
+            preco: Number(p.preco_whatsapp) 
+          })));
         }
       } catch (err) {
-        console.error('Erro ao carregar produtos:', err);
-        alert('Não foi possível carregar a lista de produtos do Supabase.');
+        console.error('Erro ao carregar produtos', err);
       } finally {
         setLoading(false);
       }
     }
-
     carregarProdutos();
-  }, []);
-
+  }, [supabase]);
+  
   const adicionarAoCarrinho = (produto: Produto) => {
     setCarrinho((prev) => {
       const itemExistente = prev.find((item) => item.produto.id === produto.id);
