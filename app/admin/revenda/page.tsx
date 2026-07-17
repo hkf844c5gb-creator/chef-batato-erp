@@ -88,9 +88,10 @@ export default function GestaoRevendaDesktopCompleta() {
       if (revs) setRevendedores(revs);
 
       const { data: prods } = await supabase.from('produtos').select('id, nome, preco_cardapio, preco_revenda, categoria').eq('ativo', true);
+      
       const listaBrownies = (prods || [])
-        .filter(p => p.categoria?.toLowerCase() === 'brownie' || p.nome.toLowerCase().includes('brownie'))
-        .map(p => ({ 
+        .filter((p: any) => p.categoria?.toLowerCase() === 'brownie' || p.nome.toLowerCase().includes('brownie'))
+        .map((p: any) => ({ 
           id: p.id, 
           nome: p.nome, 
           preco_cardapio: Number(p.preco_cardapio),
