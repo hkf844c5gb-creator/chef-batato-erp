@@ -1,98 +1,93 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
+  // Estado que controla se o menu está aberto ou fechado
+  const [aberto, setAberto] = useState(false);
+  
+  // Deteta em que página estamos para "acender" o botão certo no menu
+  const pathname = usePathname(); 
 
   const menuItems = [
-    { nome: 'Dashboard', rota: '/admin/dashboard', icone: '📊' },
-    { nome: 'Frente de Caixa', rota: '/admin/pdv', icone: '🛒' },
-    { nome: 'Estafetas', rota: '/admin/estafetas', icone: '🛵' },
-    { nome: 'Despesas', rota: '/admin/despesas', icone: '📉' },
-    { nome: 'Auditoria IA', rota: '/admin/conciliacao', icone: '🤖' },
+    { href: '/admin/dashboard', icon: '📊', label: 'Dashboard' },
+    { href: '/admin/pdv', icon: '💻', label: 'Caixa (PDV)' },
+    { href: '/admin/produtos', icon: '🍟', label: 'Produtos' },
+    { href: '/admin/combos', icon: '🎁', label: 'Combos' },
+    { href: '/admin/despesas', icon: '📉', label: 'Despesas' },
+    { href: '/admin/estafetas', icon: '🛵', label: 'Estafetas' },
+    { href: '/admin/revenda', icon: '🤝', label: 'Revenda' },
   ];
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white font-sans flex flex-col md:flex-row selection:bg-orange-500/30">
+    <div className="flex h-screen bg-zinc-950 text-white font-sans overflow-hidden">
       
-      {/* MENU DESKTOP (Lateral) */}
-      <aside className="hidden md:flex w-64 flex-col bg-zinc-950 border-r border-zinc-800/80 sticky top-0 h-screen z-50">
-        <div className="p-6 border-b border-zinc-800/80 flex items-center gap-3">
-          <div className="w-10 h-10 bg-gradient-to-br from-orange-500 to-red-600 rounded-xl flex items-center justify-center text-xl shadow-lg shadow-orange-900/20">
-            🥔
-          </div>
-          <div>
-            <h1 className="font-black text-white text-lg tracking-tight leading-none">Chef Batatô</h1>
-            <span className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest">Painel de Gestão</span>
-          </div>
+      {/* MENU LATERAL FIXO */}
+      <aside 
+        className={`bg-zinc-900 border-r border-zinc-800 transition-all duration-300 relative flex flex-col z-40 ${
+          aberto ? 'w-64' : 'w-20'
+        }`}
+      >
+        {/* Botão da Setinha para abrir/fechar */}
+        <button
+          onClick={() => setAberto(!aberto)}
+          className="absolute -right-3 top-8 bg-orange-600 hover:bg-orange-500 text-white w-6 h-6 rounded-full flex items-center justify-center border-2 border-zinc-950 shadow-lg z-50 text-[10px]"
+        >
+          {aberto ? '◀' : '▶'}
+        </button>
+
+        {/* Cabeçalho do Menu (Logo) */}
+        <div className="p-4 pt-6 flex items-center gap-3 border-b border-zinc-800/50 mb-4 h-20 overflow-hidden">
+          <span className="text-3xl min-w-[30px] flex justify-center">🥔</span>
+          {aberto && (
+            <div className="whitespace-nowrap animate-fade-in">
+              <h1 className="font-bold text-orange-500 leading-tight">Chef Batatô</h1>
+              <p className="text-[9px] text-zinc-500 uppercase tracking-widest">Backoffice</p>
+            </div>
+          )}
         </div>
 
-        <nav className="flex-1 p-4 space-y-2 overflow-y-auto no-scrollbar">
+        {/* Links do Menu */}
+        <nav className="flex-1 overflow-y-auto flex flex-col gap-2 px-3 overflow-x-hidden">
           {menuItems.map((item) => {
-            const isAtivo = pathname === item.rota;
+            const isAtivo = pathname === item.href || pathname?.startsWith(item.href + '/');
+            
             return (
               <Link 
-                key={item.rota} 
-                href={item.rota}
-                className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
+                key={item.href} 
+                href={item.href}
+                className={`flex items-center gap-3 px-3 py-3 rounded-xl transition-all whitespace-nowrap ${
                   isAtivo 
-                    ? 'bg-zinc-900 border border-zinc-800 text-white font-black shadow-lg' 
-                    : 'text-zinc-400 hover:text-white hover:bg-zinc-900/50 font-bold'
+                    ? 'bg-orange-600/10 border border-orange-500/20 text-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.1)]' 
+                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 border border-transparent'
                 }`}
               >
-                <span className="text-xl">{item.icone}</span>
-                <span className="text-sm">{item.nome}</span>
-                {isAtivo && <span className="ml-auto w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse"></span>}
+                <span className="text-xl min-w-[24px] flex justify-center">{item.icon}</span>
+                {aberto && <span className={`text-sm transition-opacity duration-300 ${isAtivo ? 'font-bold' : 'font-medium'}`}>{item.label}</span>}
               </Link>
             );
           })}
         </nav>
 
-        <div className="p-6 border-t border-zinc-800/80">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-xs font-black">
-              R
-            </div>
-            <div>
-              <span className="block text-xs font-black text-white">Rafael</span>
-              <span className="block text-[9px] text-green-400 font-bold uppercase tracking-widest">Online</span>
-            </div>
-          </div>
+        {/* Rodapé do Menu (Botão de Sair) */}
+        <div className="p-4 border-t border-zinc-800 overflow-hidden">
+          <Link 
+            href="/" 
+            className="flex items-center gap-3 px-3 py-3 text-zinc-500 hover:text-red-400 hover:bg-red-950/30 rounded-xl transition-all whitespace-nowrap"
+          >
+            <span className="text-xl min-w-[24px] flex justify-center">🚪</span>
+            {aberto && <span className="text-sm font-medium">Sair do Sistema</span>}
+          </Link>
         </div>
       </aside>
 
-      {/* CONTEÚDO PRINCIPAL (Onde as páginas vão ser injetadas) */}
-      <div className="flex-1 flex flex-col min-w-0 h-screen overflow-y-auto no-scrollbar">
+      {/* ÁREA DO CONTEÚDO (Onde o PDV e as outras páginas vão aparecer) */}
+      <main className="flex-1 overflow-auto bg-zinc-950">
         {children}
-      </div>
-
-      {/* MENU MOBILE (Barra Inferior) */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-zinc-950/90 backdrop-blur-xl border-t border-zinc-800/80 z-50 pb-safe">
-        <div className="flex justify-around items-center p-2">
-          {menuItems.map((item) => {
-            const isAtivo = pathname === item.rota;
-            return (
-              <Link 
-                key={item.rota} 
-                href={item.rota}
-                className={`flex flex-col items-center justify-center p-2 rounded-xl w-16 transition-all ${
-                  isAtivo ? 'text-orange-400' : 'text-zinc-500 hover:text-zinc-300'
-                }`}
-              >
-                <span className={`text-2xl mb-1 ${isAtivo ? 'scale-110 transition-transform' : ''}`}>
-                  {item.icone}
-                </span>
-                <span className="text-[8px] font-black uppercase tracking-widest text-center truncate w-full">
-                  {item.nome}
-                </span>
-              </Link>
-            );
-          })}
-        </div>
-      </nav>
-
+      </main>
+      
     </div>
   );
 }
