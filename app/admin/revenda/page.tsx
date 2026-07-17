@@ -87,15 +87,15 @@ export default function GestaoRevendaDesktopCompleta() {
       const { data: revs } = await supabase.from('revendedores').select('*');
       if (revs) setRevendedores(revs);
 
-      const { data: prods } = await supabase.from('produtos').select('id, nome, preco_cardapio, categoria').eq('ativo', true);
+      const { data: prods } = await supabase.from('produtos').select('id, nome, preco_cardapio, preco_revenda, categoria').eq('ativo', true);
       const listaBrownies = (prods || [])
         .filter(p => p.categoria?.toLowerCase() === 'brownie' || p.nome.toLowerCase().includes('brownie'))
         .map(p => ({ 
-  id: p.id, 
-  nome: p.nome, 
-  preco_cardapio: Number(p.preco_cardapio),
-  preco_revenda: Number(p.preco_revenda || 0)
-}));
+          id: p.id, 
+          nome: p.nome, 
+          preco_cardapio: Number(p.preco_cardapio),
+          preco_revenda: Number(p.preco_revenda || 0)
+        }));
 
       const { data: lotes } = await supabase.from('lotes_producao').select('id, codigo_lote, quantidade_disponivel, data_validade, produtos(nome)').gt('quantidade_disponivel', 0).order('data_validade', { ascending: true });
       if (lotes) setLotesDisponiveis(lotes as any);
