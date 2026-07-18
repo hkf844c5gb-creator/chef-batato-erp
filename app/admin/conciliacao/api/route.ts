@@ -21,10 +21,33 @@ export async function POST(req: Request) {
       throw new Error("Chave de API do Gemini não configurada no servidor.");
     }
 
-    // 1. CHAMA O MODELO GEMINI (GRATUITO E RÁPIDO)
+    // 🕵️‍♂️ MÓDULO DETETIVE: Descobrir o que a Google permite nesta chave!
+    const checkModels = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${geminiKey}`);
+    const dataModels = await checkModels.json();
+    
+    if (dataModels.error) {
+      console.error("🔥 ERRO NA CHAVE DA GOOGLE:", dataModels.error);
+      throw new Error(`Bloqueio da Google: ${dataModels.error.message}`);
+    }
+
+    // Lista todos os modelos disponíveis e guarda no terminal para nós vermos
+    const modelosPermitidos = dataModels.models?.map((m: any) => m.name) || [];
+    console.log("✅ MODELOS PERMITIDOS NA SUA CONTA:", modelosPermitidos);
+
+    // Escolhe automaticamente o melhor modelo visual que a sua conta tiver!
+    let modeloCorreto = "gemini-1.5-flash"; 
+    
+    if (modelosPermitidos.includes("models/gemini-1.5-flash")) modeloCorreto = "gemini-1.5-flash";
+    else if (modelosPermitidos.includes("models/gemini-1.5-flash-latest")) modeloCorreto = "gemini-1.5-flash-latest";
+    else if (modelosPermitidos.includes("models/gemini-1.5-pro")) modeloCorreto = "gemini-1.5-pro";
+    else if (modelosPermitidos.includes("models/gemini-1.0-pro-vision-latest")) modeloCorreto = "gemini-1.0-pro-vision-latest";
+    else if (modelosPermitidos.includes("models/gemini-pro-vision")) modeloCorreto = "gemini-pro-vision";
+
+    console.log("🚀 A ARRANCAR COM O MODELO:", modeloCorreto);
+
+    // 1. CHAMA A INTELIGÊNCIA ARTIFICIAL
     const genAI = new GoogleGenerativeAI(geminiKey);
-    // Correção do nome do modelo adicionando o -latest
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+    const model = genAI.getGenerativeModel({ model: modeloCorreto });
 
     const promptContexto = `
       És um auditor financeiro. Analisa este documento (tipo: ${tipoArquivo}).
@@ -53,7 +76,7 @@ export async function POST(req: Request) {
 
     // 2. CRUZAMENTO DE DADOS COM O SUPABASE (CONCILIAÇÃO)
     const divergencias: any[] = [];
-    const resumo: any = { status: 'Auditado via Gemini', dadosExtraidos };
+    const resumo: any = { status: `Auditado via ${modeloCorreto}`, dadosExtraidos };
 
     if (tipoArquivo === 'Fatura') {
       const { data: despesaExistente } = await supabase
@@ -86,6 +109,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ sucesso: true, sessao });
 
   } catch (error: unknown) {
+    console.error("🔥 ERRO EXATO DA API:", error);
     const erroMsg = error instanceof Error ? error.message : JSON.stringify(error);
     return NextResponse.json({ error: erroMsg }, { status: 500 });
   }
