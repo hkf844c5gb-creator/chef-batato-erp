@@ -12,9 +12,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     { href: '/admin/pdv', icon: '💻', label: 'Caixa (PDV)' },
     { href: '/admin/produtos', icon: '🍟', label: 'Produtos' },
     { href: '/admin/combos', icon: '🎁', label: 'Combos' },
+    { href: '/admin/producao', icon: '🧑‍🍳', label: 'Produção' },
     { href: '/admin/despesas', icon: '📉', label: 'Despesas' },
     { href: '/admin/estafetas', icon: '🛵', label: 'Estafetas' },
     { href: '/admin/revenda', icon: '🤝', label: 'Revenda' },
+    { href: '/admin/relatorios', icon: '📑', label: 'Relatórios' },
+    { href: '/admin/conciliacao', icon: '📋', label: 'Conciliação' },
   ];
 
   return (
