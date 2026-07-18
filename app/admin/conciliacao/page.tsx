@@ -84,13 +84,14 @@ export default function ConciliacaoPage() {
     }
   };
 
-  // 3. PROCESSAR E ANEXAR DOCUMENTO
+ // 3. PROCESSAR E ANEXAR DOCUMENTO
   const iniciarAuditoria = async () => {
     if (!file) return alert('Por favor, anexe um ficheiro.');
     setProcessando(true);
 
     try {
       const payload = {
+        fileBase64: "simulacao_base64", // <-- Adicionámos isto de volta para a API não reclamar!
         fileName: file.name,
         fileType: file.type,
         tipoArquivo: categoria,
@@ -102,6 +103,7 @@ export default function ConciliacaoPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
       });
+
 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Erro na auditoria');
