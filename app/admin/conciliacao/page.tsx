@@ -17,6 +17,8 @@ export default function ConciliacaoPage() {
   const [loading, setLoading] = useState(true);
   const [processando, setProcessando] = useState(false);
 
+  
+
   // Estados do Formulário
   const [file, setFile] = useState<File | null>(null);
   const [categoria, setCategoria] = useState('Fatura');
