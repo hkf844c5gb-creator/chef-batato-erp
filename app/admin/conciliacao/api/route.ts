@@ -15,16 +15,16 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Dados insuficientes.' }, { status: 400 });
     }
 
-    // Agora o sistema procura a chave gratuita do Google
     const geminiKey = process.env.GEMINI_API_KEY;
     
     if (!geminiKey) {
       throw new Error("Chave de API do Gemini não configurada no servidor.");
     }
 
-    // 1. CHAMA O MODELO GEMINI 1.5 FLASH (GRATUITO E RÁPIDO)
+    // 1. CHAMA O MODELO GEMINI (GRATUITO E RÁPIDO)
     const genAI = new GoogleGenerativeAI(geminiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    // Correção do nome do modelo adicionando o -latest
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
 
     const promptContexto = `
       És um auditor financeiro. Analisa este documento (tipo: ${tipoArquivo}).
@@ -33,7 +33,6 @@ export async function POST(req: Request) {
       Se for Extrato: { "movimentos": [{ "data": "YYYY-MM-DD", "descricao": string, "valor": number, "tipo": "entrada" | "saida" }] }
     `;
 
-    // Limpar o formato Base64 para o Google conseguir ler corretamente
     const base64Data = fileBase64.includes(',') ? fileBase64.split(',')[1] : fileBase64;
     const mimeType = fileType || (fileBase64.includes('pdf') ? 'application/pdf' : 'image/jpeg');
 
@@ -49,13 +48,12 @@ export async function POST(req: Request) {
     const result = await model.generateContent([promptContexto, ...imageParts]);
     const responseText = result.response.text();
     
-    // Garantir que recebemos um JSON limpo
     const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
     const dadosExtraidos = JSON.parse(cleanJson);
 
     // 2. CRUZAMENTO DE DADOS COM O SUPABASE (CONCILIAÇÃO)
     const divergencias: any[] = [];
-    const resumo: any = { status: 'Auditado via Gemini 1.5 Flash', dadosExtraidos };
+    const resumo: any = { status: 'Auditado via Gemini', dadosExtraidos };
 
     if (tipoArquivo === 'Fatura') {
       const { data: despesaExistente } = await supabase
