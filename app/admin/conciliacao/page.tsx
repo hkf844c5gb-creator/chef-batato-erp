@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createBrowserClient } from '@supabase/ssr';
+import { createClient } from '@supabase/supabase-js';
 
 interface SessaoAuditoria {
   id: number;
@@ -12,12 +12,16 @@ interface SessaoAuditoria {
   divergencias: any[];
 }
 
+// Usamos o supabase-js normal para garantir que a Vercel compila sem erros de pacotes em falta
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+);
+
 export default function ConciliacaoPage() {
   const [historico, setHistorico] = useState<SessaoAuditoria[]>([]);
   const [loading, setLoading] = useState(true);
   const [processando, setProcessando] = useState(false);
-
-
 
   // Estados do Formulário
   const [file, setFile] = useState<File | null>(null);
@@ -28,10 +32,8 @@ export default function ConciliacaoPage() {
   });
   const [autoDetectado, setAutoDetectado] = useState(false);
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  // NOVO: Filtro de Mês para o Histórico
+  const [filtroMes, setFiltroMes] = useState('');
 
   const categoriasDisponiveis = [
     { id: 'Extrato', label: '🏦 Extrato Bancário' },
@@ -40,13 +42,21 @@ export default function ConciliacaoPage() {
     { id: 'Palmbites', label: '🌴 Extrato Palmbites' }
   ];
 
-  // 1. CARREGAR HISTÓRICO
+  // 1. CARREGAR HISTÓRICO (AGORA COM FILTRO)
   async function carregarHistorico() {
     setLoading(true);
-    const { data, error } = await supabase
+    
+    let query = supabase
       .from('auditoria_sessoes')
       .select('*')
       .order('created_at', { ascending: false });
+
+    // Se houver um mês selecionado no filtro, aplica-o à pesquisa
+    if (filtroMes) {
+      query = query.eq('periodo_ref', filtroMes);
+    }
+
+    const { data, error } = await query;
 
     if (!error && data) {
       setHistorico(data);
@@ -54,9 +64,10 @@ export default function ConciliacaoPage() {
     setLoading(false);
   }
 
+  // Recarrega a tabela sempre que o filtro de mês é alterado
   useEffect(() => {
     carregarHistorico();
-  }, []);
+  }, [filtroMes]);
 
   // 2. DETEÇÃO INTELIGENTE DO TIPO DE FICHEIRO
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -65,11 +76,11 @@ export default function ConciliacaoPage() {
       setFile(selecionado);
       
       const nomeLower = selecionado.name.toLowerCase();
-      let detectado = 'Fatura'; // Padrão
+      let detectado = 'Fatura'; 
       
       if (nomeLower.includes('glovo')) detectado = 'Glovo';
       else if (nomeLower.includes('palm') || nomeLower.includes('palmbites')) detectado = 'Palmbites';
-      else if (nomeLower.includes('extrato') || nomeLower.includes('banco') || nomeLower.includes('cgd') || nomeLower.includes('millennium')) detectado = 'Extrato';
+      else if (nomeLower.includes('extrato') || nomeLower.includes('banco') || nomeLower.includes('cgd')) detectado = 'Extrato';
       else if (nomeLower.includes('recibo') || nomeLower.includes('fatura') || nomeLower.includes('pagamento')) detectado = 'Fatura';
 
       setCategoria(detectado);
@@ -77,14 +88,12 @@ export default function ConciliacaoPage() {
     }
   };
 
-  // 3. INICIAR AUDITORIA (Envia para a API que corrigimos)
+  // 3. INICIAR AUDITORIA
   const iniciarAuditoria = async () => {
     if (!file) return alert('Por favor, anexe um ficheiro primeiro.');
     setProcessando(true);
 
     try {
-      // Aqui faríamos a conversão real do ficheiro para Base64. 
-      // Para o exemplo, vamos enviar uma simulação de payload.
       const payload = {
         fileBase64: "simulacao_base64",
         fileType: file.type,
@@ -114,7 +123,7 @@ export default function ConciliacaoPage() {
     }
   };
 
-  // 4. APAGAR REGISTO DO HISTÓRICO
+  // 4. APAGAR REGISTO
   const apagarSessao = async (id: number) => {
     if (!confirm('Tem a certeza que quer apagar este registo?')) return;
     
@@ -126,7 +135,7 @@ export default function ConciliacaoPage() {
     }
   };
 
-  // 5. ATUALIZAR CATEGORIA (Edição Rápida)
+  // 5. ATUALIZAR CATEGORIA
   const mudarCategoria = async (id: number, novaCategoria: string) => {
     const { error } = await supabase
       .from('auditoria_sessoes')
@@ -154,7 +163,6 @@ export default function ConciliacaoPage() {
           <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-2xl shadow-xl">
             <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider mb-4">Anexar Documento</h3>
             
-            {/* Input Ficheiro */}
             <div className="border-2 border-dashed border-zinc-700 hover:border-orange-500 bg-zinc-950 rounded-xl p-8 text-center transition-colors relative mb-4">
               <input 
                 type="file" 
@@ -173,7 +181,6 @@ export default function ConciliacaoPage() {
               )}
             </div>
 
-            {/* Mês Referência */}
             <div className="mb-4">
               <label className="block text-xs font-bold text-zinc-400 uppercase mb-2">Mês de Referência</label>
               <input 
@@ -184,7 +191,6 @@ export default function ConciliacaoPage() {
               />
             </div>
 
-            {/* Categoria */}
             <div className="mb-6">
               <label className="block text-xs font-bold text-zinc-400 uppercase mb-2 flex justify-between">
                 <span>Categoria</span>
@@ -209,39 +215,55 @@ export default function ConciliacaoPage() {
           </div>
         </div>
 
-        {/* COLUNA DIREITA: HISTÓRICO E RESULTADOS */}
+        {/* COLUNA DIREITA: HISTÓRICO COM FILTRO DE MÊS */}
         <div className="lg:col-span-2">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl shadow-xl flex flex-col h-full overflow-hidden">
-            <div className="p-5 border-b border-zinc-800 bg-zinc-900/50">
-              <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider">Histórico de Ficheiros Processados</h3>
+            
+            {/* CABEÇALHO COM O FILTRO */}
+            <div className="p-5 border-b border-zinc-800 bg-zinc-900/50 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+              <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider">Histórico Processado</h3>
+              
+              <div className="flex items-center gap-2 bg-zinc-950 p-2 rounded-lg border border-zinc-800">
+                <label className="text-[10px] text-zinc-400 font-bold uppercase">Filtrar Mês:</label>
+                <input 
+                  type="month" 
+                  value={filtroMes}
+                  onChange={(e) => setFiltroMes(e.target.value)}
+                  className="bg-transparent text-xs text-zinc-200 focus:outline-none cursor-pointer"
+                />
+                {filtroMes && (
+                  <button onClick={() => setFiltroMes('')} className="text-xs text-red-500 hover:text-red-400 font-bold ml-2" title="Limpar Filtro">
+                    ✕
+                  </button>
+                )}
+              </div>
             </div>
             
+            {/* LISTA DE HISTÓRICO */}
             <div className="p-5 flex-1 overflow-y-auto">
               {loading ? (
                 <div className="flex justify-center items-center h-32 text-zinc-500 animate-pulse">A carregar cofre de documentos...</div>
               ) : historico.length === 0 ? (
                 <div className="flex flex-col justify-center items-center h-48 text-zinc-600">
                   <span className="text-4xl mb-3">🗄️</span>
-                  <p className="text-sm">Nenhum documento auditado até ao momento.</p>
+                  <p className="text-sm">Nenhum documento encontrado para este período.</p>
                 </div>
               ) : (
                 <div className="space-y-4">
                   {historico.map((sessao) => (
                     <div key={sessao.id} className="bg-zinc-950 border border-zinc-800 p-4 rounded-xl flex flex-col sm:flex-row gap-4 justify-between items-start sm:items-center hover:border-zinc-700 transition-colors">
                       
-                      {/* Info do Documento */}
                       <div>
                         <div className="flex items-center gap-2 mb-1">
                           <span className="text-xs font-mono text-zinc-500 bg-zinc-900 px-2 py-0.5 rounded">ID: {sessao.id}</span>
-                          <span className="text-xs text-zinc-400 font-bold">{sessao.periodo_ref}</span>
+                          <span className="text-xs text-orange-400 font-bold bg-orange-900/20 px-2 py-0.5 rounded">{sessao.periodo_ref}</span>
                         </div>
-                        <h4 className="text-sm font-bold text-white flex items-center gap-2">
+                        <h4 className="text-sm font-bold text-white flex items-center gap-2 mt-2">
                           {sessao.tipo_arquivo === 'Glovo' ? '🛵 Extrato Glovo' : 
                            sessao.tipo_arquivo === 'Palmbites' ? '🌴 Extrato Palmbites' : 
                            sessao.tipo_arquivo === 'Extrato' ? '🏦 Extrato Bancário' : '🧾 Recibo / Fatura'}
                         </h4>
                         
-                        {/* Resumo Rápido */}
                         {sessao.divergencias && sessao.divergencias.length > 0 ? (
                           <p className="text-[11px] font-bold text-red-400 mt-2 flex items-center gap-1">
                             ⚠️ {sessao.divergencias.length} Divergência(s) Encontrada(s)
@@ -253,12 +275,11 @@ export default function ConciliacaoPage() {
                         )}
                       </div>
 
-                      {/* Ações (Editar Categoria / Apagar) */}
                       <div className="flex items-center gap-3 w-full sm:w-auto">
                         <select 
                           value={sessao.tipo_arquivo}
                           onChange={(e) => mudarCategoria(sessao.id, e.target.value)}
-                          className="bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-300 focus:border-orange-500 outline-none flex-1 sm:flex-none"
+                          className="bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-300 focus:border-orange-500 outline-none flex-1 sm:flex-none cursor-pointer"
                         >
                           {categoriasDisponiveis.map(c => <option key={c.id} value={c.id}>{c.label.split(' ')[1]} {c.label.split(' ')[2] || ''}</option>)}
                         </select>
@@ -284,5 +305,4 @@ export default function ConciliacaoPage() {
     </div>
   );
 }
-
 
