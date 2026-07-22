@@ -10,6 +10,7 @@ interface Despesa {
   valor: number;
   data_despesa: string;
   metodo_pagamento: string;
+  status: string; // <-- AQUI ESTÁ A NOSSA NOVA COLUNA MÁGICA
 }
 
 const categoriasDespesas = [
@@ -19,6 +20,8 @@ const categoriasDespesas = [
   'Estrutura & Fixos',
   'Marketing & Publicidade',
   'Devoluções & Reembolsos',
+  'Fatura Física',
+  'Extrato Bancário',
   'Outros'
 ];
 
@@ -32,7 +35,7 @@ export default function GestaoDespesas() {
   const [loading, setLoading] = useState(true);
   const [processando, setProcessando] = useState(false);
   const [modalAberto, setModalAberto] = useState(false);
-  const [mesFiltro, setMesFiltro] = useState(new Date().toISOString().slice(0, 7)); // Formato YYYY-MM
+  const [mesFiltro, setMesFiltro] = useState(new Date().toISOString().slice(0, 7)); 
 
   const [formDespesa, setFormDespesa] = useState<Despesa>({
     id: '',
@@ -40,7 +43,8 @@ export default function GestaoDespesas() {
     categoria: 'Ingredientes & Mercadoria',
     valor: 0,
     data_despesa: new Date().toISOString().split('T')[0],
-    metodo_pagamento: 'Cartão da Empresa'
+    metodo_pagamento: 'Cartão da Empresa',
+    status: 'Validado' // Adicionado estado padrão
   });
 
   async function carregarDespesas() {
@@ -63,12 +67,9 @@ export default function GestaoDespesas() {
   useEffect(() => { carregarDespesas(); }, []);
 
   // --- FILTROS E MATEMÁTICA ---
-  // Filtra as despesas para o mês/ano selecionado no topo do ecrã
   const despesasFiltradas = despesasDB.filter(d => d.data_despesa.startsWith(mesFiltro));
-  
   const totalGastoMes = despesasFiltradas.reduce((sum, d) => sum + Number(d.valor), 0);
 
-  // Calcula qual foi a categoria onde se gastou mais este mês
   const gastosPorCategoria = despesasFiltradas.reduce((acc, d) => {
     acc[d.categoria] = (acc[d.categoria] || 0) + Number(d.valor);
     return acc;
@@ -84,13 +85,17 @@ export default function GestaoDespesas() {
       categoria: 'Ingredientes & Mercadoria',
       valor: 0,
       data_despesa: new Date().toISOString().split('T')[0],
-      metodo_pagamento: 'Cartão da Empresa'
+      metodo_pagamento: 'Cartão da Empresa',
+      status: 'Validado'
     });
     setModalAberto(true);
   };
 
   const abrirEditarDespesa = (d: Despesa) => {
-    setFormDespesa(d);
+    setFormDespesa({
+      ...d,
+      status: d.status || 'Validado' // Garante que tem um estado ao editar despesas antigas
+    });
     setModalAberto(true);
   };
 
@@ -105,7 +110,8 @@ export default function GestaoDespesas() {
         categoria: formDespesa.categoria,
         valor: formDespesa.valor,
         data_despesa: formDespesa.data_despesa,
-        metodo_pagamento: formDespesa.metodo_pagamento
+        metodo_pagamento: formDespesa.metodo_pagamento,
+        status: formDespesa.status // Guarda o novo estado
       };
 
       if (formDespesa.id) {
@@ -136,6 +142,21 @@ export default function GestaoDespesas() {
     } catch (err) { alert("Erro ao excluir."); }
   };
 
+  // HELPER PARA CORES DOS ESTADOS
+  const renderizarStatus = (status: string) => {
+    if (status === 'Validado') {
+      return <span className="bg-green-500/10 text-green-400 border border-green-500/20 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider">✓ Validado</span>;
+    }
+    if (status === 'Falta Fatura') {
+      return <span className="bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider">⚠️ Falta Fatura</span>;
+    }
+    if (status === 'Falta Pagamento') {
+      return <span className="bg-orange-500/10 text-orange-400 border border-orange-500/20 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider">⏳ Falta Pagamento</span>;
+    }
+    // Estado Padrão
+    return <span className="bg-zinc-800 text-zinc-400 border border-zinc-700 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider">{status || 'Pendente'}</span>;
+  };
+
   if (loading) return <div className="min-h-screen bg-zinc-950 flex items-center justify-center text-zinc-500 font-bold uppercase tracking-widest text-xs">A Carregar Cofre...</div>;
 
   return (
@@ -153,7 +174,7 @@ export default function GestaoDespesas() {
           </div>
         </div>
         <button onClick={abrirNovaDespesa} className="bg-white hover:bg-zinc-200 text-zinc-950 px-5 py-2.5 rounded-xl text-sm font-black shadow-lg transition-transform active:scale-95 flex items-center gap-2">
-          <span>+</span> Registar Fatura
+          <span>+</span> Registar Entrada Manual
         </button>
       </header>
 
@@ -203,14 +224,14 @@ export default function GestaoDespesas() {
                   <th className="p-5">Data</th>
                   <th className="p-5">Descrição / Fornecedor</th>
                   <th className="p-5">Categoria</th>
-                  <th className="p-5">Pagamento</th>
+                  <th className="p-5 text-center">Estado da Fatura</th>
                   <th className="p-5 text-right">Valor</th>
                   <th className="p-5 text-center">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-800/50 font-medium text-sm">
                 {despesasFiltradas.length === 0 ? (
-                  <tr><td colSpan={6} className="p-8 text-center text-zinc-600 italic">Nenhuma fatura registada neste mês.</td></tr>
+                  <tr><td colSpan={6} className="p-8 text-center text-zinc-600 italic">Nenhuma fatura ou despesa registada neste mês.</td></tr>
                 ) : (
                   despesasFiltradas.map(desp => (
                     <tr key={desp.id} className="hover:bg-zinc-800/30 transition-colors">
@@ -221,7 +242,12 @@ export default function GestaoDespesas() {
                           {desp.categoria}
                         </span>
                       </td>
-                      <td className="p-5 text-zinc-400 text-xs">{desp.metodo_pagamento}</td>
+                      
+                      {/* CÉLULA DO ESTADO (Renderiza a cor automaticamente) */}
+                      <td className="p-5 text-center">
+                        {renderizarStatus(desp.status)}
+                      </td>
+
                       <td className="p-5 text-right font-black font-mono text-red-400">{Number(desp.valor).toFixed(2)}€</td>
                       <td className="p-5 text-center flex items-center justify-center gap-4">
                         <button onClick={() => abrirEditarDespesa(desp)} className="text-zinc-500 hover:text-white transition-colors" title="Editar">✏️</button>
@@ -242,7 +268,7 @@ export default function GestaoDespesas() {
         <div className="fixed inset-0 bg-zinc-950/80 backdrop-blur-md z-[60] flex flex-col justify-end md:justify-center items-center p-0 md:p-4 animate-in fade-in duration-200">
           <div className="bg-zinc-900 w-full md:max-w-lg rounded-t-[32px] md:rounded-[32px] flex flex-col overflow-hidden shadow-[0_-20px_50px_rgba(0,0,0,0.5)] border border-zinc-800 animate-in slide-in-from-bottom-10 duration-300">
             <div className="p-6 pb-4 flex justify-between items-center border-b border-zinc-800/80">
-              <h2 className="text-xl font-black text-white">{formDespesa.id ? '✏️ Editar Fatura' : '🧾 Nova Fatura/Despesa'}</h2>
+              <h2 className="text-xl font-black text-white">{formDespesa.id ? '✏️ Editar Fatura' : '🧾 Lançar Entrada Manual'}</h2>
               <button onClick={() => setModalAberto(false)} className="w-8 h-8 bg-zinc-800 rounded-full flex items-center justify-center text-zinc-400 font-bold hover:text-white">✕</button>
             </div>
             
@@ -264,26 +290,27 @@ export default function GestaoDespesas() {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-[10px] text-zinc-400 font-black uppercase tracking-widest mb-2">Categoria</label>
-                <select value={formDespesa.categoria} onChange={e => setFormDespesa({...formDespesa, categoria: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3.5 text-sm text-white font-bold outline-none focus:border-red-500 cursor-pointer">
-                  {categoriasDespesas.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-[10px] text-zinc-400 font-black uppercase tracking-widest mb-2">Método Usado</label>
-                <select value={formDespesa.metodo_pagamento} onChange={e => setFormDespesa({...formDespesa, metodo_pagamento: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3.5 text-sm text-white font-bold outline-none focus:border-red-500 cursor-pointer">
-                  <option value="Cartão da Empresa">Cartão da Empresa</option>
-                  <option value="Numerário do Caixa">Numerário (Tirado da Caixa)</option>
-                  <option value="Transferência Bancária">Transferência Bancária</option>
-                  <option value="MB Way">MB Way</option>
-                </select>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] text-zinc-400 font-black uppercase tracking-widest mb-2">Categoria</label>
+                  <select value={formDespesa.categoria} onChange={e => setFormDespesa({...formDespesa, categoria: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3.5 text-sm text-white font-bold outline-none focus:border-red-500 cursor-pointer">
+                    {categoriasDespesas.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] text-zinc-400 font-black uppercase tracking-widest mb-2">Estado Atual</label>
+                  <select value={formDespesa.status} onChange={e => setFormDespesa({...formDespesa, status: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3.5 text-sm text-white font-bold outline-none focus:border-red-500 cursor-pointer">
+                    <option value="Validado">Validado</option>
+                    <option value="Falta Fatura">Falta Fatura</option>
+                    <option value="Falta Pagamento">Falta Pagamento</option>
+                    <option value="Pendente">Pendente</option>
+                  </select>
+                </div>
               </div>
               
               <div className="pt-4">
                 <button type="submit" disabled={processando} className="w-full bg-white hover:bg-zinc-200 text-zinc-950 py-4 rounded-2xl text-sm font-black shadow-lg transition-transform active:scale-95 uppercase tracking-wider disabled:opacity-50">
-                  {processando ? 'A Gravar...' : 'Confirmar Saída'}
+                  {processando ? 'A Gravar...' : 'Gravar Registo'}
                 </button>
               </div>
             </form>

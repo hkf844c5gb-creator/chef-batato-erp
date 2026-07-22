@@ -19,7 +19,7 @@ interface Lote {
   data_validade: string;
 }
 
-export default function CadastrosProducao() {
+export default function ControloProducaoBrownie() {
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -164,7 +164,7 @@ export default function CadastrosProducao() {
   };
 
   const apagarLote = async (id: string) => {
-    if (!confirm('Tem a certeza que deseja eliminar este registo? O estoque será recalculado.')) return;
+    if (!confirm('Tem a certeza que deseja eliminar este registo de brownie? O estoque será recalculado.')) return;
     try {
       await supabase.from('lotes_producao').delete().eq('id', id);
       carregarDados();
@@ -204,7 +204,7 @@ export default function CadastrosProducao() {
           data_validade: dataValidadeFinal
         }).eq('id', editandoLoteId);
         
-        alert('Registo atualizado com sucesso!');
+        alert('Registo de Brownie atualizado com sucesso!');
         setLotesExpandidos(prev => ({ ...prev, [codigoLote.trim().toUpperCase()]: true }));
         
       } else {
@@ -248,7 +248,7 @@ export default function CadastrosProducao() {
             }]);
           }
         }
-        alert(`Fornada(s) registada(s) sob o lote: ${codigoLote}`);
+        alert(`Fornada(s) de Brownie registada(s) sob o lote: ${codigoLote}`);
         setLotesExpandidos(prev => ({ ...prev, [codigoLote.toUpperCase()]: true }));
       }
       
@@ -262,11 +262,10 @@ export default function CadastrosProducao() {
   };
 
   // --- LÓGICA DO FILTRO MENSAL ---
-  // 1. Extrair todos os meses/anos únicos disponíveis nos lotes
   const mesesDisponiveis = Array.from(new Set(lotesAtivos.map(l => {
     if (!l.data_fabrico) return 'Histórico';
-    return l.data_fabrico.substring(0, 7); // Formato YYYY-MM
-  }))).sort((a, b) => b.localeCompare(a)); // Ordena do mais recente para o mais antigo
+    return l.data_fabrico.substring(0, 7);
+  }))).sort((a, b) => b.localeCompare(a));
 
   const formatarNomeMes = (yyyyMM: string) => {
     if (yyyyMM === 'Histórico') return 'Lotes Históricos / Legado';
@@ -276,7 +275,6 @@ export default function CadastrosProducao() {
     return `${nomeMes.charAt(0).toUpperCase() + nomeMes.slice(1)} de ${ano}`;
   };
 
-  // 2. Agrupar os Lotes
   let lotesAgrupados = Object.values(lotesAtivos.reduce((acc, lote) => {
     if (!acc[lote.codigo_lote]) {
       acc[lote.codigo_lote] = {
@@ -290,7 +288,6 @@ export default function CadastrosProducao() {
     return acc;
   }, {} as Record<string, { codigo_lote: string, data_fabrico: string, data_validade: string, itens: Lote[] }>));
 
-  // 3. Aplicar Filtro
   if (mesFiltro !== 'Todos') {
     lotesAgrupados = lotesAgrupados.filter(g => {
       if (mesFiltro === 'Histórico') return !g.data_fabrico || g.codigo_lote.includes('LEGADO');
@@ -306,25 +303,31 @@ export default function CadastrosProducao() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white font-sans flex flex-col pb-20 md:pb-0">
-      <header className="bg-zinc-900 border-b border-zinc-800 p-4 sticky top-0 z-10 flex justify-between items-center shadow-lg">
-        <div>
-          <h1 className="text-lg font-black text-orange-500 tracking-tight">🧑‍🍳 Cozinha: Produção</h1>
-          <p className="text-[10px] text-zinc-400 mt-0.5">Controlo de Estoque Central Mensal</p>
+      
+      <header className="sticky top-0 z-20 bg-zinc-950/80 backdrop-blur-xl border-b border-zinc-800/60 px-5 py-5 flex justify-between items-center shadow-lg">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-600 to-orange-900 flex items-center justify-center shadow-lg shadow-orange-900/40 text-2xl">
+            🍫
+          </div>
+          <div>
+            <h1 className="text-2xl font-black text-white tracking-tight">Estação dos Brownies</h1>
+            <p className="text-[11px] text-zinc-400 font-bold uppercase tracking-widest mt-0.5">Produção e Controlo de Validades</p>
+          </div>
         </div>
-        <button onClick={abrirModalNovaFornada} className="bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-md transition-all">
+        <button onClick={abrirModalNovaFornada} className="bg-orange-600 hover:bg-orange-700 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-md transition-all">
           + Registar Fornada
         </button>
       </header>
 
-      <main className="flex-1 p-4 overflow-y-auto space-y-4">
+      <main className="flex-1 w-full max-w-[1200px] mx-auto p-4 md:p-8 space-y-6">
         
         {/* BARRA DE FILTROS */}
-        <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 bg-zinc-900 p-3 rounded-2xl border border-zinc-800">
-          <h3 className="text-xs font-black uppercase text-zinc-500 tracking-wider">📦 Todos os Lotes</h3>
+        <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 bg-zinc-900 p-4 rounded-2xl border border-zinc-800">
+          <h3 className="text-xs font-black uppercase text-zinc-500 tracking-wider">📦 Filtrar Fornadas</h3>
           <select 
             value={mesFiltro} 
             onChange={(e) => setMesFiltro(e.target.value)}
-            className="bg-zinc-950 border border-zinc-700 text-zinc-200 text-xs px-3 py-2 rounded-lg font-bold outline-none cursor-pointer focus:border-orange-500"
+            className="bg-zinc-950 border border-zinc-700 text-zinc-200 text-sm px-4 py-2.5 rounded-xl font-bold outline-none cursor-pointer focus:border-orange-500"
           >
             <option value="Todos">📅 Ver Todos os Meses</option>
             {mesesDisponiveis.map(m => (
@@ -334,13 +337,13 @@ export default function CadastrosProducao() {
         </div>
         
         {loading ? (
-          <div className="text-center p-8 text-zinc-500 text-sm animate-pulse">A ler dados do estoque...</div>
+          <div className="text-center p-12 text-zinc-500 text-sm animate-pulse font-bold uppercase tracking-widest">A Derreter o Chocolate...</div>
         ) : lotesAgrupados.length === 0 ? (
-          <div className="text-center p-8 text-zinc-500 text-xs bg-zinc-900/50 rounded-2xl border border-zinc-800 border-dashed">
-            Nenhum lote registado para o filtro selecionado.
+          <div className="text-center p-12 text-zinc-500 text-sm bg-zinc-900/50 rounded-3xl border border-zinc-800 border-dashed">
+            Nenhum lote de brownies registado para o filtro selecionado.
           </div>
         ) : (
-          <div className="flex flex-col gap-3">
+          <div className="flex flex-col gap-4">
             {lotesAgrupados.map(grupo => {
               const isHist = grupo.codigo_lote.includes('LEGADO') || grupo.codigo_lote.includes('HIST');
               const dataVal = new Date(grupo.data_validade);
@@ -349,56 +352,57 @@ export default function CadastrosProducao() {
               const estaCritico = diferencaDias <= 3 && diferencaDias >= 0 && !isHist;
               const isExpandido = lotesExpandidos[grupo.codigo_lote];
 
-              const totalProduzido = grupo.itens.reduce((sum, item) => sum + item.quantidade_produzida, 0);
               const totalDisponivel = grupo.itens.reduce((sum, item) => sum + item.quantidade_disponivel, 0);
 
               return (
-                <div key={grupo.codigo_lote} className={`rounded-2xl border shadow-sm flex flex-col transition-all overflow-hidden ${estaCritico ? 'border-red-500/40 bg-red-950/10' : (isHist ? 'border-zinc-800 bg-zinc-950/80 opacity-70' : 'border-zinc-800 bg-zinc-900')}`}>
+                <div key={grupo.codigo_lote} className={`rounded-[24px] border shadow-sm flex flex-col transition-all overflow-hidden ${estaCritico ? 'border-red-500/40 bg-red-950/10' : (isHist ? 'border-zinc-800 bg-zinc-950/80 opacity-70' : 'border-zinc-800 bg-zinc-900')}`}>
                   
                   <div 
                     onClick={() => toggleLoteExpandido(grupo.codigo_lote)}
-                    className="p-4 cursor-pointer hover:bg-zinc-800/50 transition-colors flex justify-between items-center select-none"
+                    className="p-5 cursor-pointer hover:bg-zinc-800/50 transition-colors flex justify-between items-center select-none"
                   >
                     <div>
-                      <div className="flex items-center gap-2">
-                        <h4 className={`font-black text-lg uppercase tracking-tight ${isHist ? 'text-zinc-400' : 'text-orange-500'}`}>{grupo.codigo_lote}</h4>
-                        <span className="text-[10px] bg-zinc-800 text-zinc-300 px-2 py-0.5 rounded-full font-bold">{totalDisponivel} un</span>
+                      <div className="flex items-center gap-3">
+                        <h4 className={`font-black text-xl uppercase tracking-tight ${isHist ? 'text-zinc-400' : 'text-orange-500'}`}>{grupo.codigo_lote}</h4>
+                        <span className="text-xs bg-zinc-800 text-zinc-300 px-3 py-1 rounded-full font-bold">{totalDisponivel} un</span>
                       </div>
-                      <div className="text-[11px] text-zinc-400 mt-1 flex gap-3">
-                        <span><b className="text-zinc-500">Fab:</b> {grupo.data_fabrico ? new Date(grupo.data_fabrico).toLocaleDateString('pt-PT') : 'Histórico'}</span>
-                        {!isHist && <span className={estaCritico ? 'text-red-400 font-bold' : ''}><b className="text-zinc-500 font-normal">Val:</b> {grupo.data_validade ? new Date(grupo.data_validade).toLocaleDateString('pt-PT') : '-'}</span>}
+                      <div className="text-xs text-zinc-400 mt-2 flex gap-4">
+                        <span><b className="text-zinc-500">Fabricado a:</b> {grupo.data_fabrico ? new Date(grupo.data_fabrico).toLocaleDateString('pt-PT') : 'Histórico'}</span>
+                        {!isHist && <span className={estaCritico ? 'text-red-400 font-bold' : ''}><b className="text-zinc-500 font-normal">Validade:</b> {grupo.data_validade ? new Date(grupo.data_validade).toLocaleDateString('pt-PT') : '-'}</span>}
                       </div>
                     </div>
-                    <div className="flex flex-col items-end gap-1">
-                       {estaCritico && <span className="text-[9px] font-black uppercase text-red-500 animate-pulse bg-red-950/50 px-2 py-0.5 rounded border border-red-900">Crítico ({diferencaDias}d)</span>}
-                       <span className="text-zinc-600 text-xl font-light">{isExpandido ? '▴' : '▾'}</span>
+                    <div className="flex flex-col items-end gap-2">
+                       {estaCritico && <span className="text-[10px] font-black uppercase text-red-500 animate-pulse bg-red-950/50 px-3 py-1 rounded-lg border border-red-900">Crítico ({diferencaDias}d)</span>}
+                       <span className="text-zinc-600 text-2xl font-light bg-zinc-950 w-8 h-8 flex items-center justify-center rounded-full border border-zinc-800">{isExpandido ? '▴' : '▾'}</span>
                     </div>
                   </div>
 
                   {isExpandido && (
-                    <div className="bg-zinc-950 border-t border-zinc-800/80 p-3 flex flex-col gap-2">
-                      <div className="grid grid-cols-5 gap-1 text-[9px] text-zinc-500 font-black uppercase px-2 mb-1">
-                        <div className="col-span-2">Sabor</div>
-                        <div className="text-center" title="Produzido / Início">Início</div>
-                        <div className="text-center" title="Saídas / Vendido">Saída</div>
-                        <div className="text-center text-orange-500" title="Disponível / Atual">Atual</div>
+                    <div className="bg-zinc-950 border-t border-zinc-800/80 p-4 flex flex-col gap-3">
+                      <div className="grid grid-cols-5 gap-2 text-[10px] text-zinc-500 font-black uppercase px-3 mb-1">
+                        <div className="col-span-2">Tipo de Brownie</div>
+                        <div className="text-center" title="Produzido / Início">Fornada</div>
+                        <div className="text-center" title="Saídas / Vendido">Saídas</div>
+                        <div className="text-center text-orange-500" title="Disponível / Atual">Stock Atual</div>
                       </div>
 
                       {grupo.itens.map(item => {
                         const saida = item.quantidade_produzida - item.quantidade_disponivel;
                         
                         return (
-                          <div key={item.id} className="flex flex-col bg-zinc-900 border border-zinc-800 rounded-xl p-2 gap-2">
-                            <div className="grid grid-cols-5 gap-1 items-center px-1">
-                              <div className="col-span-2 font-bold text-zinc-200 text-xs truncate pr-2">{item.nome_produto}</div>
-                              <div className="text-center text-xs text-zinc-400 font-mono">{item.quantidade_produzida}</div>
-                              <div className="text-center text-xs text-red-400 font-mono">{saida}</div>
-                              <div className="text-center text-xs font-black text-orange-400 bg-orange-500/10 rounded py-0.5">{item.quantidade_disponivel}</div>
+                          <div key={item.id} className="flex flex-col bg-zinc-900 border border-zinc-800 rounded-2xl p-3 gap-2">
+                            <div className="grid grid-cols-5 gap-2 items-center px-1">
+                              <div className="col-span-2 font-bold text-zinc-200 text-sm truncate pr-2 flex items-center gap-2">
+                                <span>🍫</span> {item.nome_produto}
+                              </div>
+                              <div className="text-center text-sm text-zinc-400 font-mono">{item.quantidade_produzida}</div>
+                              <div className="text-center text-sm text-red-400 font-mono">{saida}</div>
+                              <div className="text-center text-sm font-black text-orange-400 bg-orange-500/10 rounded-lg py-1">{item.quantidade_disponivel}</div>
                             </div>
 
-                            <div className="flex justify-end gap-1.5 pt-2 border-t border-zinc-800/50">
-                              <button onClick={() => abrirEdicaoLote(item)} className="text-[10px] font-bold uppercase text-zinc-400 hover:text-white px-2 py-1 rounded transition-colors">Editar</button>
-                              <button onClick={() => apagarLote(item.id)} className="text-[10px] font-bold uppercase text-red-500/70 hover:text-red-400 px-2 py-1 rounded transition-colors">Apagar</button>
+                            <div className="flex justify-end gap-2 pt-3 border-t border-zinc-800/50 mt-1">
+                              <button onClick={() => abrirEdicaoLote(item)} className="text-[10px] font-bold uppercase text-zinc-400 hover:text-white px-3 py-1.5 rounded-lg border border-zinc-800 hover:bg-zinc-800 transition-colors">Editar</button>
+                              <button onClick={() => apagarLote(item.id)} className="text-[10px] font-bold uppercase text-red-500/70 hover:text-red-400 px-3 py-1.5 rounded-lg border border-red-900/30 hover:bg-red-950/30 transition-colors">Apagar</button>
                             </div>
                           </div>
                         );
@@ -414,78 +418,82 @@ export default function CadastrosProducao() {
 
       {/* 📱 MODAL ENTRADA / EDIÇÃO */}
       {modalAberto && (
-        <div className="fixed inset-0 bg-zinc-950 md:bg-black/80 z-50 flex flex-col md:justify-center md:items-center">
-          <div className="bg-zinc-950 md:bg-zinc-900 md:border md:border-zinc-800 w-full md:max-w-md h-full md:h-auto md:rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex justify-center items-center p-4">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-lg rounded-3xl shadow-2xl flex flex-col overflow-hidden max-h-[90vh]">
             
-            <div className="p-4 border-b border-zinc-800 bg-zinc-900 flex justify-between items-center">
+            <div className="p-6 border-b border-zinc-800 flex justify-between items-center bg-zinc-950/50">
               <div>
-                <h2 className="text-base font-black text-orange-500">{editandoLoteId ? '✏️ Alterar Registo' : '🥣 Registar Fornada'}</h2>
-                {!editandoLoteId && <span className="text-[10px] text-zinc-400 font-mono">Lote Alvo: {codigoLote}</span>}
+                <h2 className="text-xl font-black text-orange-500 flex items-center gap-2">
+                  {editandoLoteId ? '✏️ Alterar Lote' : '🍫 Registar Fornada'}
+                </h2>
+                {!editandoLoteId && <span className="text-[11px] text-zinc-400 font-mono mt-1 block">Lote Alvo: {codigoLote}</span>}
               </div>
-              <button onClick={() => setModalAberto(false)} className="bg-zinc-800 p-2 rounded-full w-8 h-8 flex items-center justify-center text-zinc-400 font-bold">✕</button>
+              <button onClick={() => setModalAberto(false)} className="text-zinc-500 hover:text-white w-8 h-8 flex items-center justify-center rounded-full transition-colors">✕</button>
             </div>
 
-            <form onSubmit={salvarFornada} className="flex-1 overflow-y-auto p-4 space-y-4">
+            <form onSubmit={salvarFornada} className="flex-1 overflow-y-auto p-6 space-y-6">
               
-              <div className="grid grid-cols-2 gap-3 bg-zinc-900 p-3 rounded-xl border border-zinc-800">
+              <div className="grid grid-cols-2 gap-4 bg-zinc-950 p-4 rounded-2xl border border-zinc-800">
                 <div>
-                  <label className="block text-[9px] font-bold text-zinc-500 uppercase">Data de Fabrico</label>
-                  <input required type="date" value={dataFabrico} onChange={e => setDataFabrico(e.target.value)} className="w-full bg-transparent text-sm text-zinc-200 mt-1 outline-none" />
+                  <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-2">Data de Fabrico</label>
+                  <input required type="date" value={dataFabrico} onChange={e => setDataFabrico(e.target.value)} className="w-full bg-zinc-900 text-sm text-white px-3 py-2.5 rounded-xl border border-zinc-800 outline-none focus:border-orange-500" />
                 </div>
-                <div className="border-l border-zinc-800 pl-3">
-                  <label className="block text-[9px] font-bold text-zinc-500 uppercase">Dias Validade</label>
-                  <input required type="number" min="1" value={diasValidade} onChange={e => setDiasValidade(parseInt(e.target.value) || 0)} className="w-full bg-transparent text-sm text-zinc-200 mt-1 outline-none" />
+                <div>
+                  <label className="block text-[10px] font-bold text-zinc-500 uppercase mb-2">Dias Validade</label>
+                  <input required type="number" min="1" value={diasValidade} onChange={e => setDiasValidade(parseInt(e.target.value) || 0)} className="w-full bg-zinc-900 text-sm text-white px-3 py-2.5 rounded-xl border border-zinc-800 outline-none focus:border-orange-500" />
                 </div>
                 {!editandoLoteId && (
-                  <div className="col-span-2 pt-2 border-t border-zinc-800/60 mt-1">
+                  <div className="col-span-2 pt-3 border-t border-zinc-800 mt-2">
                     {isLoteExistente ? (
-                      <span className="text-[10px] text-green-400 font-bold">✓ Lote diário ativo. Produção será acumulada.</span>
+                      <span className="text-[11px] text-green-400 font-bold">✓ Lote diário ativo. Produção será acumulada.</span>
                     ) : (
-                      <span className="text-[10px] text-orange-400 font-bold">✧ Vai ser gerado o novo Lote {codigoLote}.</span>
+                      <span className="text-[11px] text-orange-400 font-bold">✧ Vai ser gerado o novo Lote {codigoLote}.</span>
                     )}
                   </div>
                 )}
               </div>
 
               {!editandoLoteId ? (
-                <div className="space-y-2 mt-4">
-                  <h3 className="text-[10px] font-black text-zinc-500 uppercase tracking-widest mb-3">Produção por Sabor</h3>
+                <div className="space-y-3">
+                  <h3 className="text-xs font-black text-zinc-500 uppercase tracking-widest mb-4">Produção por Sabor</h3>
                   {brownies.map(b => (
-                    <div key={b.id} className="flex justify-between items-center bg-zinc-900 border border-zinc-800 p-3 rounded-xl">
-                      <span className="font-bold text-sm text-zinc-300">{b.nome}</span>
-                      <div className="flex items-center gap-2">
+                    <div key={b.id} className="flex justify-between items-center bg-zinc-950 border border-zinc-800 p-3 rounded-xl">
+                      <span className="font-bold text-sm text-zinc-300 pl-2">{b.nome}</span>
+                      <div className="flex items-center gap-3">
                         <span className="text-[10px] text-zinc-500 uppercase font-bold">Qtd:</span>
-                        <input type="number" min="0" inputMode="numeric" value={contagens[b.id] || ''} onChange={e => atualizarContagem(b.id, parseInt(e.target.value) || 0)} placeholder="0" className="w-16 bg-zinc-950 border border-zinc-700 rounded-lg py-1.5 text-center text-orange-400 font-bold outline-none focus:border-orange-500" />
+                        <input type="number" min="0" inputMode="numeric" value={contagens[b.id] || ''} onChange={e => atualizarContagem(b.id, parseInt(e.target.value) || 0)} placeholder="0" className="w-20 bg-zinc-900 border border-zinc-700 rounded-lg py-2 text-center text-orange-400 font-black outline-none focus:border-orange-500" />
                       </div>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div className="space-y-4 mt-4">
-                  <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-5">
+                  <div className="grid grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-[10px] font-bold text-zinc-400 mb-1.5 uppercase">Código do Lote</label>
-                      <input required type="text" value={codigoLote} onChange={e => setCodigoLote(e.target.value.toUpperCase())} className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-3 text-sm font-bold text-orange-400 uppercase outline-none focus:border-orange-500" />
+                      <label className="block text-[10px] font-bold text-zinc-400 mb-2 uppercase">Código do Lote</label>
+                      <input required type="text" value={codigoLote} onChange={e => setCodigoLote(e.target.value.toUpperCase())} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm font-bold text-orange-400 uppercase outline-none focus:border-orange-500" />
                     </div>
                     <div>
-                      <label className="block text-[10px] font-bold text-zinc-400 mb-1.5 uppercase">Produção (Início)</label>
-                      <input required type="number" min="1" value={quantidadeEdit} onChange={e => setQuantidadeEdit(parseInt(e.target.value) || 0)} className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-3 text-sm font-bold text-orange-400 outline-none focus:border-orange-500" />
+                      <label className="block text-[10px] font-bold text-zinc-400 mb-2 uppercase">Produção (Início)</label>
+                      <input required type="number" min="1" value={quantidadeEdit} onChange={e => setQuantidadeEdit(parseInt(e.target.value) || 0)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm font-bold text-orange-400 outline-none focus:border-orange-500" />
                     </div>
                   </div>
                   <div>
-                    <label className="block text-[10px] font-bold text-zinc-400 mb-1.5 uppercase">Sabor Selecionado</label>
-                    <select disabled value={produtoEditId} className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-3 text-sm text-white opacity-50">
+                    <label className="block text-[10px] font-bold text-zinc-400 mb-2 uppercase">Sabor Selecionado</label>
+                    <select disabled value={produtoEditId} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-white opacity-50 cursor-not-allowed">
                       {brownies.map(b => <option key={b.id} value={b.id}>{b.nome}</option>)}
                     </select>
                   </div>
-                  <span className="text-[9px] text-zinc-500 mt-1 block">Atenção: A quantidade Atual/Disponível será recalculada automaticamente mantendo os descontos das saídas e vendas já feitas.</span>
+                  <div className="bg-blue-950/20 border border-blue-900/30 p-3 rounded-xl mt-4">
+                     <span className="text-[10px] text-blue-400 font-medium leading-relaxed block">Atenção: A quantidade Atual/Disponível será recalculada automaticamente mantendo os descontos das saídas e vendas já feitas.</span>
+                  </div>
                 </div>
               )}
             </form>
 
-            <div className="p-4 border-t border-zinc-800 bg-zinc-900">
-              <button disabled={loading} type="submit" onClick={salvarFornada} className="w-full bg-orange-600 hover:bg-orange-700 disabled:opacity-50 py-4 rounded-xl text-sm font-black text-white shadow-lg">
-                {editandoLoteId ? '💾 Gravar Alterações' : '🚀 Registar Fornada no Estoque'}
+            <div className="p-5 border-t border-zinc-800 bg-zinc-950/80">
+              <button disabled={loading} type="submit" onClick={salvarFornada} className="w-full bg-orange-600 hover:bg-orange-500 disabled:opacity-50 py-4 rounded-xl text-sm font-black text-white shadow-[0_0_15px_rgba(234,88,12,0.3)] transition-all active:scale-95">
+                {editandoLoteId ? '💾 Guardar Alterações do Lote' : '🚀 Registar Fornada no Estoque'}
               </button>
             </div>
           </div>

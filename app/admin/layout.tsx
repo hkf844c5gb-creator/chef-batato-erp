@@ -9,13 +9,22 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   const menuItems = [
     { href: '/admin/dashboard', icon: '📊', label: 'Dashboard' },
-    { href: '/admin/pdv', icon: '💻', label: 'Caixa (PDV)' },
+    { href: '/admin/pdv', icon: '💻', label: 'Frente de Loja (PDV)' },
+    { href: '/admin/caixa', icon: '💶', label: 'Caixa / Movimentos' },
+    
+    // --- BOTÕES DE STOCK E RECEITAS ---
+    { href: '/admin/quadro-stock', icon: '📉', label: 'Quadro de Stock' },
+    { href: '/admin/receitas', icon: '📦', label: 'Despensa & Receitas' },
+    { href: '/admin/producao', icon: '🍳', label: 'Fábrica (Recheios)' },
+    { href: '/admin/producao-batata', icon: '🥔', label: 'Produção Batata' },
+    { href: '/admin/producao-brownie', icon: '🍫', label: 'Produção Brownie' },
+    // ----------------------------------------
+    
     { href: '/admin/produtos', icon: '🍟', label: 'Produtos' },
     { href: '/admin/combos', icon: '🎁', label: 'Combos' },
-    { href: '/admin/producao', icon: '🧑‍🍳', label: 'Produção' },
-    { href: '/admin/despesas', icon: '📉', label: 'Despesas' },
+    { href: '/admin/despesas', icon: '💳', label: 'Despesas' },
     { href: '/admin/estafetas', icon: '🛵', label: 'Estafetas' },
-    { href: '/admin/revenda', icon: '🤝', label: 'Revenda' },
+    { href: '/admin/revenda', icon: '🛒', label: 'Revenda' },
     { href: '/admin/relatorios', icon: '📑', label: 'Relatórios' },
     { href: '/admin/conciliacao', icon: '📋', label: 'Conciliação' },
   ];
@@ -36,23 +45,28 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </div>
 
         {/* Links do Menu */}
-        <nav className="flex-1 overflow-y-auto flex flex-col gap-2 px-3">
-          {menuItems.map((item) => {
+        <nav className="flex-1 overflow-y-auto flex flex-col gap-2 px-3 pb-4 custom-scrollbar">
+          {menuItems.map((item, index) => {
             const isAtivo = pathname === item.href || pathname?.startsWith(item.href + '/');
             
+            // Adiciona um pequeno separador visual antes dos Produtos (Índice 8 agora)
+            const addSeparator = index === 8; 
+            
             return (
-              <Link 
-                key={item.href} 
-                href={item.href}
-                className={`flex items-center gap-3 px-3 py-3 rounded-xl transition-all whitespace-nowrap ${
-                  isAtivo 
-                    ? 'bg-orange-600/10 border border-orange-500/20 text-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.1)]' 
-                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 border border-transparent'
-                }`}
-              >
-                <span className="text-xl min-w-[24px] flex justify-center">{item.icon}</span>
-                <span className={`text-sm ${isAtivo ? 'font-bold' : 'font-medium'}`}>{item.label}</span>
-              </Link>
+              <div key={item.href}>
+                {addSeparator && <div className="h-px bg-zinc-800/50 my-2 w-full"></div>}
+                <Link 
+                  href={item.href}
+                  className={`flex items-center gap-3 px-3 py-3 rounded-xl transition-all whitespace-nowrap ${
+                    isAtivo 
+                      ? 'bg-orange-600/10 border border-orange-500/20 text-orange-500 shadow-[0_0_10px_rgba(249,115,22,0.1)]' 
+                      : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 border border-transparent'
+                  }`}
+                >
+                  <span className="text-xl min-w-[24px] flex justify-center">{item.icon}</span>
+                  <span className={`text-sm ${isAtivo ? 'font-bold' : 'font-medium'}`}>{item.label}</span>
+                </Link>
+              </div>
             );
           })}
         </nav>
@@ -69,7 +83,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         </div>
       </aside>
 
-      {/* ÁREA DO CONTEÚDO (Onde o PDV e as outras páginas vão aparecer) */}
+      {/* ÁREA DO CONTEÚDO */}
       <main className="flex-1 overflow-auto bg-zinc-950 relative">
         {children}
       </main>

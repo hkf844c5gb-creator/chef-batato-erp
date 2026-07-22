@@ -13,7 +13,7 @@ interface ItemPedido {
 
 interface Pedido {
   id: string;
-  cliente: string;
+  cliente: string | null; // Adicionado null para segurança
   contacto_cliente: string;
   canal: 'Balcão' | 'WhatsApp' | 'Glovo' | 'Palmbites';
   forma_pagamento: string;
@@ -58,8 +58,9 @@ export default function RelatoriosFaturacao() {
   const [editTotal, setEditTotal] = useState(0);
   const [editPago, setEditPago] = useState(false);
 
-  // Função: Limpa "Pedido #339.0 (Histórico)" e devolve apenas "339"
-  const limparNomePedido = (nome: string) => {
+  // 🛡️ FUNÇÃO CORRIGIDA: Limpa "Pedido #339.0 (Histórico)" protegida contra null
+  const limparNomePedido = (nome: string | null | undefined) => {
+    if (!nome) return "S/ Nome"; // Se não houver nome, devolve isto sem bloquear
     const match = nome.match(/Pedido\s*#?(\d+)/i);
     if (match) return match[1]; 
     return nome;
@@ -130,7 +131,9 @@ export default function RelatoriosFaturacao() {
       const termo = termoBusca.toLowerCase();
       resultado = resultado.filter(p => {
         const nomeLimpo = limparNomePedido(p.cliente).toLowerCase();
-        return nomeLimpo.includes(termo) || p.cliente.toLowerCase().includes(termo);
+        // Protege contra null também aqui:
+        const nomeOriginal = p.cliente ? p.cliente.toLowerCase() : '';
+        return nomeLimpo.includes(termo) || nomeOriginal.includes(termo);
       });
     }
 
@@ -149,7 +152,7 @@ export default function RelatoriosFaturacao() {
   // FUNÇÕES DE MANUTENÇÃO
   const abrirModalEdicao = (pedido: Pedido) => {
     setPedidoSendoEditado(pedido);
-    setEditCliente(pedido.cliente); 
+    setEditCliente(pedido.cliente || ''); 
     setEditCanal(pedido.canal);
     setEditPagamento(pedido.forma_pagamento);
     setEditTotal(pedido.total_geral);
@@ -193,13 +196,14 @@ export default function RelatoriosFaturacao() {
   };
 
   // Métricas
-  const totalFaturado = pedidosFiltrados.reduce((acc, p) => acc + Number(p.total_geral), 0);
-  const totalRecebido = pedidosFiltrados.filter(p => p.pago).reduce((acc, p) => acc + Number(p.total_geral), 0);
-  const totalPendente = pedidosFiltrados.filter(p => !p.pago).reduce((acc, p) => acc + Number(p.total_geral), 0);
-  const totalTaxasEntrega = pedidosFiltrados.reduce((acc, p) => acc + Number(p.taxa_entrega), 0);
+  const totalFaturado = pedidosFiltrados.reduce((acc, p) => acc + Number(p.total_geral || 0), 0);
+  const totalRecebido = pedidosFiltrados.filter(p => p.pago).reduce((acc, p) => acc + Number(p.total_geral || 0), 0);
+  const totalPendente = pedidosFiltrados.filter(p => !p.pago).reduce((acc, p) => acc + Number(p.total_geral || 0), 0);
+  const totalTaxasEntrega = pedidosFiltrados.reduce((acc, p) => acc + Number(p.taxa_entrega || 0), 0);
 
   const faturamentoPorMetodo = pedidosFiltrados.reduce((acc: { [key: string]: number }, p) => {
-    acc[p.forma_pagamento] = (acc[p.forma_pagamento] || 0) + Number(p.total_geral);
+    const metodo = p.forma_pagamento || 'Sem Método';
+    acc[metodo] = (acc[metodo] || 0) + Number(p.total_geral || 0);
     return acc;
   }, {});
 
@@ -346,7 +350,7 @@ export default function RelatoriosFaturacao() {
                   const dataFormatada = new Date(p.criado_em).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short' });
                   const horaFormatada = new Date(p.criado_em).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
                   
-                  // Aplica a limpeza do nome para exibir apenas o numeral do pedido!
+                  // Aplica a limpeza do nome de forma segura
                   const nomeApresentacao = limparNomePedido(p.cliente);
 
                   return (
@@ -369,13 +373,13 @@ export default function RelatoriosFaturacao() {
                             <p className="text-[10px] text-zinc-400 font-mono mt-1 flex gap-2 items-center">
                               <span>{horaFormatada}</span>
                               <span className="w-1 h-1 bg-zinc-600 rounded-full"></span>
-                              <span className="uppercase text-blue-400 font-bold tracking-wider">{p.canal}</span>
+                              <span className="uppercase text-blue-400 font-bold tracking-wider">{p.canal || 'S/Canal'}</span>
                             </p>
                           </div>
                         </div>
 
                         <div className="flex flex-col items-end gap-1.5">
-                          <span className="font-black text-white font-mono text-lg">{p.total_geral.toFixed(2)}€</span>
+                          <span className="font-black text-white font-mono text-lg">{(p.total_geral || 0).toFixed(2)}€</span>
                           {p.pago ? (
                             <span className="bg-green-500/10 text-green-400 border border-green-500/20 text-[9px] px-2 py-0.5 rounded-md font-bold uppercase tracking-widest">Pago</span>
                           ) : (
@@ -393,7 +397,7 @@ export default function RelatoriosFaturacao() {
                               p.itens_pedido.map(item => (
                                 <div key={item.id} className="flex justify-between items-center text-xs">
                                   <span className="text-zinc-300 font-medium"><span className="text-zinc-500 mr-2">{item.quantidade}x</span> {item.nome_produto}</span>
-                                  <span className="text-zinc-500 font-mono">{(item.quantidade * item.preco_unitario).toFixed(2)}€</span>
+                                  <span className="text-zinc-500 font-mono">{((item.quantidade || 0) * (item.preco_unitario || 0)).toFixed(2)}€</span>
                                 </div>
                               ))
                             ) : (
@@ -402,10 +406,10 @@ export default function RelatoriosFaturacao() {
                           </div>
 
                           <div className="grid grid-cols-2 gap-2 text-[10px] text-zinc-400 font-mono bg-zinc-900/50 p-3 rounded-xl border border-zinc-800/50 mb-4">
-                            <div><span className="text-zinc-600">Pagamento:</span> <span className="text-zinc-200">{p.forma_pagamento}</span></div>
+                            <div><span className="text-zinc-600">Pagamento:</span> <span className="text-zinc-200">{p.forma_pagamento || 'N/A'}</span></div>
                             <div><span className="text-zinc-600">Estafeta:</span> <span className="text-zinc-200">{p.entregador || 'N/A'}</span></div>
-                            <div><span className="text-zinc-600">Taxa Ent.:</span> <span className="text-zinc-200">{p.taxa_entrega.toFixed(2)}€</span></div>
-                            <div><span className="text-zinc-600">Desconto:</span> <span className="text-red-400">{p.desconto.toFixed(2)}€</span></div>
+                            <div><span className="text-zinc-600">Taxa Ent.:</span> <span className="text-zinc-200">{(p.taxa_entrega || 0).toFixed(2)}€</span></div>
+                            <div><span className="text-zinc-600">Desconto:</span> <span className="text-red-400">{(p.desconto || 0).toFixed(2)}€</span></div>
                           </div>
 
                           <div className="flex justify-end gap-2 pt-1">

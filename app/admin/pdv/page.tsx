@@ -43,6 +43,7 @@ interface ItemCarrinho {
   detalhesCombo?: string[];
   precoOriginal?: number;
   precoAplicado: number;
+  itensBaseId?: string[]; 
 }
 
 type CategoriaFiltro = 'todos' | 'batatas' | 'adicionais' | 'sobremesas' | 'bebidas' | 'combos';
@@ -56,15 +57,18 @@ export default function CaixaPDV() {
   const [erroCaixa, setErroCaixa] = useState<string | null>(null);
   const [categoriaAtiva, setCategoriaAtiva] = useState<CategoriaFiltro>('todos');
 
-  // CABEÇALHO DO PEDIDO (Com data do pedido adicionada)
+  // CABEÇALHO DO PEDIDO
   const [cliente, setCliente] = useState('');
   const [contactoCliente, setContactoCliente] = useState('');
-  const [dataPedido, setDataPedido] = useState(() => new Date().toISOString().split('T')[0]); // Data Padrão: Hoje (AAAA-MM-DD)
+  const [dataPedido, setDataPedido] = useState(() => new Date().toISOString().split('T')[0]);
   const [canal, setCanal] = useState<'Balcão' | 'WhatsApp' | 'Glovo' | 'Palmbites'>('Balcão');
   const [formaPagamento, setFormaPagamento] = useState('Dinheiro');
   const [entregador, setEntregador] = useState('');
   const [taxaEntrega, setTaxaEntrega] = useState('0.00');
   const [descontoManual, setDescontoManual] = useState('0.00');
+  
+  // Controle de Botão
+  const [isProcessando, setIsProcessando] = useState(false);
 
   // MONTADOR DINÂMICO DE COMBOS
   const [mostrarModalCombo, setMostrarModalCombo] = useState(false);
@@ -173,11 +177,8 @@ export default function CaixaPDV() {
       setListaEstafetas(ests);
       
       if (ests.length > 0 && !entregador) {
-        // Se o canal inicial for Glovo, garante a pré-seleção correta
         if (canal === 'Glovo' && ests.some(e => e.nome === 'Estafeta Glovo')) {
           setEntregador('Estafeta Glovo');
-        } else {
-          setEntregador(ests[0].nome);
         }
       }
 
@@ -273,12 +274,14 @@ export default function CaixaPDV() {
     let somaPrecosOriginais = 0;
     let somaAcrescimos = 0;
     const itensComDetalhes: any[] = [];
+    const idsDosProdutosBase: string[] = []; // GUARDA OS IDs DOS ITENS DENTRO DO COMBO
 
     Object.values(selecoesCombo).forEach(selecoesGrupo => {
       selecoesGrupo.forEach(item => {
         const precoItem = getPrecoPorCanal(item.produto);
         somaPrecosOriginais += precoItem;
         somaAcrescimos += Number(item.acrescimo_preco);
+        idsDosProdutosBase.push(item.produto_id); // Guarda o ID para descontar o stock depois
         
         itensComDetalhes.push({
           id: item.produto_id,
@@ -357,11 +360,88 @@ export default function CaixaPDV() {
         quantidade: 1, isCombo: true, comboNome: comboSelecionado.nome, 
         detalhesCombo: detalhesFormatados, 
         precoOriginal: Number(precoSemDesconto.toFixed(2)), 
-        precoAplicado: Number(precoFinalAplicado.toFixed(2))
+        precoAplicado: Number(precoFinalAplicado.toFixed(2)),
+        itensBaseId: idsDosProdutosBase // Guarda para a ficha técnica
       }
     ]);
 
     setMostrarModalCombo(false);
+  };
+
+  // ⚡ FUNÇÃO MÁGICA DE DESCONTO DE STOCK E LOTES (FIFO) ⚡
+  const descontarStockAutomaticamente = async (itensDoCarrinho: ItemCarrinho[]) => {
+    try {
+      for (const item of itensDoCarrinho) {
+        
+        // Obter os IDs dos produtos (Simples ou base dos Combos)
+        const idsParaProcessar = item.isCombo && item.itensBaseId ? item.itensBaseId : [item.produto.id];
+
+        for (const produtoBaseId of idsParaProcessar) {
+          
+          // --- 1. DESCONTAR INSUMOS DA DESPENSA (Ex: Batata, Embalagens, etc) ---
+          const { data: ficha } = await supabase
+            .from('fichas_tecnicas')
+            .select('insumo_id, quantidade_necessaria')
+            .eq('produto_id', produtoBaseId);
+
+          if (ficha && ficha.length > 0) {
+            for (const ingrediente of ficha) {
+              const totalGasto = ingrediente.quantidade_necessaria * item.quantidade;
+              const { data: insumo } = await supabase.from('insumos').select('quantidade_atual').eq('id', ingrediente.insumo_id).single();
+
+              if (insumo) {
+                const novoStock = Number(insumo.quantidade_atual) - totalGasto;
+                await supabase.from('insumos').update({ quantidade_atual: novoStock }).eq('id', ingrediente.insumo_id);
+              }
+            }
+          }
+
+          // --- 2. DESCONTAR PRODUTOS PRONTOS DOS LOTES (Ex: Brownies) ---
+          // Procura Lotes deste produto que ainda tenham stock, ordenados por validade!
+          const { data: lotesAtivos } = await supabase
+            .from('lotes_producao')
+            .select('id, quantidade_disponivel')
+            .eq('produto_id', produtoBaseId)
+            .gt('quantidade_disponivel', 0)
+            .order('data_validade', { ascending: true }); // FIFO: O que caduca primeiro, sai primeiro!
+
+          if (lotesAtivos && lotesAtivos.length > 0) {
+            let quantidadeParaDescontar = item.quantidade;
+
+            for (const lote of lotesAtivos) {
+              if (quantidadeParaDescontar <= 0) break; // Já descontamos tudo o que o cliente pediu
+
+              const disponivelNoLote = Number(lote.quantidade_disponivel);
+              let descontoDesteLote = 0;
+
+              // Verifica se este lote tem quantidade suficiente
+              if (disponivelNoLote >= quantidadeParaDescontar) {
+                descontoDesteLote = quantidadeParaDescontar;
+                quantidadeParaDescontar = 0; // Acabou o que precisava de tirar
+              } else {
+                descontoDesteLote = disponivelNoLote; // Esvazia este lote
+                quantidadeParaDescontar -= disponivelNoLote; // Fica a faltar tirar o resto no próximo lote
+              }
+
+              const novoDisponivel = disponivelNoLote - descontoDesteLote;
+              
+              // Atualiza a quantidade do lote na base de dados
+              await supabase
+                .from('lotes_producao')
+                .update({ 
+                  quantidade_disponivel: novoDisponivel,
+                  quantidade_atual: novoDisponivel // Mantemos os campos em sincronia
+                })
+                .eq('id', lote.id);
+            }
+          }
+          
+        }
+      }
+      console.log("✅ Stock da Despensa e Lotes de Produção abatidos com sucesso!");
+    } catch (err) {
+      console.error("Erro ao descontar stock/lotes:", err);
+    }
   };
 
   const subtotalProdutos = carrinho.reduce((acc, item) => acc + item.precoAplicado * item.quantidade, 0);
@@ -371,32 +451,53 @@ export default function CaixaPDV() {
     if (carrinho.length === 0) return alert('O carrinho está vazio!');
     if (!cliente.trim()) return alert('Insira o nome do cliente!');
     
+    setIsProcessando(true);
     const estaPago = formaPagamento !== 'Caderninho';
 
-    // 🕒 MONTA A DATA RETROATIVA: Junta o dia escolhido com o horário do relógio atual
     const agora = new Date();
-    const tempoAtual = agora.toTimeString().split(' ')[0]; // Formato HH:MM:SS
+    const tempoAtual = agora.toTimeString().split(' ')[0]; 
     const dataHoraCriacaoCompleta = `${dataPedido}T${tempoAtual}`;
 
     try {
+      // 1. GERAR NÚMERO DE PEDIDO SEQUENCIAL
+      const { data: ultimoPedido, error: erroUltimo } = await supabase
+        .from('pedidos')
+        .select('numero_pedido')
+        .not('numero_pedido', 'is', null) 
+        .order('criado_em', { ascending: false })
+        .limit(1)
+        .single();
+
+      let novoNumeroStr = "001"; 
+      
+      if (ultimoPedido && ultimoPedido.numero_pedido) {
+          const ultimoNum = parseInt(ultimoPedido.numero_pedido, 10);
+          if (!isNaN(ultimoNum)) {
+              novoNumeroStr = String(ultimoNum + 1).padStart(3, '0');
+          }
+      }
+
+      // 2. GRAVAR O PEDIDO COM O NÚMERO E ESTAFETA
       const { data: pedidoGravado, error: erroPedido } = await supabase
         .from('pedidos')
         .insert([{ 
+          numero_pedido: novoNumeroStr, 
           cliente: cliente.trim(), 
           contacto_cliente: contactoCliente.trim(),
           canal: canal, 
           forma_pagamento: formaPagamento, 
-          entregador: entregador, 
+          entregador: entregador || null, 
           taxa_entrega: parseFloat(taxaEntrega), 
           desconto: parseFloat(descontoManual) || 0,
           total_geral: totalGeral,
           pago: estaPago,
-          criado_em: dataHoraCriacaoCompleta // Força a data escolhida no topo
+          criado_em: dataHoraCriacaoCompleta
         }])
         .select().single();
       
       if (erroPedido) throw erroPedido;
       
+      // 3. GRAVAR OS ITENS DO PEDIDO
       if (pedidoGravado) {
         const itensDB = carrinho.map(item => ({ 
           pedido_id: pedidoGravado.id, 
@@ -408,13 +509,25 @@ export default function CaixaPDV() {
         }));
         const { error: erroItens } = await supabase.from('itens_pedido').insert(itensDB);
         if (erroItens) throw erroItens;
+        
+        // 🔥 MAGIA DO STOCK ACONTECE AQUI! 🔥
+        await descontarStockAutomaticamente(carrinho);
       }
       
-      alert(`Pedido registado com sucesso!`);
-      setCarrinho([]); setCliente(''); setContactoCliente(''); setTaxaEntrega('0.00'); setDescontoManual('0.00');
-      setDataPedido(new Date().toISOString().split('T')[0]); // Reseta a data para hoje
+      alert(`Pedido #${novoNumeroStr} registado com sucesso!`);
+      
+      // RESET TOTAL DOS CAMPOS
+      setCarrinho([]); 
+      setCliente(''); 
+      setContactoCliente(''); 
+      setTaxaEntrega('0.00'); 
+      setDescontoManual('0.00');
+      setEntregador(canal === 'Glovo' ? 'Estafeta Glovo' : ''); 
+      setDataPedido(new Date().toISOString().split('T')[0]);
     } catch (err: any) { 
       alert(`Erro ao gravar pedido: ${err.message || JSON.stringify(err)}`); 
+    } finally {
+      setIsProcessando(false);
     }
   };
 
@@ -428,9 +541,6 @@ export default function CaixaPDV() {
   return (
     <div className="min-h-screen bg-zinc-950 text-white flex flex-col relative font-sans">
       
-      {/* ========================================== */}
-      {/* BARRA DE TOPO SIMPLIFICADA (O menu lateral cuida da navegação) */}
-      {/* ========================================== */}
       <div className="bg-zinc-900 border-b border-zinc-800 px-5 py-3 flex justify-end items-center">
         <div className="flex items-center gap-3">
           <span className="text-xl">🥔</span>
@@ -439,7 +549,6 @@ export default function CaixaPDV() {
           </span>
         </div>
       </div>
-      {/* ========================================== */}
 
       {erroCaixa && (
         <div className="m-6 bg-red-950/50 border border-red-900 p-5 rounded-2xl z-50">
@@ -448,13 +557,11 @@ export default function CaixaPDV() {
         </div>
       )}
 
-      {/* 📊 GRELA DO CABEÇALHO EXPANDIDA PARA 8 COLUNAS */}
       {!erroCaixa && (
         <div className="bg-zinc-900 border-b border-zinc-800 p-5 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4 shadow-xl">
           <div><label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Cliente</label><input type="text" value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="Nome" className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none" /></div>
           <div><label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Contacto</label><input type="text" value={contactoCliente} onChange={(e) => setContactoCliente(e.target.value)} placeholder="Telemóvel" className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none" /></div>
           
-          {/* 📅 NOVO CAMPO: DATA OPERACIONAL */}
           <div><label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Data do Pedido</label><input type="date" value={dataPedido} onChange={(e) => setDataPedido(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-300 focus:border-orange-500 outline-none cursor-pointer" /></div>
           
           <div>
@@ -466,9 +573,10 @@ export default function CaixaPDV() {
                 setCanal(novoCanal);
                 setFormaPagamento(regrasPagamento[novoCanal as keyof typeof regrasPagamento][0].value);
                 
-                // ✨ SELEÇÃO AUTOMÁTICA DO ESTAFETA GLOVO
                 if (novoCanal === 'Glovo') {
                   setEntregador('Estafeta Glovo');
+                } else {
+                  setEntregador('');
                 }
               }} 
               className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-300 focus:border-orange-500 outline-none"
@@ -490,6 +598,7 @@ export default function CaixaPDV() {
           <div>
             <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Estafeta</label>
             <select value={entregador} onChange={(e) => setEntregador(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-300 focus:border-orange-500 outline-none">
+              <option value="">-- Nenhum --</option>
               {listaEstafetas.map(est => (
                 <option key={est.nome} value={est.nome}>{est.nome}</option>
               ))}
@@ -500,7 +609,6 @@ export default function CaixaPDV() {
         </div>
       )}
 
-      {/* ÁREA CENTRAL */}
       {!erroCaixa && (
         <div className="flex-1 flex overflow-hidden">
           <main className="flex-1 p-6 overflow-y-auto flex flex-col gap-6">
@@ -579,13 +687,20 @@ export default function CaixaPDV() {
               {parseFloat(descontoManual) > 0 && <div className="flex justify-between items-center text-red-400 text-xs"><span>Desconto:</span><span>-{parseFloat(descontoManual).toFixed(2)}€</span></div>}
               <div className="flex justify-between items-center text-zinc-400 text-xs"><span>Taxa de Entrega:</span><span className="text-white font-medium">{parseFloat(taxaEntrega).toFixed(2)}€</span></div>
               <div className="flex justify-between items-center border-t border-zinc-800 pt-2 text-zinc-300 text-sm"><span>Total a Cobrar:</span><span className="text-orange-500 font-black text-xl">{totalGeral.toFixed(2)}€</span></div>
-              <button onClick={finalizarVenda} className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-3 rounded-xl text-center text-sm shadow-lg">Confirmar & Lançar Pedido</button>
+              <button 
+                onClick={finalizarVenda} 
+                disabled={isProcessando}
+                className={`w-full font-bold py-3 rounded-xl text-center text-sm shadow-lg transition-all ${
+                  isProcessando ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' : 'bg-orange-600 hover:bg-orange-700 text-white'
+                }`}
+              >
+                {isProcessando ? 'A Processar...' : 'Confirmar & Lançar Pedido'}
+              </button>
             </div>
           </aside>
         </div>
       )}
 
-      {/* MODAL DO CONSTRUTOR DE COMBOS */}
       {mostrarModalCombo && comboSelecionado && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-2xl p-6 flex flex-col max-h-[90vh] shadow-2xl">

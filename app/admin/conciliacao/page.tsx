@@ -9,8 +9,7 @@ const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 interface SessaoAuditoria {
-  id: number;
-  created_at: string;
+  id: string; 
   tipo_arquivo: string;
   periodo_ref: string;
   resumo: any;
@@ -20,10 +19,11 @@ interface SessaoAuditoria {
 export default function ConciliacaoPage() {
   const [historico, setHistorico] = useState<SessaoAuditoria[]>([]);
   const [loading, setLoading] = useState(true);
+  
   const [processando, setProcessando] = useState(false);
+  const [progresso, setProgresso] = useState({ atual: 0, total: 0 });
 
-  // Estados do upload
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [categoria, setCategoria] = useState('Fatura');
   const [periodo, setPeriodo] = useState(() => {
     const hoje = new Date();
@@ -31,8 +31,8 @@ export default function ConciliacaoPage() {
   });
   const [autoDetectado, setAutoDetectado] = useState(false);
 
-  // Estado do Filtro
   const [filtroMes, setFiltroMes] = useState('');
+  const [selecionados, setSelecionados] = useState<string[]>([]);
 
   const categoriasDisponiveis = [
     { id: 'Extrato', label: '🏦 Extrato Bancário' },
@@ -41,21 +41,17 @@ export default function ConciliacaoPage() {
     { id: 'Palmbites', label: '🌴 Extrato Palmbites' }
   ];
 
-  // 1. FUNÇÃO PARA BUSCAR O HISTÓRICO COM FILTRO
   async function carregarHistorico() {
     setLoading(true);
-    
-    let query = supabase
-      .from('auditoria_sessoes')
-      .select('*')
-      .order('created_at', { ascending: false });
+    let query = supabase.from('auditoria_sessoes').select('*').order('created_at', { ascending: false }); 
 
-    if (filtroMes) {
-      query = query.eq('periodo_ref', filtroMes);
-    }
+    if (filtroMes) query = query.eq('periodo_ref', filtroMes);
 
     const { data, error } = await query;
-    if (!error && data) {
+    if (error) {
+      console.error("🔥 ERRO A LER SUPABASE:", error);
+      alert("Erro ao puxar histórico: " + error.message);
+    } else if (data) {
       setHistorico(data);
     }
     setLoading(false);
@@ -63,15 +59,15 @@ export default function ConciliacaoPage() {
 
   useEffect(() => {
     carregarHistorico();
+    setSelecionados([]);
   }, [filtroMes]);
 
-  // 2. RECONHECIMENTO AUTOMÁTICO DO FICHEIRO
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      const selecionado = e.target.files[0];
-      setFile(selecionado);
+      const selecionados = Array.from(e.target.files);
+      setFiles(selecionados);
       
-      const nome = selecionado.name.toLowerCase();
+      const nome = selecionados[0].name.toLowerCase();
       let detectado = 'Fatura'; 
       
       if (nome.includes('glovo')) detectado = 'Glovo';
@@ -84,112 +80,219 @@ export default function ConciliacaoPage() {
     }
   };
 
- // 3. PROCESSAR E ANEXAR DOCUMENTO
-  const iniciarAuditoria = async () => {
-    if (!file) return alert('Por favor, anexe um ficheiro.');
-    setProcessando(true);
+  const processarInsercaoNoEstoque = async (itens: any[], fornecedor: string, mesRef: string) => {
+    if (!itens || itens.length === 0) return;
 
-    try {
-      const payload = {
-        fileBase64: "simulacao_base64", // <-- Adicionámos isto de volta para a API não reclamar!
-        fileName: file.name,
-        fileType: file.type,
-        tipoArquivo: categoria,
-        periodoRef: periodo
-      };
+    for (const item of itens) {
+      try {
+        if (item.tipo === 'alimentar' || item.tipo === 'embalagem') {
+          // 1. Alimentar: Atualizar o Stock (Despensa)
+          // Verifica se o ingrediente já existe (tenta encontrar pelo nome)
+          const { data: insumoExistente } = await supabase
+            .from('insumos')
+            .select('id, quantidade_atual')
+            .ilike('nome', `%${item.nome_extraido}%`)
+            .limit(1)
+            .maybeSingle();
 
-      const res = await fetch('/admin/conciliacao/api', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Erro na auditoria');
-
-      alert('Documento processado e guardado no histórico!');
-      setFile(null);
-      setAutoDetectado(false);
-      carregarHistorico(); // Atualiza a lista automaticamente
-
-    } catch (err: any) {
-      alert(`Erro: ${err.message}`);
-    } finally {
-      setProcessando(false);
+          if (insumoExistente) {
+            // Soma a quantidade
+            const novaQtd = Number(insumoExistente.quantidade_atual) + Number(item.quantidade);
+            await supabase.from('insumos').update({ quantidade_atual: novaQtd }).eq('id', insumoExistente.id);
+          } else {
+            // Cria um ingrediente novo na despensa
+            await supabase.from('insumos').insert([{
+              nome: item.nome_extraido,
+              unidade_medida: item.unidade || 'unidade',
+              quantidade_atual: item.quantidade,
+              custo_unidade: Number(item.valor_total) / Number(item.quantidade),
+              fornecedor_principal: fornecedor
+            }]);
+          }
+        } else if (item.tipo === 'geral') {
+          // 2. Geral: Adicionar às Despesas Mensais
+          await supabase.from('despesas').insert([{
+            descricao: item.nome_extraido,
+            categoria: 'Despesas Gerais e Ferramentas',
+            valor: item.valor_total,
+            fornecedor: fornecedor,
+            data_despesa: new Date().toISOString().split('T')[0], // Põe a data de hoje por defeito
+            mes_referencia: mesRef,
+            pago: true
+          }]);
+        }
+      } catch (err) {
+        console.error("Erro a inserir item no ERP:", item, err);
+      }
     }
   };
 
-  // 4. APAGAR FICHEIRO DO HISTÓRICO
-  const apagarSessao = async (id: number) => {
-    if (!confirm('Eliminar este documento do histórico?')) return;
-    const { error } = await supabase.from('auditoria_sessoes').delete().eq('id', id);
-    if (!error) setHistorico(prev => prev.filter(item => item.id !== id));
+  const iniciarAuditoria = async () => {
+    if (files.length === 0) return alert('Por favor, anexe pelo menos um ficheiro.');
+    
+    setProcessando(true);
+    setProgresso({ atual: 1, total: files.length });
+
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        setProgresso({ atual: i + 1, total: files.length });
+
+        const nomeFile = file.name.toLowerCase();
+        let catIndividual = categoria; 
+        if (autoDetectado) {
+          if (nomeFile.includes('glovo')) catIndividual = 'Glovo';
+          else if (nomeFile.includes('palm') || nomeFile.includes('palmbites')) catIndividual = 'Palmbites';
+          else if (nomeFile.includes('extrato') || nomeFile.includes('banco') || nomeFile.includes('cgd')) catIndividual = 'Extrato';
+          else catIndividual = 'Fatura';
+        }
+
+        const base64Real = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.readAsDataURL(file);
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = error => reject(error);
+        });
+
+        const payload = {
+          fileBase64: base64Real,
+          fileName: file.name,
+          fileType: file.type,
+          tipoArquivo: catIndividual,
+          periodoRef: periodo
+        };
+
+        const res = await fetch('/api/conciliacao', { // Certifique-se de que a rota da API está correta aqui (por vezes é /api/conciliacao e outras vezes /admin/conciliacao/api)
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+
+        const dataAPI = await res.json();
+
+        if (!res.ok) {
+           console.error(`Erro ao processar ${file.name}:`, dataAPI.error);
+        } else {
+           // MAGIA ACONTECE AQUI: A API devolveu o resumo extraído pela IA.
+           // Se a fatura tiver itens, disparamos a distribuição automática
+           if (dataAPI.dadosLidos && dataAPI.dadosLidos.itens && dataAPI.dadosLidos.itens.length > 0) {
+              await processarInsercaoNoEstoque(dataAPI.dadosLidos.itens, dataAPI.dadosLidos.fornecedor, periodo);
+           }
+        }
+      }
+
+      alert('Documentos processados! Matéria-prima adicionada ao Stock e Despesas atualizadas! 🎉');
+      setFiles([]);
+      setAutoDetectado(false);
+      carregarHistorico(); 
+
+    } catch (err: any) {
+      alert(`Erro fatal durante o processamento: ${err.message}`);
+    } finally {
+      setProcessando(false);
+      setProgresso({ atual: 0, total: 0 });
+    }
   };
 
-  // 5. EDITAR CATEGORIA NO HISTÓRICO
-  const mudarCategoria = async (id: number, novaCategoria: string) => {
+  const toggleSelecionado = (id: string) => {
+    setSelecionados(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]);
+  };
+
+  const toggleTodos = () => {
+    if (selecionados.length === historico.length) {
+      setSelecionados([]);
+    } else {
+      setSelecionados(historico.map(h => h.id));
+    }
+  };
+
+  const apagarSelecionados = async () => {
+    if (selecionados.length === 0) return;
+    if (!confirm(`Tem a certeza que deseja eliminar ${selecionados.length} documento(s)?`)) return;
+
+    const { error } = await supabase.from('auditoria_sessoes').delete().in('id', selecionados);
+    
+    if (!error) {
+      setHistorico(prev => prev.filter(item => !selecionados.includes(item.id)));
+      setSelecionados([]);
+    } else {
+      alert("Erro ao eliminar documentos: " + error.message);
+    }
+  };
+
+  const mudarCategoria = async (id: string, novaCategoria: string) => {
     const { error } = await supabase.from('auditoria_sessoes').update({ tipo_arquivo: novaCategoria }).eq('id', id);
     if (!error) setHistorico(prev => prev.map(item => item.id === id ? { ...item, tipo_arquivo: novaCategoria } : item));
   };
 
   return (
-    <div className="p-8 font-sans max-w-7xl mx-auto">
+    <div className="p-8 font-sans max-w-7xl mx-auto relative">
       <div className="mb-8 border-b border-zinc-800 pb-4">
-        {/* AVISO VISUAL DE VERSÃO NOVA */}
         <h1 className="text-3xl font-bold text-orange-500 flex items-center gap-3">
-          Conciliador Inteligente <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full">v2.0</span>
+          Conciliador Inteligente <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full">v2.1</span>
         </h1>
-        <p className="text-zinc-400 text-sm mt-2">Reconhecimento, cruzamento de dados e histórico completo.</p>
+        <p className="text-zinc-400 text-sm mt-2">Upload em lote, eliminação em massa, extração inteligente de itens de faturas.</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         
-        {/* COLUNA ESQUERDA: ANEXAR */}
+        {/* COLUNA ESQUERDA */}
         <div className="lg:col-span-1 space-y-6">
           <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-2xl shadow-xl">
-            <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider mb-4">Novo Documento</h3>
+            <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider mb-4">Anexar Lote de Documentos</h3>
             
             <div className="border-2 border-dashed border-zinc-700 hover:border-orange-500 bg-zinc-950 rounded-xl p-8 text-center transition-colors relative mb-4">
-              <input type="file" onChange={handleFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" accept=".pdf,.png,.jpg,.csv" />
+              <input type="file" multiple onChange={handleFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" accept=".pdf,.png,.jpg,.csv" />
               <div className="text-4xl mb-2">📂</div>
-              {file ? (
-                <p className="text-sm font-bold text-green-500 truncate px-2">{file.name}</p>
+              {files.length > 0 ? (
+                <div className="flex flex-col items-center">
+                  <p className="text-sm font-bold text-green-500">{files.length} ficheiro(s) selecionado(s)</p>
+                  <p className="text-xs text-zinc-500 mt-1 line-clamp-2 px-2">
+                    {files.map(f => f.name).join(', ')}
+                  </p>
+                </div>
               ) : (
-                <p className="text-sm font-bold text-zinc-300">Escolha o ficheiro ou arraste</p>
+                <p className="text-sm font-bold text-zinc-300">Escolha vários ficheiros ou arraste</p>
               )}
             </div>
 
             <div className="mb-4">
-              <label className="block text-xs font-bold text-zinc-400 uppercase mb-2">Mês do Documento</label>
+              <label className="block text-xs font-bold text-zinc-400 uppercase mb-2">Mês de Referência</label>
               <input type="month" value={periodo} onChange={(e) => setPeriodo(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 outline-none" />
             </div>
 
             <div className="mb-6">
               <label className="block text-xs font-bold text-zinc-400 uppercase mb-2 flex justify-between">
-                <span>Categoria detetada</span>
-                {autoDetectado && <span className="text-green-500 text-[10px] animate-pulse">✨ Automático</span>}
+                <span>Categoria (Base)</span>
+                {autoDetectado && <span className="text-green-500 text-[10px] animate-pulse">✨ Lote Automático</span>}
               </label>
               <select value={categoria} onChange={(e) => { setCategoria(e.target.value); setAutoDetectado(false); }} className={`w-full bg-zinc-950 border ${autoDetectado ? 'border-green-500 text-green-400' : 'border-zinc-800 text-zinc-200'} rounded-lg px-3 py-2 text-sm outline-none`}>
                 {categoriasDisponiveis.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
               </select>
             </div>
 
-            <button onClick={iniciarAuditoria} disabled={processando || !file} className={`w-full py-3 rounded-xl text-sm font-bold transition-all ${processando || !file ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-700 text-white'}`}>
-              {processando ? 'A Processar...' : 'Analisar e Guardar 🚀'}
+            <button onClick={iniciarAuditoria} disabled={processando || files.length === 0} className={`w-full py-3 rounded-xl text-sm font-bold transition-all ${processando || files.length === 0 ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-700 text-white shadow-[0_0_15px_rgba(147,51,234,0.3)]'}`}>
+              Ler Faturas & Extrair Estoque 🚀
             </button>
           </div>
         </div>
 
-        {/* COLUNA DIREITA: HISTÓRICO COM FILTRO */}
+        {/* COLUNA DIREITA */}
         <div className="lg:col-span-2">
           <div className="bg-zinc-900 border border-zinc-800 rounded-2xl shadow-xl flex flex-col h-full overflow-hidden min-h-[500px]">
             
-            {/* CABEÇALHO DO HISTÓRICO */}
             <div className="p-5 border-b border-zinc-800 bg-zinc-900/80 flex flex-col sm:flex-row justify-between items-center gap-4">
-              <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-2">
-                🗄️ Histórico de Documentos
-              </h3>
+              <div className="flex items-center gap-4">
+                <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-2">
+                  🗄️ Histórico
+                </h3>
+                
+                {selecionados.length > 0 && (
+                  <button onClick={apagarSelecionados} className="bg-red-600 hover:bg-red-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2 shadow-lg shadow-red-900/20">
+                    🗑️ Eliminar Selecionados ({selecionados.length})
+                  </button>
+                )}
+              </div>
               
               <div className="flex items-center gap-2 bg-zinc-950 px-3 py-1.5 rounded-lg border border-zinc-700">
                 <span className="text-[10px] text-zinc-400 font-bold uppercase">Mês:</span>
@@ -200,7 +303,6 @@ export default function ConciliacaoPage() {
               </div>
             </div>
             
-            {/* LISTAGEM DO HISTÓRICO */}
             <div className="p-5 flex-1 overflow-y-auto bg-zinc-950/30">
               {loading ? (
                 <div className="flex justify-center items-center h-full text-zinc-500">A carregar registos...</div>
@@ -211,27 +313,50 @@ export default function ConciliacaoPage() {
                 </div>
               ) : (
                 <div className="space-y-3">
+                  <div className="flex items-center px-4 py-2 border-b border-zinc-800 mb-2">
+                     <input 
+                       type="checkbox" 
+                       checked={selecionados.length === historico.length && historico.length > 0} 
+                       onChange={toggleTodos}
+                       className="w-4 h-4 rounded border-zinc-700 bg-zinc-950 accent-orange-500 cursor-pointer"
+                     />
+                     <span className="text-xs text-zinc-500 font-bold uppercase ml-3">Selecionar Todos</span>
+                  </div>
+
                   {historico.map((sessao) => (
-                    <div key={sessao.id} className="bg-zinc-900 border border-zinc-700 p-4 rounded-xl flex justify-between items-center">
-                      <div>
-                        <div className="flex items-center gap-3 mb-1">
-                          <span className="text-xs text-orange-400 font-bold bg-orange-950 px-2 py-1 rounded">{sessao.periodo_ref}</span>
-                          <span className="text-xs text-zinc-500">ID: {sessao.id}</span>
+                    <div key={sessao.id} className={`bg-zinc-900 border p-4 rounded-xl flex justify-between items-center transition-colors ${selecionados.includes(sessao.id) ? 'border-orange-500 shadow-sm shadow-orange-900/20' : 'border-zinc-700'}`}>
+                      <div className="flex items-center gap-4">
+                        <input 
+                          type="checkbox" 
+                          checked={selecionados.includes(sessao.id)}
+                          onChange={() => toggleSelecionado(sessao.id)}
+                          className="w-5 h-5 rounded border-zinc-700 bg-zinc-950 accent-orange-500 cursor-pointer flex-shrink-0"
+                        />
+                        
+                        <div>
+                          <div className="flex items-center gap-3 mb-1">
+                            <span className="text-xs text-orange-400 font-bold bg-orange-950 px-2 py-1 rounded">{sessao.periodo_ref}</span>
+                            <span className="text-xs text-zinc-500">ID: {sessao.id.split('-')[0]}...</span>
+                          </div>
+                          <h4 className="text-sm font-bold text-white mt-2">
+                            {sessao.tipo_arquivo === 'Glovo' ? '🛵 Extrato Glovo' : 
+                             sessao.tipo_arquivo === 'Palmbites' ? '🌴 Extrato Palmbites' : 
+                             sessao.tipo_arquivo === 'Extrato' ? '🏦 Extrato Bancário' : '🧾 Recibo / Fatura'}
+                          </h4>
+                          
+                          {/* MOSTRA SE A IA EXTRAIU ITENS DESTA FATURA */}
+                          {sessao.resumo?.itens && sessao.resumo.itens.length > 0 && (
+                            <p className="text-[10px] font-mono text-green-400 mt-2">
+                              ✓ {sessao.resumo.itens.length} itens extraídos e catalogados.
+                            </p>
+                          )}
                         </div>
-                        <h4 className="text-sm font-bold text-white mt-2">
-                          {sessao.tipo_arquivo === 'Glovo' ? '🛵 Extrato Glovo' : 
-                           sessao.tipo_arquivo === 'Palmbites' ? '🌴 Extrato Palmbites' : 
-                           sessao.tipo_arquivo === 'Extrato' ? '🏦 Extrato Bancário' : '🧾 Recibo / Fatura'}
-                        </h4>
                       </div>
 
                       <div className="flex items-center gap-2">
                         <select value={sessao.tipo_arquivo} onChange={(e) => mudarCategoria(sessao.id, e.target.value)} className="bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-300">
                           {categoriasDisponiveis.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
                         </select>
-                        <button onClick={() => apagarSessao(sessao.id)} className="bg-red-950/50 text-red-500 hover:bg-red-600 hover:text-white border border-red-900/50 px-3 py-1.5 rounded-lg transition-colors text-xs font-bold">
-                          Excluir
-                        </button>
                       </div>
                     </div>
                   ))}
@@ -242,6 +367,20 @@ export default function ConciliacaoPage() {
         </div>
 
       </div>
+
+      {processando && (
+        <div className="fixed inset-0 bg-black/90 z-[100] flex flex-col items-center justify-center backdrop-blur-md">
+          <div className="w-16 h-16 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mb-6"></div>
+          <h2 className="text-2xl font-bold text-white mb-2">A extrair itens e faturas...</h2>
+          <p className="text-zinc-400">
+            A auditar <span className="font-bold text-white">{progresso.atual}</span> de <span className="font-bold text-white">{progresso.total}</span> ficheiros inseridos.
+          </p>
+          <div className="w-64 bg-zinc-800 rounded-full h-2.5 mt-6 overflow-hidden">
+             <div className="bg-orange-500 h-2.5 transition-all duration-300" style={{ width: `${(progresso.atual / progresso.total) * 100}%` }}></div>
+          </div>
+          <p className="text-orange-500 text-sm mt-4 animate-pulse">A Inteligência Artificial está a catalogar as quantidades do seu stock.</p>
+        </div>
+      )}
     </div>
   );
 }

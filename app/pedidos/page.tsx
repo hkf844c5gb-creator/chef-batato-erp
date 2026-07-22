@@ -30,6 +30,11 @@ export default function GestaoPedidos() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // --- ESTADOS PARA A EDIÇÃO ---
+  const [modalEditar, setModalEditar] = useState(false);
+  const [pedidoEditando, setPedidoEditando] = useState<Pedido | null>(null);
+  const [salvando, setSalvando] = useState(false);
+
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -96,6 +101,65 @@ export default function GestaoPedidos() {
     }
   };
 
+  // --- NOVA FUNÇÃO: EXCLUIR PEDIDO ---
+  const excluirPedido = async (pedidoId: string) => {
+    if (!confirm('⚠️ Tem a certeza que deseja excluir este pedido definitivamente? Esta ação não pode ser desfeita.')) return;
+    
+    try {
+      // É boa prática apagar os itens associados primeiro (caso a base de dados não tenha CASCADE)
+      await supabase.from('itens_pedido').delete().eq('pedido_id', pedidoId);
+      
+      const { error } = await supabase.from('pedidos').delete().eq('id', pedidoId);
+      if (error) throw error;
+      
+      setPedidos(prev => prev.filter(p => p.id !== pedidoId));
+    } catch (err: any) {
+      alert(`Erro ao excluir pedido: ${err.message}`);
+    }
+  };
+
+  // --- NOVA FUNÇÃO: ABRIR MODAL DE EDIÇÃO ---
+  const abrirEdicao = (pedido: Pedido) => {
+    setPedidoEditando({ ...pedido });
+    setModalEditar(true);
+  };
+
+  // --- NOVA FUNÇÃO: SALVAR EDIÇÃO ---
+  const salvarEdicao = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pedidoEditando) return;
+
+    setSalvando(true);
+    try {
+      // Recalcula o Total Geral baseado nas novas taxas ou descontos introduzidos
+      const subtotalItens = pedidoEditando.itens?.reduce((acc, item) => acc + (item.quantidade * item.preco_unitario), 0) || 0;
+      const novoTotal = Math.max(0, subtotalItens + Number(pedidoEditando.taxa_entrega) - Number(pedidoEditando.desconto));
+
+      const { error } = await supabase
+        .from('pedidos')
+        .update({
+          cliente: pedidoEditando.cliente,
+          canal: pedidoEditando.canal,
+          forma_pagamento: pedidoEditando.forma_pagamento,
+          entregador: pedidoEditando.entregador,
+          taxa_entrega: pedidoEditando.taxa_entrega,
+          desconto: pedidoEditando.desconto,
+          pago: pedidoEditando.pago,
+          total_geral: novoTotal
+        })
+        .eq('id', pedidoEditando.id);
+
+      if (error) throw error;
+
+      setModalEditar(false);
+      carregarPedidosEItens(); // Recarrega para garantir que os dados visuais batem certo
+    } catch (err: any) {
+      alert(`Erro ao salvar edição: ${err.message}`);
+    } finally {
+      setSalvando(false);
+    }
+  };
+
   useEffect(() => {
     carregarPedidosEItens();
 
@@ -111,7 +175,6 @@ export default function GestaoPedidos() {
     };
   }, []);
 
-  // Métricas rápidas da noite
   const faturamentoTotal = pedidos.reduce((acc, p) => acc + p.total_geral, 0);
   const totalDescontos = pedidos.reduce((acc, p) => acc + p.desconto, 0);
   const pendenteCaderninho = pedidos.filter(p => !p.pago).reduce((acc, p) => acc + p.total_geral, 0);
@@ -124,7 +187,7 @@ export default function GestaoPedidos() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white flex flex-col font-sans">
+    <div className="min-h-screen bg-zinc-950 text-white flex flex-col font-sans relative">
       
       {/* Topo do Painel */}
       <header className="bg-zinc-900 border-b border-zinc-800 px-6 py-4 flex justify-between items-center shadow-lg">
@@ -167,11 +230,21 @@ export default function GestaoPedidos() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {pedidos.map((ped) => (
-              <div key={ped.id} className="bg-zinc-900 border border-zinc-800/80 rounded-2xl p-4 flex flex-col justify-between shadow-md hover:border-zinc-700/60 transition-all">
+              <div key={ped.id} className="bg-zinc-900 border border-zinc-800/80 rounded-2xl p-4 flex flex-col justify-between shadow-md hover:border-zinc-700/60 transition-all relative group">
                 
+                {/* BOTÕES DE EDIÇÃO E EXCLUSÃO (Aparecem no topo do card) */}
+                <div className="absolute top-3 right-3 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button onClick={() => abrirEdicao(ped)} className="w-7 h-7 bg-zinc-800 hover:bg-blue-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Editar Informações">
+                    ✏️
+                  </button>
+                  <button onClick={() => excluirPedido(ped.id)} className="w-7 h-7 bg-zinc-800 hover:bg-red-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Excluir Pedido">
+                    🗑️
+                  </button>
+                </div>
+
                 <div>
                   {/* Cabeçalho do Card */}
-                  <div className="flex justify-between items-start gap-2 border-b border-zinc-800/60 pb-3 mb-3">
+                  <div className="flex justify-between items-start gap-2 border-b border-zinc-800/60 pb-3 mb-3 pr-16">
                     <div>
                       <span className="text-[10px] font-mono text-zinc-500">#{ped.numero_pedido}</span>
                       <h3 className="font-bold text-zinc-100 text-sm mt-0.5">{ped.cliente}</h3>
@@ -235,6 +308,126 @@ export default function GestaoPedidos() {
           </div>
         )}
       </main>
+
+      {/* --- MODAL DE EDIÇÃO --- */}
+      {modalEditar && pedidoEditando && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-lg rounded-3xl p-6 shadow-2xl relative">
+            <button onClick={() => setModalEditar(false)} className="absolute top-5 right-5 text-zinc-400 hover:text-white">✕</button>
+            
+            <h2 className="text-xl font-bold text-white mb-6 border-b border-zinc-800 pb-3">
+              Editar Pedido #{pedidoEditando.numero_pedido}
+            </h2>
+
+            <form onSubmit={salvarEdicao} className="space-y-4">
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div className="col-span-2">
+                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Cliente</label>
+                  <input 
+                    type="text" 
+                    required
+                    value={pedidoEditando.cliente} 
+                    onChange={e => setPedidoEditando({...pedidoEditando, cliente: e.target.value})} 
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white focus:border-orange-500 outline-none" 
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Canal</label>
+                  <select 
+                    value={pedidoEditando.canal} 
+                    onChange={e => setPedidoEditando({...pedidoEditando, canal: e.target.value})} 
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white focus:border-orange-500 outline-none"
+                  >
+                    <option value="Balcão">Balcão</option>
+                    <option value="WhatsApp">WhatsApp</option>
+                    <option value="Glovo">Glovo</option>
+                    <option value="Palmbites">Palmbites</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Pagamento</label>
+                  <select 
+                    value={pedidoEditando.forma_pagamento} 
+                    onChange={e => setPedidoEditando({...pedidoEditando, forma_pagamento: e.target.value})} 
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white focus:border-orange-500 outline-none"
+                  >
+                    <option value="Dinheiro">Dinheiro</option>
+                    <option value="MBWay">MBWay</option>
+                    <option value="Multibanco">Multibanco</option>
+                    <option value="Dinheiro Glovo">Dinheiro Glovo</option>
+                    <option value="Glovo">Faturamento Glovo</option>
+                    <option value="Caderninho">Caderninho</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Estado do Pagamento</label>
+                  <select 
+                    value={pedidoEditando.pago ? 'true' : 'false'} 
+                    onChange={e => setPedidoEditando({...pedidoEditando, pago: e.target.value === 'true'})} 
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white focus:border-orange-500 outline-none"
+                  >
+                    <option value="true">Pago</option>
+                    <option value="false">Pendente</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Entregador</label>
+                  <input 
+                    type="text" 
+                    value={pedidoEditando.entregador || ''} 
+                    onChange={e => setPedidoEditando({...pedidoEditando, entregador: e.target.value})} 
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white focus:border-orange-500 outline-none"
+                    placeholder="Nome do estafeta"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Taxa de Entrega (€)</label>
+                  <input 
+                    type="number" step="0.01" min="0" 
+                    value={pedidoEditando.taxa_entrega} 
+                    onChange={e => setPedidoEditando({...pedidoEditando, taxa_entrega: parseFloat(e.target.value) || 0})} 
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-orange-400 font-bold focus:border-orange-500 outline-none" 
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Desconto (€)</label>
+                  <input 
+                    type="number" step="0.01" min="0" 
+                    value={pedidoEditando.desconto} 
+                    onChange={e => setPedidoEditando({...pedidoEditando, desconto: parseFloat(e.target.value) || 0})} 
+                    className="w-full bg-zinc-950 border border-red-900/50 rounded-xl px-3 py-2 text-sm text-red-400 font-bold focus:border-red-500 outline-none" 
+                  />
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-zinc-800 mt-4 flex justify-end gap-3">
+                <button 
+                  type="button" 
+                  onClick={() => setModalEditar(false)} 
+                  className="px-5 py-2.5 text-sm font-bold text-zinc-400 hover:text-white transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit" 
+                  disabled={salvando}
+                  className="bg-orange-600 hover:bg-orange-500 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-lg transition-transform active:scale-95 disabled:opacity-50"
+                >
+                  {salvando ? 'A Guardar...' : 'Guardar Alterações'}
+                </button>
+              </div>
+            </form>
+
+          </div>
+        </div>
+      )}
     </div>
   );
 }
