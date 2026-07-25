@@ -14,7 +14,7 @@ interface ItemPedido {
 interface Pedido {
   id: string;
   numero_pedido: number;
-  data_venda: string;
+  data_pedido: string; // Corrigido para data_pedido
   cliente: string;
   canal: string;
   forma_pagamento: string;
@@ -89,6 +89,7 @@ export default function GestaoPedidos() {
             agrupados.set(chaveNum, {
               ...linha,
               numero_pedido: Number(linha.numero_pedido),
+              data_pedido: linha.data_pedido || linha.data_venda || '', // Garante compatibilidade
               taxa_entrega: taxa,
               desconto: desconto,
               pago: linha.pago === true,
@@ -230,10 +231,8 @@ export default function GestaoPedidos() {
     };
   }, []);
 
-  // 🎯 EXTRATOR DE DATA UNIVERSAL (Lida com qualquer formato vindo da BD)
   const extrairDataIso = (valor: string) => {
     if (!valor) return '';
-    // Procura o padrão YYYY-MM-DD independentemente de haver horas a seguir
     const match = valor.match(/(\d{4})-(\d{2})-(\d{2})/);
     if (match) {
       return `${match[1]}-${match[2]}-${match[3]}`;
@@ -241,11 +240,11 @@ export default function GestaoPedidos() {
     return '';
   };
 
+  // 🎯 FILTRO AGORA LIGA DIRETAMENTE À COLUNA data_pedido
   const pedidosFiltrados = useMemo(() => {
     return pedidos.filter((pedido) => {
-      const dataPedidoFormatada = extrairDataIso(pedido.data_venda);
+      const dataPedidoFormatada = extrairDataIso(pedido.data_pedido);
       
-      // Se o pedido não tiver data legível, passamos para não o ocultar acidentalmente
       if (!dataPedidoFormatada) return true;
 
       if (dataInicio && dataPedidoFormatada < dataInicio) return false;
@@ -299,7 +298,7 @@ export default function GestaoPedidos() {
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
           <div className="flex flex-col xl:flex-row xl:items-end gap-4">
             <div className="flex-1">
-              <h2 className="text-sm font-bold text-zinc-100">Filtrar por Intervalo de Datas</h2>
+              <h2 className="text-sm font-bold text-zinc-100">Filtrar por Intervalo de Datas (data_pedido)</h2>
               <p className="text-xs text-zinc-500 mt-1">Selecione o dia, mês e ano inicial até ao dia, mês e ano final.</p>
             </div>
 
@@ -399,7 +398,7 @@ export default function GestaoPedidos() {
                 <div>
                   <div className="flex justify-between items-start gap-2 border-b border-zinc-800/60 pb-3 mb-3 pr-16">
                     <div>
-                      <span className="text-[10px] font-mono text-zinc-500">#{ped.numero_pedido} · {ped.data_venda}</span>
+                      <span className="text-[10px] font-mono text-zinc-500">#{ped.numero_pedido} · {ped.data_pedido}</span>
                       <h3 className="font-bold text-zinc-100 text-sm mt-0.5">{ped.cliente || 'Cliente Anónimo'}</h3>
                     </div>
                     <div className="flex flex-col items-end gap-1">
