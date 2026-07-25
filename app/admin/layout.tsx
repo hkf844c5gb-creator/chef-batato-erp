@@ -10,12 +10,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const menuItems = [
     { href: '/admin/dashboard', icon: '📊', label: 'Dashboard' },
     { href: '/admin/pdv', icon: '💻', label: 'Frente de Loja (PDV)' },
+    { href: '/admin/pedidos', icon: '📓', label: 'Pedidos' }, // <-- NOVO MENU AQUI
     { href: '/admin/caixa', icon: '💶', label: 'Caixa / Movimentos' },
     
     // --- BOTÕES DE STOCK E RECEITAS ---
     { href: '/admin/quadro-stock', icon: '📉', label: 'Quadro de Stock' },
     { href: '/admin/receitas', icon: '📦', label: 'Despensa & Receitas' },
-    { href: '/admin/producao', icon: '🍳', label: 'Fábrica (Recheios)' },
     { href: '/admin/producao-batata', icon: '🥔', label: 'Produção Batata' },
     { href: '/admin/producao-brownie', icon: '🍫', label: 'Produção Brownie' },
     // ----------------------------------------
@@ -49,7 +49,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           {menuItems.map((item, index) => {
             const isAtivo = pathname === item.href || pathname?.startsWith(item.href + '/');
             
-            // Adiciona um pequeno separador visual antes dos Produtos (Índice 8 agora)
+            // Adiciona um pequeno separador visual antes dos Produtos (Índice 8 agora encaixa perfeito!)
             const addSeparator = index === 8; 
             
             return (

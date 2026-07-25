@@ -15,6 +15,7 @@ interface Lote {
   nome_produto: string;
   quantidade_produzida: number;
   quantidade_disponivel: number;
+  quantidade_descarte?: number;
   data_fabrico: string;
   data_validade: string;
 }
@@ -29,6 +30,12 @@ export default function ControloProducaoBrownie() {
   const [lotesAtivos, setLotesAtivos] = useState<Lote[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalAberto, setModalAberto] = useState(false);
+  
+  // Modal de Descarte Específico por Lote
+  const [modalDescarteAberto, setModalDescarteAberto] = useState(false);
+  const [loteSelecionadoDescarte, setLoteSelecionadoDescarte] = useState<Lote | null>(null);
+  const [qtdDescarteInput, setQtdDescarteInput] = useState(1);
+  const [motivoDescarte, setMotivoDescarte] = useState('Validade / Quebra');
 
   // Filtro Mensal
   const [mesFiltro, setMesFiltro] = useState('Todos');
@@ -36,7 +43,7 @@ export default function ControloProducaoBrownie() {
   // Controlo de UI
   const [lotesExpandidos, setLotesExpandidos] = useState<Record<string, boolean>>({});
 
-  // Campos do Formulário
+  // Campos do Formulário de Fornada
   const [editandoLoteId, setEditandoLoteId] = useState<string | null>(null);
   const [produtoEditId, setProdutoEditId] = useState(''); 
   const [quantidadeEdit, setQuantidadeEdit] = useState(0); 
@@ -64,6 +71,7 @@ export default function ControloProducaoBrownie() {
       
       setBrownies(lista);
 
+      // Carregar lotes de produção
       const { data: dataLotes, error: errLotes } = await supabase
         .from('lotes_producao')
         .select('id, codigo_lote, produto_id, quantidade_produzida, quantidade_disponivel, data_fabrico, data_validade, produtos(nome)')
@@ -71,16 +79,33 @@ export default function ControloProducaoBrownie() {
         
       if (errLotes) throw errLotes;
 
-      const formatados = (dataLotes || []).map((l: any) => ({
-        id: l.id,
-        codigo_lote: l.codigo_lote,
-        produto_id: l.produto_id,
-        nome_produto: l.produtos?.nome || 'Produto Desconhecido',
-        quantidade_produzida: l.quantidade_produzida || 0,
-        quantidade_disponivel: l.quantidade_disponivel || 0,
-        data_fabrico: l.data_fabrico,
-        data_validade: l.data_validade
-      }));
+      // Carregar perdas/descartes
+      const { data: dataPerdas } = await supabase.from('perdas').select('*');
+
+      // Carregar itens dos pedidos para cruzamento de saídas por vendas
+      const { data: dataItensPedido } = await supabase.from('itens_pedido').select('nome_produto, quantidade');
+
+      const formatados = (dataLotes || []).map((l: any) => {
+        const nomeProd = l.produtos?.nome || 'Produto Desconhecido';
+        
+        // Descarte total da tabela perdas
+        const descarteTotal = (dataPerdas || [])
+          .filter((p: any) => (p.nome_produto || '').toLowerCase() === nomeProd.toLowerCase())
+          .reduce((sum: number, p: any) => sum + Number(p.quantidade || 0), 0);
+
+        return {
+          id: l.id,
+          codigo_lote: l.codigo_lote,
+          produto_id: l.produto_id,
+          nome_produto: nomeProd,
+          quantidade_produzida: l.quantidade_produzida || 0,
+          quantidade_disponivel: l.quantidade_disponivel || 0,
+          quantidade_descarte: descarteTotal,
+          data_fabrico: l.data_fabrico,
+          data_validade: l.data_validade
+        };
+      });
+
       setLotesAtivos(formatados);
 
     } catch (err: any) {
@@ -169,6 +194,42 @@ export default function ControloProducaoBrownie() {
       await supabase.from('lotes_producao').delete().eq('id', id);
       carregarDados();
     } catch (err) {}
+  };
+
+  // Registar Descarte e abater automaticamente do lote
+  const confirmarDescarteLote = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!loteSelecionadoDescarte) return;
+
+    if (qtdDescarteInput > loteSelecionadoDescarte.quantidade_disponivel) {
+      return alert('A quantidade a descartar não pode ser superior ao stock disponível no lote.');
+    }
+
+    try {
+      const novoDisponivel = loteSelecionadoDescarte.quantidade_disponivel - qtdDescarteInput;
+
+      const { error: errLote } = await supabase.from('lotes_producao').update({
+        quantidade_disponivel: novoDisponivel,
+        quantidade_atual: novoDisponivel
+      }).eq('id', loteSelecionadoDescarte.id);
+
+      if (errLote) throw errLote;
+
+      await supabase.from('perdas').insert([{
+        nome_produto: loteSelecionadoDescarte.nome_produto,
+        quantidade: qtdDescarteInput,
+        motivo: motivoDescarte,
+        data: new Date().toISOString()
+      }]);
+
+      alert('Descarte registado com sucesso!');
+      setModalDescarteAberto(false);
+      setLoteSelecionadoDescarte(null);
+      setQtdDescarteInput(1);
+      carregarDados();
+    } catch (err: any) {
+      alert(`Erro ao registar descarte: ${err.message}`);
+    }
   };
 
   const atualizarContagem = (id: string, valor: number) => {
@@ -261,7 +322,6 @@ export default function ControloProducaoBrownie() {
     }
   };
 
-  // --- LÓGICA DO FILTRO MENSAL ---
   const mesesDisponiveis = Array.from(new Set(lotesAtivos.map(l => {
     if (!l.data_fabrico) return 'Histórico';
     return l.data_fabrico.substring(0, 7);
@@ -311,7 +371,7 @@ export default function ControloProducaoBrownie() {
           </div>
           <div>
             <h1 className="text-2xl font-black text-white tracking-tight">Estação dos Brownies</h1>
-            <p className="text-[11px] text-zinc-400 font-bold uppercase tracking-widest mt-0.5">Produção e Controlo de Validades</p>
+            <p className="text-[11px] text-zinc-400 font-bold uppercase tracking-widest mt-0.5">Produção, Vendas, Validades e Descarte</p>
           </div>
         </div>
         <button onClick={abrirModalNovaFornada} className="bg-orange-600 hover:bg-orange-700 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-md transition-all">
@@ -321,7 +381,6 @@ export default function ControloProducaoBrownie() {
 
       <main className="flex-1 w-full max-w-[1200px] mx-auto p-4 md:p-8 space-y-6">
         
-        {/* BARRA DE FILTROS */}
         <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 bg-zinc-900 p-4 rounded-2xl border border-zinc-800">
           <h3 className="text-xs font-black uppercase text-zinc-500 tracking-wider">📦 Filtrar Fornadas</h3>
           <select 
@@ -337,7 +396,7 @@ export default function ControloProducaoBrownie() {
         </div>
         
         {loading ? (
-          <div className="text-center p-12 text-zinc-500 text-sm animate-pulse font-bold uppercase tracking-widest">A Derreter o Chocolate...</div>
+          <div className="text-center p-12 text-zinc-500 text-sm animate-pulse font-bold uppercase tracking-widest">A cruzar dados de produção e pedidos...</div>
         ) : lotesAgrupados.length === 0 ? (
           <div className="text-center p-12 text-zinc-500 text-sm bg-zinc-900/50 rounded-3xl border border-zinc-800 border-dashed">
             Nenhum lote de brownies registado para o filtro selecionado.
@@ -364,7 +423,7 @@ export default function ControloProducaoBrownie() {
                     <div>
                       <div className="flex items-center gap-3">
                         <h4 className={`font-black text-xl uppercase tracking-tight ${isHist ? 'text-zinc-400' : 'text-orange-500'}`}>{grupo.codigo_lote}</h4>
-                        <span className="text-xs bg-zinc-800 text-zinc-300 px-3 py-1 rounded-full font-bold">{totalDisponivel} un</span>
+                        <span className="text-xs bg-zinc-800 text-zinc-300 px-3 py-1 rounded-full font-bold">{totalDisponivel} un disp.</span>
                       </div>
                       <div className="text-xs text-zinc-400 mt-2 flex gap-4">
                         <span><b className="text-zinc-500">Fabricado a:</b> {grupo.data_fabrico ? new Date(grupo.data_fabrico).toLocaleDateString('pt-PT') : 'Histórico'}</span>
@@ -379,30 +438,41 @@ export default function ControloProducaoBrownie() {
 
                   {isExpandido && (
                     <div className="bg-zinc-950 border-t border-zinc-800/80 p-4 flex flex-col gap-3">
-                      <div className="grid grid-cols-5 gap-2 text-[10px] text-zinc-500 font-black uppercase px-3 mb-1">
+                      <div className="grid grid-cols-6 gap-2 text-[10px] text-zinc-500 font-black uppercase px-3 mb-1">
                         <div className="col-span-2">Tipo de Brownie</div>
-                        <div className="text-center" title="Produzido / Início">Fornada</div>
-                        <div className="text-center" title="Saídas / Vendido">Saídas</div>
-                        <div className="text-center text-orange-500" title="Disponível / Atual">Stock Atual</div>
+                        <div className="text-center">Fornada</div>
+                        <div className="text-center">Saídas (Vendas)</div>
+                        <div className="text-center text-red-400">Descarte</div>
+                        <div className="text-center text-orange-500">Stock Atual</div>
                       </div>
 
                       {grupo.itens.map(item => {
-                        const saida = item.quantidade_produzida - item.quantidade_disponivel;
+                        const saida = item.quantidade_produzida - item.quantidade_disponivel - (item.quantidade_descarte || 0);
                         
                         return (
                           <div key={item.id} className="flex flex-col bg-zinc-900 border border-zinc-800 rounded-2xl p-3 gap-2">
-                            <div className="grid grid-cols-5 gap-2 items-center px-1">
+                            <div className="grid grid-cols-6 gap-2 items-center px-1">
                               <div className="col-span-2 font-bold text-zinc-200 text-sm truncate pr-2 flex items-center gap-2">
                                 <span>🍫</span> {item.nome_produto}
                               </div>
                               <div className="text-center text-sm text-zinc-400 font-mono">{item.quantidade_produzida}</div>
-                              <div className="text-center text-sm text-red-400 font-mono">{saida}</div>
+                              <div className="text-center text-sm text-blue-400 font-mono">{saida > 0 ? saida : 0}</div>
+                              <div className="text-center text-sm text-red-400 font-mono">{item.quantidade_descarte || 0}</div>
                               <div className="text-center text-sm font-black text-orange-400 bg-orange-500/10 rounded-lg py-1">{item.quantidade_disponivel}</div>
                             </div>
 
-                            <div className="flex justify-end gap-2 pt-3 border-t border-zinc-800/50 mt-1">
-                              <button onClick={() => abrirEdicaoLote(item)} className="text-[10px] font-bold uppercase text-zinc-400 hover:text-white px-3 py-1.5 rounded-lg border border-zinc-800 hover:bg-zinc-800 transition-colors">Editar</button>
-                              <button onClick={() => apagarLote(item.id)} className="text-[10px] font-bold uppercase text-red-500/70 hover:text-red-400 px-3 py-1.5 rounded-lg border border-red-900/30 hover:bg-red-950/30 transition-colors">Apagar</button>
+                            <div className="flex justify-between items-center pt-3 border-t border-zinc-800/50 mt-1">
+                              <button 
+                                onClick={() => { setLoteSelecionadoDescarte(item); setModalDescarteAberto(true); }}
+                                className="text-[10px] font-bold uppercase text-red-400 hover:text-white bg-red-950/40 hover:bg-red-900/60 px-3 py-1.5 rounded-lg border border-red-900/50 transition-colors flex items-center gap-1"
+                              >
+                                <span>🗑️</span> Registar Descarte
+                              </button>
+
+                              <div className="flex gap-2">
+                                <button onClick={() => abrirEdicaoLote(item)} className="text-[10px] font-bold uppercase text-zinc-400 hover:text-white px-3 py-1.5 rounded-lg border border-zinc-800 hover:bg-zinc-800 transition-colors">Editar</button>
+                                <button onClick={() => apagarLote(item.id)} className="text-[10px] font-bold uppercase text-red-500/70 hover:text-red-400 px-3 py-1.5 rounded-lg border border-red-900/30 hover:bg-red-950/30 transition-colors">Apagar</button>
+                              </div>
                             </div>
                           </div>
                         );
@@ -416,7 +486,32 @@ export default function ControloProducaoBrownie() {
         )}
       </main>
 
-      {/* 📱 MODAL ENTRADA / EDIÇÃO */}
+      {/* MODAL DE DESCARTE DE LOTE */}
+      {modalDescarteAberto && loteSelecionadoDescarte && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex justify-center items-center p-4">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-3xl p-6 shadow-2xl space-y-4">
+            <h2 className="text-lg font-black text-white">Registar Descarte em Lote</h2>
+            <p className="text-xs text-zinc-400">Produto: <span className="font-bold text-orange-400">{loteSelecionadoDescarte.nome_produto}</span> (Lote: {loteSelecionadoDescarte.codigo_lote})</p>
+            
+            <form onSubmit={confirmarDescarteLote} className="space-y-4 text-sm">
+              <div>
+                <label className="block text-[10px] text-zinc-400 uppercase font-bold mb-1">Quantidade a Descartar (Max: {loteSelecionadoDescarte.quantidade_disponivel})</label>
+                <input required type="number" min="1" max={loteSelecionadoDescarte.quantidade_disponivel} value={qtdDescarteInput} onChange={e => setQtdDescarteInput(parseInt(e.target.value) || 1)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white font-mono" />
+              </div>
+              <div>
+                <label className="block text-[10px] text-zinc-400 uppercase font-bold mb-1">Motivo / Observação</label>
+                <input required type="text" value={motivoDescarte} onChange={e => setMotivoDescarte(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white" />
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button type="button" onClick={() => setModalDescarteAberto(false)} className="flex-1 bg-zinc-800 py-3 rounded-xl font-bold text-xs">Cancelar</button>
+                <button type="submit" className="flex-1 bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl font-bold text-xs">Confirmar Descarte</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL ENTRADA / EDIÇÃO */}
       {modalAberto && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex justify-center items-center p-4">
           <div className="bg-zinc-900 border border-zinc-800 w-full max-w-lg rounded-3xl shadow-2xl flex flex-col overflow-hidden max-h-[90vh]">
@@ -483,9 +578,6 @@ export default function ControloProducaoBrownie() {
                     <select disabled value={produtoEditId} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-white opacity-50 cursor-not-allowed">
                       {brownies.map(b => <option key={b.id} value={b.id}>{b.nome}</option>)}
                     </select>
-                  </div>
-                  <div className="bg-blue-950/20 border border-blue-900/30 p-3 rounded-xl mt-4">
-                     <span className="text-[10px] text-blue-400 font-medium leading-relaxed block">Atenção: A quantidade Atual/Disponível será recalculada automaticamente mantendo os descontos das saídas e vendas já feitas.</span>
                   </div>
                 </div>
               )}

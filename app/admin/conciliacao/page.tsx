@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react';
 import { createClient } from '@supabase/supabase-js';
 
-// Conexão direta e à prova de falhas com o Supabase
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 const supabase = createClient(supabaseUrl, supabaseKey);
@@ -22,6 +21,7 @@ export default function ConciliacaoPage() {
   
   const [processando, setProcessando] = useState(false);
   const [progresso, setProgresso] = useState({ atual: 0, total: 0 });
+  const [statusTexto, setStatusTexto] = useState('A extrair itens e faturas...'); // Novo estado para o texto de loading
 
   const [files, setFiles] = useState<File[]>([]);
   const [categoria, setCategoria] = useState('Fatura');
@@ -34,6 +34,9 @@ export default function ConciliacaoPage() {
   const [filtroMes, setFiltroMes] = useState('');
   const [selecionados, setSelecionados] = useState<string[]>([]);
 
+  // Estado para controlar a Fatura/Sessão aberta no Modal de Detalhes
+  const [sessaoDetalhe, setSessaoDetalhe] = useState<SessaoAuditoria | null>(null);
+
   const categoriasDisponiveis = [
     { id: 'Extrato', label: '🏦 Extrato Bancário' },
     { id: 'Fatura', label: '🧾 Recibo / Fatura' },
@@ -43,7 +46,7 @@ export default function ConciliacaoPage() {
 
   async function carregarHistorico() {
     setLoading(true);
-    let query = supabase.from('auditoria_sessoes').select('*').order('created_at', { ascending: false }); 
+    let query = supabase.from('auditoria_sessoes').select('*'); 
 
     if (filtroMes) query = query.eq('periodo_ref', filtroMes);
 
@@ -86,8 +89,6 @@ export default function ConciliacaoPage() {
     for (const item of itens) {
       try {
         if (item.tipo === 'alimentar' || item.tipo === 'embalagem') {
-          // 1. Alimentar: Atualizar o Stock (Despensa)
-          // Verifica se o ingrediente já existe (tenta encontrar pelo nome)
           const { data: insumoExistente } = await supabase
             .from('insumos')
             .select('id, quantidade_atual')
@@ -96,11 +97,9 @@ export default function ConciliacaoPage() {
             .maybeSingle();
 
           if (insumoExistente) {
-            // Soma a quantidade
             const novaQtd = Number(insumoExistente.quantidade_atual) + Number(item.quantidade);
             await supabase.from('insumos').update({ quantidade_atual: novaQtd }).eq('id', insumoExistente.id);
           } else {
-            // Cria um ingrediente novo na despensa
             await supabase.from('insumos').insert([{
               nome: item.nome_extraido,
               unidade_medida: item.unidade || 'unidade',
@@ -110,13 +109,12 @@ export default function ConciliacaoPage() {
             }]);
           }
         } else if (item.tipo === 'geral') {
-          // 2. Geral: Adicionar às Despesas Mensais
           await supabase.from('despesas').insert([{
             descricao: item.nome_extraido,
             categoria: 'Despesas Gerais e Ferramentas',
             valor: item.valor_total,
             fornecedor: fornecedor,
-            data_despesa: new Date().toISOString().split('T')[0], // Põe a data de hoje por defeito
+            data_despesa: new Date().toISOString().split('T')[0],
             mes_referencia: mesRef,
             pago: true
           }]);
@@ -137,6 +135,17 @@ export default function ConciliacaoPage() {
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         setProgresso({ atual: i + 1, total: files.length });
+        setStatusTexto(`A analisar ficheiro ${i + 1} de ${files.length}...`);
+
+        // 🛡️ 1. VERIFICAÇÃO DE DUPLICADOS (Evitar processar a mesma fatura 2x)
+        const jaExiste = historico.some(h => {
+          return h.resumo?.fileName === file.name || JSON.stringify(h.resumo || {}).includes(file.name);
+        });
+
+        if (jaExiste) {
+          alert(`⚠️ A fatura "${file.name}" já se encontra no sistema! Vamos saltar este ficheiro para não duplicar custos.`);
+          continue; // Salta para a próxima repetição do loop
+        }
 
         const nomeFile = file.name.toLowerCase();
         let catIndividual = categoria; 
@@ -162,7 +171,7 @@ export default function ConciliacaoPage() {
           periodoRef: periodo
         };
 
-        const res = await fetch('/api/conciliacao', { // Certifique-se de que a rota da API está correta aqui (por vezes é /api/conciliacao e outras vezes /admin/conciliacao/api)
+        const res = await fetch('/admin/conciliacao/api', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
@@ -173,15 +182,19 @@ export default function ConciliacaoPage() {
         if (!res.ok) {
            console.error(`Erro ao processar ${file.name}:`, dataAPI.error);
         } else {
-           // MAGIA ACONTECE AQUI: A API devolveu o resumo extraído pela IA.
-           // Se a fatura tiver itens, disparamos a distribuição automática
            if (dataAPI.dadosLidos && dataAPI.dadosLidos.itens && dataAPI.dadosLidos.itens.length > 0) {
               await processarInsercaoNoEstoque(dataAPI.dadosLidos.itens, dataAPI.dadosLidos.fornecedor, periodo);
            }
         }
+
+        // 🛡️ 2. TRAVÃO DE SEGURANÇA (15 Segundos) ENTRE FATURAS
+        if (i < files.length - 1) {
+          setStatusTexto(`A arrefecer a Inteligência Artificial... (A aguardar 15s para o ficheiro ${i + 2})`);
+          await new Promise(resolve => setTimeout(resolve, 15000));
+        }
       }
 
-      alert('Documentos processados! Matéria-prima adicionada ao Stock e Despesas atualizadas! 🎉');
+      alert('Lote finalizado! Matéria-prima adicionada ao Stock e Despesas atualizadas! 🎉');
       setFiles([]);
       setAutoDetectado(false);
       carregarHistorico(); 
@@ -191,6 +204,7 @@ export default function ConciliacaoPage() {
     } finally {
       setProcessando(false);
       setProgresso({ atual: 0, total: 0 });
+      setStatusTexto('A extrair itens e faturas...');
     }
   };
 
@@ -284,7 +298,7 @@ export default function ConciliacaoPage() {
             <div className="p-5 border-b border-zinc-800 bg-zinc-900/80 flex flex-col sm:flex-row justify-between items-center gap-4">
               <div className="flex items-center gap-4">
                 <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-2">
-                  🗄️ Histórico
+                  🗄️ Histórico (Clique numa fatura para ver os itens)
                 </h3>
                 
                 {selecionados.length > 0 && (
@@ -323,43 +337,56 @@ export default function ConciliacaoPage() {
                      <span className="text-xs text-zinc-500 font-bold uppercase ml-3">Selecionar Todos</span>
                   </div>
 
-                  {historico.map((sessao) => (
-                    <div key={sessao.id} className={`bg-zinc-900 border p-4 rounded-xl flex justify-between items-center transition-colors ${selecionados.includes(sessao.id) ? 'border-orange-500 shadow-sm shadow-orange-900/20' : 'border-zinc-700'}`}>
-                      <div className="flex items-center gap-4">
-                        <input 
-                          type="checkbox" 
-                          checked={selecionados.includes(sessao.id)}
-                          onChange={() => toggleSelecionado(sessao.id)}
-                          className="w-5 h-5 rounded border-zinc-700 bg-zinc-950 accent-orange-500 cursor-pointer flex-shrink-0"
-                        />
-                        
-                        <div>
-                          <div className="flex items-center gap-3 mb-1">
-                            <span className="text-xs text-orange-400 font-bold bg-orange-950 px-2 py-1 rounded">{sessao.periodo_ref}</span>
-                            <span className="text-xs text-zinc-500">ID: {sessao.id.split('-')[0]}...</span>
-                          </div>
-                          <h4 className="text-sm font-bold text-white mt-2">
-                            {sessao.tipo_arquivo === 'Glovo' ? '🛵 Extrato Glovo' : 
-                             sessao.tipo_arquivo === 'Palmbites' ? '🌴 Extrato Palmbites' : 
-                             sessao.tipo_arquivo === 'Extrato' ? '🏦 Extrato Bancário' : '🧾 Recibo / Fatura'}
-                          </h4>
+                  {historico.map((sessao) => {
+                    const dados = sessao.resumo;
+                    const listaItens = dados?.itens || dados?.produtos || dados?.line_items || dados?.dadosExtraidos?.itens || dados?.dadosExtraidos?.produtos || (Array.isArray(dados) ? dados : []);
+                    const qtdItensListados = listaItens.length > 0 ? listaItens.length : (dados?.dadosExtraidos ? 1 : 0);
+
+                    return (
+                      <div 
+                        key={sessao.id} 
+                        onClick={() => setSessaoDetalhe(sessao)}
+                        className={`bg-zinc-900 border p-4 rounded-xl flex justify-between items-center cursor-pointer hover:border-orange-500/50 transition-all ${selecionados.includes(sessao.id) ? 'border-orange-500 shadow-sm shadow-orange-900/20' : 'border-zinc-700'}`}
+                      >
+                        <div className="flex items-center gap-4" onClick={(e) => e.stopPropagation()}>
+                          <input 
+                            type="checkbox" 
+                            checked={selecionados.includes(sessao.id)}
+                            onChange={() => toggleSelecionado(sessao.id)}
+                            className="w-5 h-5 rounded border-zinc-700 bg-zinc-950 accent-orange-500 cursor-pointer flex-shrink-0"
+                          />
                           
-                          {/* MOSTRA SE A IA EXTRAIU ITENS DESTA FATURA */}
-                          {sessao.resumo?.itens && sessao.resumo.itens.length > 0 && (
-                            <p className="text-[10px] font-mono text-green-400 mt-2">
-                              ✓ {sessao.resumo.itens.length} itens extraídos e catalogados.
-                            </p>
-                          )}
+                          <div>
+                            <div className="flex items-center gap-3 mb-1">
+                              <span className="text-xs text-orange-400 font-bold bg-orange-950 px-2 py-1 rounded">{sessao.periodo_ref}</span>
+                              <span className="text-xs text-zinc-500">ID: {sessao.id.split('-')[0]}...</span>
+                            </div>
+                            <h4 className="text-sm font-bold text-white mt-2">
+                              {sessao.tipo_arquivo === 'Glovo' ? '🛵 Extrato Glovo' : 
+                               sessao.tipo_arquivo === 'Palmbites' ? '🌴 Extrato Palmbites' : 
+                               sessao.tipo_arquivo === 'Extrato' ? '🏦 Extrato Bancário' : '🧾 Recibo / Fatura'}
+                            </h4>
+                            
+                            {qtdItensListados > 0 ? (
+                              <p className="text-[10px] font-mono text-green-400 mt-2">
+                                ✓ {qtdItensListados} registo(s) extraído(s) (Clique para ver detalhes)
+                              </p>
+                            ) : (
+                              <p className="text-[10px] font-mono text-zinc-500 mt-2">
+                                Clique para inspecionar dados extraídos
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                          <select value={sessao.tipo_arquivo} onChange={(e) => mudarCategoria(sessao.id, e.target.value)} className="bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-300">
+                            {categoriasDisponiveis.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                          </select>
                         </div>
                       </div>
-
-                      <div className="flex items-center gap-2">
-                        <select value={sessao.tipo_arquivo} onChange={(e) => mudarCategoria(sessao.id, e.target.value)} className="bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-300">
-                          {categoriasDisponiveis.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-                        </select>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -368,10 +395,99 @@ export default function ConciliacaoPage() {
 
       </div>
 
+      {/* MODAL DE DETALHES DOS ITENS DA FATURA */}
+      {sessaoDetalhe && (
+        <div className="fixed inset-0 bg-black/80 z-[120] flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-zinc-900 border border-zinc-700 w-full max-w-2xl rounded-3xl p-6 shadow-2xl flex flex-col max-h-[85vh]">
+            <div className="flex justify-between items-center border-b border-zinc-800 pb-4 mb-4">
+              <div>
+                <span className="text-xs font-bold text-orange-400 bg-orange-950 px-2 py-1 rounded">Período: {sessaoDetalhe.periodo_ref}</span>
+                <h3 className="text-xl font-black text-white mt-2">Detalhes dos Itens Extraídos</h3>
+              </div>
+              <button 
+                onClick={() => setSessaoDetalhe(null)}
+                className="bg-zinc-800 hover:bg-zinc-700 text-white w-8 h-8 rounded-full font-bold flex items-center justify-center transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+              {sessaoDetalhe.resumo?.fornecedor && (
+                <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800 mb-4 flex justify-between items-center">
+                  <span className="text-xs text-zinc-400 font-bold uppercase">Fornecedor Identificado:</span>
+                  <span className="text-sm font-black text-white">{sessaoDetalhe.resumo.fornecedor}</span>
+                </div>
+              )}
+
+              {(() => {
+                const dados = sessaoDetalhe.resumo;
+                const listaItens = dados?.itens || dados?.produtos || dados?.line_items || dados?.dadosExtraidos?.itens || dados?.dadosExtraidos?.produtos || (Array.isArray(dados) ? dados : []);
+
+                // Se a IA guardou apenas um objeto consolidado em dadosExtraidos, criamos um item virtual para exibição
+                const itensParaMostrar = listaItens.length > 0 ? listaItens : (dados?.dadosExtraidos ? [{
+                  nome_extraido: `Fatura / Recibo - ${dados.dadosExtraidos.fornecedor || 'Fornecedor'}`,
+                  tipo: 'geral',
+                  quantidade: 1,
+                  unidade: 'un',
+                  valor_total: dados.dadosExtraidos.valorTotal || 0
+                }] : []);
+
+                if (!itensParaMostrar || itensParaMostrar.length === 0) {
+                  return (
+                    <div className="text-center py-12 text-zinc-500 text-sm">
+                      <p className="font-bold mb-2">Conteúdo bruto guardado:</p>
+                      <pre className="text-[10px] text-zinc-400 bg-zinc-950 p-3 rounded-xl overflow-x-auto text-left mt-2">
+                        {JSON.stringify(dados, null, 2)}
+                      </pre>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="space-y-2">
+                    {itensParaMostrar.map((item: any, idx: number) => (
+                      <div key={idx} className="bg-zinc-950/60 border border-zinc-800 p-4 rounded-xl flex justify-between items-center">
+                        <div>
+                          <h4 className="text-sm font-bold text-zinc-200">
+                            {item.nome_extraido || item.nome || item.descricao || item.item || 'Item Descrito'}
+                          </h4>
+                          <div className="flex items-center gap-2 mt-1">
+                            <span className={`text-[10px] font-bold px-2 py-0.5 rounded uppercase ${item.tipo === 'alimentar' ? 'bg-green-950 text-green-400 border border-green-900/50' : item.tipo === 'embalagem' ? 'bg-blue-950 text-blue-400 border border-blue-900/50' : 'bg-amber-950 text-amber-400 border border-amber-900/50'}`}>
+                              {item.tipo || 'geral'}
+                            </span>
+                            <span className="text-xs text-zinc-500 font-mono">Qtd: {item.quantidade || item.qtd || 1} {item.unidade || 'un'}</span>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-base font-black text-white">{(Number(item.valor_total || item.valor || item.preco || 0)).toFixed(2)}€</span>
+                          <span className="text-[10px] text-zinc-500 block uppercase">Total Item</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div className="border-t border-zinc-800 pt-4 mt-4 flex justify-between items-center">
+              <span className="text-xs text-zinc-500">ID da Sessão: {sessaoDetalhe.id}</span>
+              <button 
+                onClick={() => setSessaoDetalhe(null)}
+                className="bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold px-5 py-2.5 rounded-xl transition-colors"
+              >
+                Fechar Janela
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {processando && (
-        <div className="fixed inset-0 bg-black/90 z-[100] flex flex-col items-center justify-center backdrop-blur-md">
+        <div className="fixed inset-0 bg-black/90 z-[120] flex flex-col items-center justify-center backdrop-blur-md">
           <div className="w-16 h-16 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mb-6"></div>
-          <h2 className="text-2xl font-bold text-white mb-2">A extrair itens e faturas...</h2>
+          {/* 🔥 NOVO: Mostra em que passo a IA está (inclusive a pausa de arrefecimento) */}
+          <h2 className="text-2xl font-bold text-white mb-2 text-center px-4">{statusTexto}</h2>
           <p className="text-zinc-400">
             A auditar <span className="font-bold text-white">{progresso.atual}</span> de <span className="font-bold text-white">{progresso.total}</span> ficheiros inseridos.
           </p>

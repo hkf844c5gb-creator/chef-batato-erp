@@ -37,11 +37,33 @@ export async function POST(req: Request) {
     const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
 
     const promptContexto = `
-      És um auditor financeiro. Analisa este documento (tipo: ${tipoArquivo}).
-      Devolve APENAS um objeto JSON válido, sem \`\`\`json.
-      Fatura: { "fornecedor": string, "data": "YYYY-MM-DD", "valorTotal": number }
-      Extrato: { "movimentos": [{ "data": "YYYY-MM-DD", "descricao": string, "valor": number, "tipo": "entrada" | "saida" }] }
-      Mantém números de telefone MBWAY na descrição.
+      És um auditor financeiro e de stock experiente. Analisa este documento (tipo: ${tipoArquivo}).
+      Devolve APENAS um objeto JSON válido, sem blocos de código markdown (\`\`\`json).
+      
+      Se o documento for uma Fatura/Recibo, extrai obrigatoriamente os dados gerais E a lista detalhada de produtos/itens comprados:
+      {
+        "fornecedor": string,
+        "data": "YYYY-MM-DD",
+        "valorTotal": number,
+        "itens": [
+          {
+            "nome_extraido": string,
+            "quantidade": number,
+            "unidade": string (ex: "kg", "un", "L", "cx", "g"),
+            "tipo": "alimentar" | "embalagem" | "geral",
+            "valor_total": number
+          }
+        ]
+      }
+
+      Se o documento for um Extrato Bancário ou de Plataformas, devolve:
+      { 
+        "movimentos": [
+          { "data": "YYYY-MM-DD", "descricao": string, "valor": number, "tipo": "entrada" | "saida" }
+        ] 
+      }
+
+      Mantém números de telefone MBWAY na descrição dos movimentos quando aplicável.
     `;
 
     const imageParts = [{ inlineData: { data: base64Data, mimeType: detectedMimeType } }];
@@ -53,38 +75,70 @@ export async function POST(req: Request) {
     const retiradasSocios: any[] = [];
     const conciliacoes: any[] = [];
 
-    // --- LÓGICA DE CRUZAMENTO AUTOMÁTICO E STATUS ---
+    // --- ALIMENTAÇÃO AUTOMÁTICA DA DESPENSA (TABELA insumos) ---
+    if (tipoArquivo === 'Fatura' && dadosExtraidos.itens && Array.isArray(dadosExtraidos.itens)) {
+      for (const item of dadosExtraidos.itens) {
+        if (!item.nome_extraido) continue;
 
+        const qtdComprada = Number(item.quantidade || 1);
+        const custoTotalItem = Number(item.valor_total || 0);
+        const custoUnitCalc = qtdComprada > 0 ? custoTotalItem / qtdComprada : 0;
+
+        // Procura insumo existente pelo nome exato ou semelhante
+        const { data: insumoExistente } = await supabase
+          .from('insumos')
+          .select('id, quantidade_atual')
+          .ilike('nome', `%${item.nome_extraido.trim()}%`)
+          .limit(1)
+          .maybeSingle();
+
+        if (insumoExistente) {
+          const novaQtd = Number(insumoExistente.quantidade_atual || 0) + qtdComprada;
+          await supabase.from('insumos').update({
+            quantidade_atual: novaQtd,
+            custo_por_unidade: custoUnitCalc > 0 ? custoUnitCalc : undefined
+          }).eq('id', insumoExistente.id);
+        } else {
+          await supabase.from('insumos').insert([{
+            nome: item.nome_extraido.trim(),
+            unidade_medida: item.unidade || 'unid',
+            quantidade_atual: qtdComprada,
+            quantidade_alerta: 2,
+            custo_por_unidade: custoUnitCalc
+          }]);
+        }
+      }
+    }
+
+    // --- CRUZAMENTO DE DESPESAS ---
     if (tipoArquivo === 'Fatura') {
-      // Procura se já existe um registo bancário para esta fatura
+      const valorTotalFatura = Number(dadosExtraidos.valorTotal || 0);
+
       const { data: despesaExistente } = await supabase
         .from('despesas')
         .select('*')
-        .gte('valor', dadosExtraidos.valorTotal - 1)
-        .lte('valor', dadosExtraidos.valorTotal + 1)
+        .gte('valor', valorTotalFatura - 1)
+        .lte('valor', valorTotalFatura + 1)
         .maybeSingle();
 
       if (!despesaExistente) {
-        // Não existe no banco ainda -> Insere como Falta Pagamento
         const novoId = crypto.randomUUID();
         await supabase.from('despesas').insert([{
           id: novoId,
-          data_despesa: dadosExtraidos.data,
-          descricao: dadosExtraidos.fornecedor,
+          data_despesa: dadosExtraidos.data || new Date().toISOString().split('T')[0],
+          descricao: dadosExtraidos.fornecedor || 'Fatura Desconhecida',
           categoria: 'Fatura Física',
-          valor: dadosExtraidos.valorTotal,
+          valor: valorTotalFatura,
           status: 'Falta Pagamento'
         }]);
-        conciliacoes.push({ detalhe: `Fatura de ${dadosExtraidos.fornecedor} registada aguardando pagamento.`, status: 'Inserida' });
-      
+        conciliacoes.push({ detalhe: `Fatura de ${dadosExtraidos.fornecedor || 'Fornecedor'} registada aguardando pagamento.`, status: 'Inserida' });
       } else {
-        // A despesa já existe (provavelmente veio do extrato primeiro) -> CRUZA E VALIDA
         await supabase.from('despesas').update({ 
           status: 'Validado',
-          descricao: `[VALIDADO] ${dadosExtraidos.fornecedor}` 
+          descricao: `[VALIDADO] ${dadosExtraidos.fornecedor || 'Fornecedor'}` 
         }).eq('id', despesaExistente.id);
         
-        conciliacoes.push({ detalhe: `Fatura de ${dadosExtraidos.fornecedor} cruzada com movimento bancário!`, status: 'Validado' });
+        conciliacoes.push({ detalhe: `Fatura de ${dadosExtraidos.fornecedor || 'Fornecedor'} cruzada com movimento bancário!`, status: 'Validado' });
       }
     } 
     else if (['Extrato', 'Glovo', 'Palmbites'].includes(tipoArquivo)) {
@@ -94,7 +148,6 @@ export async function POST(req: Request) {
             let socioEncontrado = false;
             const descLimpa = mov.descricao.replace(/\s+/g, '');
 
-            // Caça ao MBWAY dos Sócios
             for (const [numero, nome] of Object.entries(SOCIOS_MBWAY)) {
               if (descLimpa.includes(numero)) {
                 retiradasSocios.push({
@@ -106,7 +159,6 @@ export async function POST(req: Request) {
             }
 
             if (!socioEncontrado) {
-              // Procura se já existe uma Fatura no ERP para este movimento
               const { data: despesaCorresp } = await supabase
                 .from('despesas')
                 .select('*')
@@ -115,11 +167,9 @@ export async function POST(req: Request) {
                 .maybeSingle();
 
               if (despesaCorresp) {
-                // A Fatura já estava no sistema -> CRUZA E VALIDA
                 await supabase.from('despesas').update({ status: 'Validado' }).eq('id', despesaCorresp.id);
                 conciliacoes.push({ detalhe: `Pagamento de ${mov.valor}€ validou a fatura ${despesaCorresp.descricao}`, status: 'Validado' });
               } else {
-                // Dinheiro saiu mas não há Fatura inserida -> Insere como Falta Fatura
                 const novoId = crypto.randomUUID();
                 await supabase.from('despesas').insert([{
                   id: novoId,
@@ -140,6 +190,7 @@ export async function POST(req: Request) {
     const resumo: any = { 
       status: `Auditoria Concluída`, 
       dadosExtraidos,
+      itens: dadosExtraidos.itens || [],
       relatorio_socios: retiradasSocios.length > 0 ? retiradasSocios : "Nenhuma retirada detetada.",
       conciliacoes: conciliacoes.length > 0 ? conciliacoes : "Nenhum cruzamento exato encontrado."
     };
@@ -153,7 +204,7 @@ export async function POST(req: Request) {
 
     if (error) throw error;
 
-    return NextResponse.json({ sucesso: true, sessao });
+    return NextResponse.json({ sucesso: true, sessao, dadosLidos: dadosExtraidos });
 
   } catch (error: unknown) {
     console.error("🔥 ERRO NA API:", error);

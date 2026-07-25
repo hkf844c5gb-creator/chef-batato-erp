@@ -24,13 +24,14 @@ interface Pedido {
   total_geral: number;
   pago: boolean;
   itens?: ItemPedido[];
+  // Propriedade para guardar os IDs de pedidos históricos fragmentados
+  ids_fragmentados?: string[]; 
 }
 
 export default function GestaoPedidos() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // --- ESTADOS PARA A EDIÇÃO ---
   const [modalEditar, setModalEditar] = useState(false);
   const [pedidoEditando, setPedidoEditando] = useState<Pedido | null>(null);
   const [salvando, setSalvando] = useState(false);
@@ -43,39 +44,89 @@ export default function GestaoPedidos() {
   async function carregarPedidosEItens() {
     setLoading(true);
     try {
-      const { data: dataPedidos, error: errorPedidos } = await supabase
+      const { data, error } = await supabase
         .from('pedidos')
-        .select('*')
+        .select(`
+          *,
+          itens:itens_pedido (*)
+        `)
         .order('numero_pedido', { ascending: false });
 
-      if (errorPedidos) throw errorPedidos;
+      if (error) throw error;
 
-      if (dataPedidos && dataPedidos.length > 0) {
-        const { data: dataItens, error: errorItens } = await supabase
-          .from('itens_pedido')
-          .select('*');
+      if (data && data.length > 0) {
+        const agrupados = new Map<string, Pedido>();
 
-        if (errorItens) throw errorItens;
+        data.forEach((linha: any) => {
+          const chaveNum = String(linha.numero_pedido); 
+          const taxa = Number(linha.taxa_entrega || 0);
+          const desconto = Number(linha.desconto || 0);
 
-        const pedidosComItens = dataPedidos.map((pedido: any) => {
-          const filtrados = dataItens ? dataItens.filter((item: any) => item.pedido_id === pedido.id) : [];
-          return {
-            ...pedido,
-            taxa_entrega: Number(pedido.taxa_entrega || 0),
-            desconto: Number(pedido.desconto || 0),
-            total_geral: Number(pedido.total_geral || 0),
-            pago: pedido.pago === true,
-            itens: filtrados.map((item: any) => ({
+          const itensDestaLinha = (linha.itens || []).map((item: any) => {
+            let precoUnitarioCorreto = Number(item.preco_unitario || 0);
+
+            // 🎯 REGRA ESPECIAL DE PREÇOS PARA REVENDEDORES
+            if (linha.canal === 'Revendedores') {
+              const nomeProduto = (item.nome_produto || '').toLowerCase();
+              if (nomeProduto.includes('fudge') || nomeProduto.includes('new york')) {
+                precoUnitarioCorreto = 1.70;
+              } else {
+                precoUnitarioCorreto = 2.70;
+              }
+            }
+
+            return {
               id: item.id,
               codigo_produto: item.codigo_produto || '',
               nome_produto: item.nome_produto || '',
               quantidade: Number(item.quantidade || 1),
-              preco_unitario: Number(item.preco_unitario || 0)
-            }))
-          };
+              preco_unitario: precoUnitarioCorreto // Aplica o preço corrigido
+            };
+          });
+
+          if (!agrupados.has(chaveNum)) {
+            // Regista o pedido pela primeira vez
+            agrupados.set(chaveNum, {
+              ...linha,
+              numero_pedido: Number(linha.numero_pedido),
+              taxa_entrega: taxa,
+              desconto: desconto,
+              pago: linha.pago === true,
+              itens: [...itensDestaLinha],
+              ids_fragmentados: [linha.id] 
+            });
+          } else {
+            // Se já existe, funde os dados de forma inteligente
+            const existente = agrupados.get(chaveNum)!;
+            
+            existente.itens?.push(...itensDestaLinha);
+            existente.ids_fragmentados?.push(linha.id);
+            
+            // RESGATE DE DADOS (Estafeta, Cliente, Pagamento)
+            if (!existente.entregador && linha.entregador) {
+              existente.entregador = linha.entregador;
+            }
+            if (!existente.cliente && linha.cliente) {
+              existente.cliente = linha.cliente;
+            }
+            if (linha.pago === true) {
+              existente.pago = true;
+            }
+
+            // Garante que pega na maior taxa/desconto de todas as linhas do mesmo pedido
+            existente.taxa_entrega = Math.max(existente.taxa_entrega, taxa);
+            existente.desconto = Math.max(existente.desconto, desconto);
+          }
         });
 
-        setPedidos(pedidosComItens);
+        // Converte o Map para Array, recalcula o Total Geral real com os preços certos e ordena
+        const pedidosFormatados = Array.from(agrupados.values()).map(ped => {
+          const subtotalItens = (ped.itens || []).reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
+          ped.total_geral = subtotalItens + ped.taxa_entrega - ped.desconto;
+          return ped;
+        }).sort((a, b) => b.numero_pedido - a.numero_pedido);
+
+        setPedidos(pedidosFormatados);
       } else {
         setPedidos([]);
       }
@@ -86,56 +137,53 @@ export default function GestaoPedidos() {
     }
   }
 
-  const liquidarCaderninho = async (pedidoId: string) => {
+  const liquidarCaderninho = async (pedidoNum: number) => {
     try {
       const { error } = await supabase
         .from('pedidos')
         .update({ pago: true })
-        .eq('id', pedidoId);
+        .eq('numero_pedido', pedidoNum);
 
       if (error) throw error;
-      setPedidos(prev => prev.map(p => p.id === pedidoId ? { ...p, pago: true } : p));
+      setPedidos(prev => prev.map(p => p.numero_pedido === pedidoNum ? { ...p, pago: true } : p));
     } catch (err) {
       console.error(err);
       alert('Erro ao liquidar pagamento.');
     }
   };
 
-  // --- NOVA FUNÇÃO: EXCLUIR PEDIDO ---
-  const excluirPedido = async (pedidoId: string) => {
-    if (!confirm('⚠️ Tem a certeza que deseja excluir este pedido definitivamente? Esta ação não pode ser desfeita.')) return;
+  const excluirPedido = async (pedidoNum: number, ids: string[]) => {
+    if (!confirm(`⚠️ Tem a certeza que deseja excluir definitivamente o pedido #${pedidoNum}?`)) return;
     
     try {
-      // É boa prática apagar os itens associados primeiro (caso a base de dados não tenha CASCADE)
-      await supabase.from('itens_pedido').delete().eq('pedido_id', pedidoId);
+      await supabase.from('itens_pedido').delete().in('pedido_id', ids);
       
-      const { error } = await supabase.from('pedidos').delete().eq('id', pedidoId);
+      const { error } = await supabase.from('pedidos').delete().in('id', ids);
       if (error) throw error;
       
-      setPedidos(prev => prev.filter(p => p.id !== pedidoId));
+      setPedidos(prev => prev.filter(p => p.numero_pedido !== pedidoNum));
     } catch (err: any) {
       alert(`Erro ao excluir pedido: ${err.message}`);
     }
   };
 
-  // --- NOVA FUNÇÃO: ABRIR MODAL DE EDIÇÃO ---
   const abrirEdicao = (pedido: Pedido) => {
     setPedidoEditando({ ...pedido });
     setModalEditar(true);
   };
 
-  // --- NOVA FUNÇÃO: SALVAR EDIÇÃO ---
   const salvarEdicao = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pedidoEditando) return;
 
     setSalvando(true);
     try {
-      // Recalcula o Total Geral baseado nas novas taxas ou descontos introduzidos
+      // 1. O subtotal base já estará correto porque os preços foram ajustados na leitura
       const subtotalItens = pedidoEditando.itens?.reduce((acc, item) => acc + (item.quantidade * item.preco_unitario), 0) || 0;
       const novoTotal = Math.max(0, subtotalItens + Number(pedidoEditando.taxa_entrega) - Number(pedidoEditando.desconto));
 
-      const { error } = await supabase
+      // 2. Atualiza a primeira linha com os dados reais
+      const { error: erroPrincipal } = await supabase
         .from('pedidos')
         .update({
           cliente: pedidoEditando.cliente,
@@ -149,10 +197,24 @@ export default function GestaoPedidos() {
         })
         .eq('id', pedidoEditando.id);
 
-      if (error) throw error;
+      if (erroPrincipal) throw erroPrincipal;
+
+      // 3. Limpa os valores monetários das linhas "duplicadas" (fantasma) no histórico
+      if (pedidoEditando.ids_fragmentados && pedidoEditando.ids_fragmentados.length > 1) {
+        await supabase
+          .from('pedidos')
+          .update({
+            taxa_entrega: 0,
+            desconto: 0,
+            total_geral: 0,
+            pago: pedidoEditando.pago 
+          })
+          .eq('numero_pedido', pedidoEditando.numero_pedido)
+          .neq('id', pedidoEditando.id);
+      }
 
       setModalEditar(false);
-      carregarPedidosEItens(); // Recarrega para garantir que os dados visuais batem certo
+      carregarPedidosEItens(); 
     } catch (err: any) {
       alert(`Erro ao salvar edição: ${err.message}`);
     } finally {
@@ -183,13 +245,13 @@ export default function GestaoPedidos() {
     if (canal === 'Glovo') return 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20';
     if (canal === 'WhatsApp') return 'bg-green-500/10 text-green-500 border-green-500/20';
     if (canal === 'Palmbites') return 'bg-teal-500/10 text-teal-500 border-teal-500/20';
+    if (canal === 'Revendedores') return 'bg-purple-500/10 text-purple-400 border-purple-500/20';
     return 'bg-zinc-500/10 text-zinc-400 border-zinc-800';
   };
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white flex flex-col font-sans relative">
       
-      {/* Topo do Painel */}
       <header className="bg-zinc-900 border-b border-zinc-800 px-6 py-4 flex justify-between items-center shadow-lg">
         <div className="flex items-center gap-3">
           <span className="text-2xl">📓</span>
@@ -203,7 +265,6 @@ export default function GestaoPedidos() {
         </button>
       </header>
 
-      {/* Painel de Indicadores Rápidos */}
       <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-zinc-900 border border-zinc-800/60 p-4 rounded-xl flex justify-between items-center">
           <div><span className="text-[10px] text-zinc-400 uppercase font-black">Faturamento Bruto</span><p className="text-2xl font-black mt-1">{faturamentoTotal.toFixed(2)}€</p></div>
@@ -219,7 +280,6 @@ export default function GestaoPedidos() {
         </div>
       </div>
 
-      {/* Grid de Cards das Vendas */}
       <main className="flex-1 px-6 pb-6 overflow-y-auto">
         {loading ? (
           <div className="text-center text-zinc-500 py-24">A carregar registos...</div>
@@ -232,22 +292,20 @@ export default function GestaoPedidos() {
             {pedidos.map((ped) => (
               <div key={ped.id} className="bg-zinc-900 border border-zinc-800/80 rounded-2xl p-4 flex flex-col justify-between shadow-md hover:border-zinc-700/60 transition-all relative group">
                 
-                {/* BOTÕES DE EDIÇÃO E EXCLUSÃO (Aparecem no topo do card) */}
                 <div className="absolute top-3 right-3 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button onClick={() => abrirEdicao(ped)} className="w-7 h-7 bg-zinc-800 hover:bg-blue-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Editar Informações">
                     ✏️
                   </button>
-                  <button onClick={() => excluirPedido(ped.id)} className="w-7 h-7 bg-zinc-800 hover:bg-red-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Excluir Pedido">
+                  <button onClick={() => excluirPedido(ped.numero_pedido, ped.ids_fragmentados!)} className="w-7 h-7 bg-zinc-800 hover:bg-red-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Excluir Pedido">
                     🗑️
                   </button>
                 </div>
 
                 <div>
-                  {/* Cabeçalho do Card */}
                   <div className="flex justify-between items-start gap-2 border-b border-zinc-800/60 pb-3 mb-3 pr-16">
                     <div>
                       <span className="text-[10px] font-mono text-zinc-500">#{ped.numero_pedido}</span>
-                      <h3 className="font-bold text-zinc-100 text-sm mt-0.5">{ped.cliente}</h3>
+                      <h3 className="font-bold text-zinc-100 text-sm mt-0.5">{ped.cliente || 'Cliente Anónimo'}</h3>
                     </div>
                     <div className="flex flex-col items-end gap-1">
                       <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase tracking-wider ${getCorCanal(ped.canal)}`}>
@@ -259,7 +317,6 @@ export default function GestaoPedidos() {
                     </div>
                   </div>
 
-                  {/* Lista de Itens internos */}
                   <div className="space-y-2 mb-4">
                     {ped.itens && ped.itens.map((item) => (
                       <div key={item.id} className="flex justify-between text-xs text-zinc-300">
@@ -267,13 +324,13 @@ export default function GestaoPedidos() {
                           <span className="font-bold text-orange-400 mr-1.5">{item.quantidade}x</span>
                           {item.nome_produto}
                         </span>
+                        {/* Mostra o preço unitário corrigido e calculado */}
                         <span className="font-mono text-zinc-500 text-[11px]">{(item.preco_unitario * item.quantidade).toFixed(2)}€</span>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                {/* Rodapé Dinâmico do Card */}
                 <div className="border-t border-zinc-800/60 pt-3 mt-2 space-y-2 text-xs text-zinc-400">
                   <div className="flex justify-between text-[11px]">
                     <span>Pagamento: <span className="text-zinc-200 font-medium">{ped.forma_pagamento}</span></span>
@@ -292,10 +349,9 @@ export default function GestaoPedidos() {
                     <span className="text-base font-black text-orange-500">{ped.total_geral.toFixed(2)}€</span>
                   </div>
 
-                  {/* Botão de liquidação de Caderninho */}
                   {!ped.pago && (
                     <button 
-                      onClick={() => liquidarCaderninho(ped.id)} 
+                      onClick={() => liquidarCaderninho(ped.numero_pedido)} 
                       className="w-full mt-2 bg-green-600 hover:bg-green-700 text-white text-[10px] font-bold py-1.5 rounded-lg transition-all"
                     >
                       ✓ Recebido (Confirmar Pagamento)
@@ -309,7 +365,6 @@ export default function GestaoPedidos() {
         )}
       </main>
 
-      {/* --- MODAL DE EDIÇÃO --- */}
       {modalEditar && pedidoEditando && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-zinc-900 border border-zinc-800 w-full max-w-lg rounded-3xl p-6 shadow-2xl relative">
@@ -327,7 +382,7 @@ export default function GestaoPedidos() {
                   <input 
                     type="text" 
                     required
-                    value={pedidoEditando.cliente} 
+                    value={pedidoEditando.cliente || ''} 
                     onChange={e => setPedidoEditando({...pedidoEditando, cliente: e.target.value})} 
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white focus:border-orange-500 outline-none" 
                   />
@@ -344,6 +399,7 @@ export default function GestaoPedidos() {
                     <option value="WhatsApp">WhatsApp</option>
                     <option value="Glovo">Glovo</option>
                     <option value="Palmbites">Palmbites</option>
+                    <option value="Revendedores">Revendedores</option>
                   </select>
                 </div>
 
