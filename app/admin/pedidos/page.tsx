@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
 interface ItemPedido {
@@ -31,6 +31,10 @@ interface Pedido {
 export default function GestaoPedidos() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Filtros por intervalo de datas. Vazios = mostrar todos os pedidos.
+  const [dataInicio, setDataInicio] = useState('');
+  const [dataFim, setDataFim] = useState('');
 
   const [modalEditar, setModalEditar] = useState(false);
   const [pedidoEditando, setPedidoEditando] = useState<Pedido | null>(null);
@@ -237,9 +241,41 @@ export default function GestaoPedidos() {
     };
   }, []);
 
-  const faturamentoTotal = pedidos.reduce((acc, p) => acc + p.total_geral, 0);
-  const totalDescontos = pedidos.reduce((acc, p) => acc + p.desconto, 0);
-  const pendenteCaderninho = pedidos.filter(p => !p.pago).reduce((acc, p) => acc + p.total_geral, 0);
+  // Converte data_venda para YYYY-MM-DD sem sofrer alteração por fuso horário.
+  const normalizarData = (valor: string) => {
+    if (!valor) return '';
+
+    // Supabase normalmente devolve: YYYY-MM-DD ou YYYY-MM-DDTHH:mm:ss...
+    const formatoIso = valor.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (formatoIso) return `${formatoIso[1]}-${formatoIso[2]}-${formatoIso[3]}`;
+
+    // Compatibilidade com datas antigas no formato DD/MM/YYYY.
+    const formatoPt = valor.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+    if (formatoPt) return `${formatoPt[3]}-${formatoPt[2]}-${formatoPt[1]}`;
+
+    return '';
+  };
+
+  const pedidosFiltrados = useMemo(() => {
+    return pedidos.filter((pedido) => {
+      const dataPedido = normalizarData(pedido.data_venda);
+      if (!dataPedido) return !dataInicio && !dataFim;
+
+      const depoisDoInicio = !dataInicio || dataPedido >= dataInicio;
+      const antesDoFim = !dataFim || dataPedido <= dataFim;
+
+      return depoisDoInicio && antesDoFim;
+    });
+  }, [pedidos, dataInicio, dataFim]);
+
+  const limparFiltroDatas = () => {
+    setDataInicio('');
+    setDataFim('');
+  };
+
+  const faturamentoTotal = pedidosFiltrados.reduce((acc, p) => acc + p.total_geral, 0);
+  const totalDescontos = pedidosFiltrados.reduce((acc, p) => acc + p.desconto, 0);
+  const pendenteCaderninho = pedidosFiltrados.filter(p => !p.pago).reduce((acc, p) => acc + p.total_geral, 0);
 
   const getCorCanal = (canal: string) => {
     if (canal === 'Glovo') return 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20';
@@ -265,6 +301,59 @@ export default function GestaoPedidos() {
         </button>
       </header>
 
+      <section className="px-6 pt-6">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
+          <div className="flex flex-col xl:flex-row xl:items-end gap-4">
+            <div className="flex-1">
+              <h2 className="text-sm font-bold text-zinc-100">Filtrar pedidos por data</h2>
+              <p className="text-xs text-zinc-500 mt-1">Escolha a data inicial e a data final do período.</p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full xl:w-auto">
+              <div>
+                <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">Data inicial</label>
+                <input
+                  type="date"
+                  value={dataInicio}
+                  max={dataFim || undefined}
+                  onChange={(e) => setDataInicio(e.target.value)}
+                  className="w-full sm:w-48 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-white focus:border-orange-500 outline-none [color-scheme:dark]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">Data final</label>
+                <input
+                  type="date"
+                  value={dataFim}
+                  min={dataInicio || undefined}
+                  onChange={(e) => setDataFim(e.target.value)}
+                  className="w-full sm:w-48 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-white focus:border-orange-500 outline-none [color-scheme:dark]"
+                />
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={limparFiltroDatas}
+              disabled={!dataInicio && !dataFim}
+              className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed text-xs font-bold px-4 py-2.5 rounded-xl border border-zinc-700 transition-all"
+            >
+              Limpar filtro
+            </button>
+          </div>
+
+          <div className="mt-4 pt-3 border-t border-zinc-800 flex flex-wrap gap-x-5 gap-y-1 text-xs text-zinc-400">
+            <span><strong className="text-white">{pedidosFiltrados.length}</strong> pedidos encontrados</span>
+            {(dataInicio || dataFim) && (
+              <span>
+                Período: <strong className="text-orange-400">{dataInicio || 'início'}</strong> até <strong className="text-orange-400">{dataFim || 'hoje'}</strong>
+              </span>
+            )}
+          </div>
+        </div>
+      </section>
+
       <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-zinc-900 border border-zinc-800/60 p-4 rounded-xl flex justify-between items-center">
           <div><span className="text-[10px] text-zinc-400 uppercase font-black">Faturamento Bruto</span><p className="text-2xl font-black mt-1">{faturamentoTotal.toFixed(2)}€</p></div>
@@ -283,13 +372,15 @@ export default function GestaoPedidos() {
       <main className="flex-1 px-6 pb-6 overflow-y-auto">
         {loading ? (
           <div className="text-center text-zinc-500 py-24">A carregar registos...</div>
-        ) : pedidos.length === 0 ? (
+        ) : pedidosFiltrados.length === 0 ? (
           <div className="text-center text-zinc-500 py-24 bg-zinc-900/20 border border-dashed border-zinc-800 rounded-2xl max-w-xl mx-auto">
-            Nenhum pedido lançado no sistema até ao momento.
+            {pedidos.length === 0
+              ? 'Nenhum pedido lançado no sistema até ao momento.'
+              : 'Nenhum pedido encontrado dentro do período selecionado.'}
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {pedidos.map((ped) => (
+            {pedidosFiltrados.map((ped) => (
               <div key={ped.id} className="bg-zinc-900 border border-zinc-800/80 rounded-2xl p-4 flex flex-col justify-between shadow-md hover:border-zinc-700/60 transition-all relative group">
                 
                 <div className="absolute top-3 right-3 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
