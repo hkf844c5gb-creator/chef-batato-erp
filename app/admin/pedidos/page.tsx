@@ -24,7 +24,6 @@ interface Pedido {
   total_geral: number;
   pago: boolean;
   itens?: ItemPedido[];
-  // Propriedade para guardar os IDs de pedidos históricos fragmentados
   ids_fragmentados?: string[]; 
 }
 
@@ -32,7 +31,6 @@ export default function GestaoPedidos() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Filtros por intervalo de datas. Vazios = mostrar todos os pedidos.
   const [dataInicio, setDataInicio] = useState('');
   const [dataFim, setDataFim] = useState('');
 
@@ -69,7 +67,6 @@ export default function GestaoPedidos() {
           const itensDestaLinha = (linha.itens || []).map((item: any) => {
             let precoUnitarioCorreto = Number(item.preco_unitario || 0);
 
-            // 🎯 REGRA ESPECIAL DE PREÇOS PARA REVENDEDORES
             if (linha.canal === 'Revendedores') {
               const nomeProduto = (item.nome_produto || '').toLowerCase();
               if (nomeProduto.includes('fudge') || nomeProduto.includes('new york')) {
@@ -84,12 +81,11 @@ export default function GestaoPedidos() {
               codigo_produto: item.codigo_produto || '',
               nome_produto: item.nome_produto || '',
               quantidade: Number(item.quantidade || 1),
-              preco_unitario: precoUnitarioCorreto // Aplica o preço corrigido
+              preco_unitario: precoUnitarioCorreto
             };
           });
 
           if (!agrupados.has(chaveNum)) {
-            // Regista o pedido pela primeira vez
             agrupados.set(chaveNum, {
               ...linha,
               numero_pedido: Number(linha.numero_pedido),
@@ -100,13 +96,11 @@ export default function GestaoPedidos() {
               ids_fragmentados: [linha.id] 
             });
           } else {
-            // Se já existe, funde os dados de forma inteligente
             const existente = agrupados.get(chaveNum)!;
             
             existente.itens?.push(...itensDestaLinha);
             existente.ids_fragmentados?.push(linha.id);
             
-            // RESGATE DE DADOS (Estafeta, Cliente, Pagamento)
             if (!existente.entregador && linha.entregador) {
               existente.entregador = linha.entregador;
             }
@@ -117,13 +111,11 @@ export default function GestaoPedidos() {
               existente.pago = true;
             }
 
-            // Garante que pega na maior taxa/desconto de todas as linhas do mesmo pedido
             existente.taxa_entrega = Math.max(existente.taxa_entrega, taxa);
             existente.desconto = Math.max(existente.desconto, desconto);
           }
         });
 
-        // Converte o Map para Array, recalcula o Total Geral real com os preços certos e ordena
         const pedidosFormatados = Array.from(agrupados.values()).map(ped => {
           const subtotalItens = (ped.itens || []).reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
           ped.total_geral = subtotalItens + ped.taxa_entrega - ped.desconto;
@@ -182,11 +174,9 @@ export default function GestaoPedidos() {
 
     setSalvando(true);
     try {
-      // 1. O subtotal base já estará correto porque os preços foram ajustados na leitura
       const subtotalItens = pedidoEditando.itens?.reduce((acc, item) => acc + (item.quantidade * item.preco_unitario), 0) || 0;
       const novoTotal = Math.max(0, subtotalItens + Number(pedidoEditando.taxa_entrega) - Number(pedidoEditando.desconto));
 
-      // 2. Atualiza a primeira linha com os dados reais
       const { error: erroPrincipal } = await supabase
         .from('pedidos')
         .update({
@@ -203,7 +193,6 @@ export default function GestaoPedidos() {
 
       if (erroPrincipal) throw erroPrincipal;
 
-      // 3. Limpa os valores monetários das linhas "duplicadas" (fantasma) no histórico
       if (pedidoEditando.ids_fragmentados && pedidoEditando.ids_fragmentados.length > 1) {
         await supabase
           .from('pedidos')
@@ -241,36 +230,40 @@ export default function GestaoPedidos() {
     };
   }, []);
 
-  // Converte data_venda para YYYY-MM-DD sem sofrer alteração por fuso horário.
-  const normalizarData = (valor: string) => {
+  // 🎯 EXTRATOR DE DATA UNIVERSAL (Lida com qualquer formato vindo da BD)
+  const extrairDataIso = (valor: string) => {
     if (!valor) return '';
-
-    // Supabase normalmente devolve: YYYY-MM-DD ou YYYY-MM-DDTHH:mm:ss...
-    const formatoIso = valor.match(/^(\d{4})-(\d{2})-(\d{2})/);
-    if (formatoIso) return `${formatoIso[1]}-${formatoIso[2]}-${formatoIso[3]}`;
-
-    // Compatibilidade com datas antigas no formato DD/MM/YYYY.
-    const formatoPt = valor.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
-    if (formatoPt) return `${formatoPt[3]}-${formatoPt[2]}-${formatoPt[1]}`;
-
+    // Procura o padrão YYYY-MM-DD independentemente de haver horas a seguir
+    const match = valor.match(/(\d{4})-(\d{2})-(\d{2})/);
+    if (match) {
+      return `${match[1]}-${match[2]}-${match[3]}`;
+    }
     return '';
   };
 
   const pedidosFiltrados = useMemo(() => {
     return pedidos.filter((pedido) => {
-      const dataPedido = normalizarData(pedido.data_venda);
-      if (!dataPedido) return !dataInicio && !dataFim;
+      const dataPedidoFormatada = extrairDataIso(pedido.data_venda);
+      
+      // Se o pedido não tiver data legível, passamos para não o ocultar acidentalmente
+      if (!dataPedidoFormatada) return true;
 
-      const depoisDoInicio = !dataInicio || dataPedido >= dataInicio;
-      const antesDoFim = !dataFim || dataPedido <= dataFim;
+      if (dataInicio && dataPedidoFormatada < dataInicio) return false;
+      if (dataFim && dataPedidoFormatada > dataFim) return false;
 
-      return depoisDoInicio && antesDoFim;
+      return true;
     });
   }, [pedidos, dataInicio, dataFim]);
 
-  const limparFiltroDatas = () => {
+  const limparFiltroDatas = () => {	
     setDataInicio('');
     setDataFim('');
+  };
+
+  const selecionarHoje = () => {
+    const hojeIso = new Date().toISOString().split('T')[0];
+    setDataInicio(hojeIso);
+    setDataFim(hojeIso);
   };
 
   const faturamentoTotal = pedidosFiltrados.reduce((acc, p) => acc + p.total_geral, 0);
@@ -301,17 +294,18 @@ export default function GestaoPedidos() {
         </button>
       </header>
 
+      {/* 📅 SECÇÃO DE FILTROS POR DATA */}
       <section className="px-6 pt-6">
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
           <div className="flex flex-col xl:flex-row xl:items-end gap-4">
             <div className="flex-1">
-              <h2 className="text-sm font-bold text-zinc-100">Filtrar pedidos por data</h2>
-              <p className="text-xs text-zinc-500 mt-1">Escolha a data inicial e a data final do período.</p>
+              <h2 className="text-sm font-bold text-zinc-100">Filtrar por Intervalo de Datas</h2>
+              <p className="text-xs text-zinc-500 mt-1">Selecione o dia, mês e ano inicial até ao dia, mês e ano final.</p>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full xl:w-auto">
               <div>
-                <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">Data inicial</label>
+                <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">De (Data Inicial)</label>
                 <input
                   type="date"
                   value={dataInicio}
@@ -322,7 +316,7 @@ export default function GestaoPedidos() {
               </div>
 
               <div>
-                <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">Data final</label>
+                <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">Até (Data Final)</label>
                 <input
                   type="date"
                   value={dataFim}
@@ -333,27 +327,37 @@ export default function GestaoPedidos() {
               </div>
             </div>
 
-            <button
-              type="button"
-              onClick={limparFiltroDatas}
-              disabled={!dataInicio && !dataFim}
-              className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed text-xs font-bold px-4 py-2.5 rounded-xl border border-zinc-700 transition-all"
-            >
-              Limpar filtro
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={selecionarHoje}
+                className="bg-orange-600 hover:bg-orange-500 text-xs font-bold px-4 py-2.5 rounded-xl transition-all shadow-md"
+              >
+                Hoje
+              </button>
+              <button
+                type="button"
+                onClick={limparFiltroDatas}
+                disabled={!dataInicio && !dataFim}
+                className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed text-xs font-bold px-4 py-2.5 rounded-xl border border-zinc-700 transition-all"
+              >
+                Limpar Filtro
+              </button>
+            </div>
           </div>
 
           <div className="mt-4 pt-3 border-t border-zinc-800 flex flex-wrap gap-x-5 gap-y-1 text-xs text-zinc-400">
-            <span><strong className="text-white">{pedidosFiltrados.length}</strong> pedidos encontrados</span>
+            <span><strong className="text-white">{pedidosFiltrados.length}</strong> pedidos encontrados no período</span>
             {(dataInicio || dataFim) && (
               <span>
-                Período: <strong className="text-orange-400">{dataInicio || 'início'}</strong> até <strong className="text-orange-400">{dataFim || 'hoje'}</strong>
+                Mostrando de <strong className="text-orange-400">{dataInicio || 'início'}</strong> até <strong className="text-orange-400">{dataFim || 'hoje'}</strong>
               </span>
             )}
           </div>
         </div>
       </section>
 
+      {/* MÉTRICAS / RESUMO */}
       <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-zinc-900 border border-zinc-800/60 p-4 rounded-xl flex justify-between items-center">
           <div><span className="text-[10px] text-zinc-400 uppercase font-black">Faturamento Bruto</span><p className="text-2xl font-black mt-1">{faturamentoTotal.toFixed(2)}€</p></div>
@@ -376,7 +380,7 @@ export default function GestaoPedidos() {
           <div className="text-center text-zinc-500 py-24 bg-zinc-900/20 border border-dashed border-zinc-800 rounded-2xl max-w-xl mx-auto">
             {pedidos.length === 0
               ? 'Nenhum pedido lançado no sistema até ao momento.'
-              : 'Nenhum pedido encontrado dentro do período selecionado.'}
+              : 'Nenhum pedido encontrado dentro do intervalo de datas selecionado.'}
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -395,7 +399,7 @@ export default function GestaoPedidos() {
                 <div>
                   <div className="flex justify-between items-start gap-2 border-b border-zinc-800/60 pb-3 mb-3 pr-16">
                     <div>
-                      <span className="text-[10px] font-mono text-zinc-500">#{ped.numero_pedido}</span>
+                      <span className="text-[10px] font-mono text-zinc-500">#{ped.numero_pedido} · {ped.data_venda}</span>
                       <h3 className="font-bold text-zinc-100 text-sm mt-0.5">{ped.cliente || 'Cliente Anónimo'}</h3>
                     </div>
                     <div className="flex flex-col items-end gap-1">
@@ -415,7 +419,6 @@ export default function GestaoPedidos() {
                           <span className="font-bold text-orange-400 mr-1.5">{item.quantidade}x</span>
                           {item.nome_produto}
                         </span>
-                        {/* Mostra o preço unitário corrigido e calculado */}
                         <span className="font-mono text-zinc-500 text-[11px]">{(item.preco_unitario * item.quantidade).toFixed(2)}€</span>
                       </div>
                     ))}
@@ -456,6 +459,7 @@ export default function GestaoPedidos() {
         )}
       </main>
 
+      {/* MODAL DE EDIÇÃO */}
       {modalEditar && pedidoEditando && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-zinc-900 border border-zinc-800 w-full max-w-lg rounded-3xl p-6 shadow-2xl relative">
@@ -466,7 +470,6 @@ export default function GestaoPedidos() {
             </h2>
 
             <form onSubmit={salvarEdicao} className="space-y-4">
-              
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
                   <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Cliente</label>
@@ -571,7 +574,6 @@ export default function GestaoPedidos() {
                 </button>
               </div>
             </form>
-
           </div>
         </div>
       )}
