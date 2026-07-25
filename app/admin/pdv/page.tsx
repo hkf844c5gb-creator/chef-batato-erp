@@ -274,14 +274,14 @@ export default function CaixaPDV() {
     let somaPrecosOriginais = 0;
     let somaAcrescimos = 0;
     const itensComDetalhes: any[] = [];
-    const idsDosProdutosBase: string[] = []; // GUARDA OS IDs DOS ITENS DENTRO DO COMBO
+    const idsDosProdutosBase: string[] = [];
 
     Object.values(selecoesCombo).forEach(selecoesGrupo => {
       selecoesGrupo.forEach(item => {
         const precoItem = getPrecoPorCanal(item.produto);
         somaPrecosOriginais += precoItem;
         somaAcrescimos += Number(item.acrescimo_preco);
-        idsDosProdutosBase.push(item.produto_id); // Guarda o ID para descontar o stock depois
+        idsDosProdutosBase.push(item.produto_id);
         
         itensComDetalhes.push({
           id: item.produto_id,
@@ -361,24 +361,19 @@ export default function CaixaPDV() {
         detalhesCombo: detalhesFormatados, 
         precoOriginal: Number(precoSemDesconto.toFixed(2)), 
         precoAplicado: Number(precoFinalAplicado.toFixed(2)),
-        itensBaseId: idsDosProdutosBase // Guarda para a ficha técnica
+        itensBaseId: idsDosProdutosBase 
       }
     ]);
 
     setMostrarModalCombo(false);
   };
 
-  // ⚡ FUNÇÃO MÁGICA DE DESCONTO DE STOCK E LOTES (FIFO) ⚡
   const descontarStockAutomaticamente = async (itensDoCarrinho: ItemCarrinho[]) => {
     try {
       for (const item of itensDoCarrinho) {
-        
-        // Obter os IDs dos produtos (Simples ou base dos Combos)
         const idsParaProcessar = item.isCombo && item.itensBaseId ? item.itensBaseId : [item.produto.id];
 
         for (const produtoBaseId of idsParaProcessar) {
-          
-          // --- 1. DESCONTAR INSUMOS DA DESPENSA (Ex: Batata, Embalagens, etc) ---
           const { data: ficha } = await supabase
             .from('fichas_tecnicas')
             .select('insumo_id, quantidade_necessaria')
@@ -396,46 +391,41 @@ export default function CaixaPDV() {
             }
           }
 
-          // --- 2. DESCONTAR PRODUTOS PRONTOS DOS LOTES (Ex: Brownies) ---
-          // Procura Lotes deste produto que ainda tenham stock, ordenados por validade!
           const { data: lotesAtivos } = await supabase
             .from('lotes_producao')
             .select('id, quantidade_disponivel')
             .eq('produto_id', produtoBaseId)
             .gt('quantidade_disponivel', 0)
-            .order('data_validade', { ascending: true }); // FIFO: O que caduca primeiro, sai primeiro!
+            .order('data_validade', { ascending: true });
 
           if (lotesAtivos && lotesAtivos.length > 0) {
             let quantidadeParaDescontar = item.quantidade;
 
             for (const lote of lotesAtivos) {
-              if (quantidadeParaDescontar <= 0) break; // Já descontamos tudo o que o cliente pediu
+              if (quantidadeParaDescontar <= 0) break;
 
               const disponivelNoLote = Number(lote.quantidade_disponivel);
               let descontoDesteLote = 0;
 
-              // Verifica se este lote tem quantidade suficiente
               if (disponivelNoLote >= quantidadeParaDescontar) {
                 descontoDesteLote = quantidadeParaDescontar;
-                quantidadeParaDescontar = 0; // Acabou o que precisava de tirar
+                quantidadeParaDescontar = 0;
               } else {
-                descontoDesteLote = disponivelNoLote; // Esvazia este lote
-                quantidadeParaDescontar -= disponivelNoLote; // Fica a faltar tirar o resto no próximo lote
+                descontoDesteLote = disponivelNoLote;
+                quantidadeParaDescontar -= disponivelNoLote;
               }
 
               const novoDisponivel = disponivelNoLote - descontoDesteLote;
               
-              // Atualiza a quantidade do lote na base de dados
               await supabase
                 .from('lotes_producao')
                 .update({ 
                   quantidade_disponivel: novoDisponivel,
-                  quantidade_atual: novoDisponivel // Mantemos os campos em sincronia
+                  quantidade_atual: novoDisponivel 
                 })
                 .eq('id', lote.id);
             }
           }
-          
         }
       }
       console.log("✅ Stock da Despensa e Lotes de Produção abatidos com sucesso!");
@@ -459,25 +449,29 @@ export default function CaixaPDV() {
     const dataHoraCriacaoCompleta = `${dataPedido}T${tempoAtual}`;
 
     try {
-      // 1. GERAR NÚMERO DE PEDIDO SEQUENCIAL
-      const { data: ultimoPedido, error: erroUltimo } = await supabase
+      // 🎯 CORREÇÃO CRUCIAL DA SEQUÊNCIA NUMÉRICA (366, 367, 368...)
+      // Procura todos os pedidos existentes e extrai o maior valor numérico da coluna numero_pedido
+      const { data: todosPedidos, error: erroBusca } = await supabase
         .from('pedidos')
-        .select('numero_pedido')
-        .not('numero_pedido', 'is', null) 
-        .order('criado_em', { ascending: false })
-        .limit(1)
-        .single();
+        .select('numero_pedido');
 
-      let novoNumeroStr = "001"; 
-      
-      if (ultimoPedido && ultimoPedido.numero_pedido) {
-          const ultimoNum = parseInt(ultimoPedido.numero_pedido, 10);
-          if (!isNaN(ultimoNum)) {
-              novoNumeroStr = String(ultimoNum + 1).padStart(3, '0');
+      if (erroBusca) throw erroBusca;
+
+      let maiorNumero = 365; // Ponto de partida caso esteja vazio
+
+      if (todosPedidos && todosPedidos.length > 0) {
+        todosPedidos.forEach(p => {
+          const numParsed = parseInt(p.numero_pedido, 10);
+          if (!isNaN(numParsed) && numParsed > maiorNumero) {
+            maiorNumero = numParsed;
           }
+        });
       }
 
-      // 2. GRAVAR O PEDIDO COM O NÚMERO E ESTAFETA
+      const proximoNumero = maiorNumero + 1;
+      const novoNumeroStr = String(proximoNumero); // Guarda exato como string numérica (ex: "366")
+
+      // 2. GRAVAR O PEDIDO COM A SEQUÊNCIA CERTA
       const { data: pedidoGravado, error: erroPedido } = await supabase
         .from('pedidos')
         .insert([{ 
@@ -510,7 +504,6 @@ export default function CaixaPDV() {
         const { error: erroItens } = await supabase.from('itens_pedido').insert(itensDB);
         if (erroItens) throw erroItens;
         
-        // 🔥 MAGIA DO STOCK ACONTECE AQUI! 🔥
         await descontarStockAutomaticamente(carrinho);
       }
       
@@ -745,7 +738,7 @@ export default function CaixaPDV() {
                                 {labelAcrescimo && <span className="block text-[10px] text-orange-400 font-mono mt-0.5">{labelAcrescimo}</span>}
                               </button>
                             );
-                        })}
+                          })}
                       </div>
                     </div>
                   );

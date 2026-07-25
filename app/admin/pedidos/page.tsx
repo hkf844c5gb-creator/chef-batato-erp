@@ -14,7 +14,7 @@ interface ItemPedido {
 interface Pedido {
   id: string;
   numero_pedido: number;
-  data_pedido: string; // Corrigido para data_pedido
+  data_pedido: string;
   cliente: string;
   canal: string;
   forma_pagamento: string;
@@ -64,6 +64,9 @@ export default function GestaoPedidos() {
           const taxa = Number(linha.taxa_entrega || 0);
           const desconto = Number(linha.desconto || 0);
 
+          // Puxa a data independentemente da coluna usada no BD
+          const dataReal = linha.data_pedido || linha.data_venda || linha.criado_em || new Date().toISOString();
+
           const itensDestaLinha = (linha.itens || []).map((item: any) => {
             let precoUnitarioCorreto = Number(item.preco_unitario || 0);
 
@@ -89,7 +92,7 @@ export default function GestaoPedidos() {
             agrupados.set(chaveNum, {
               ...linha,
               numero_pedido: Number(linha.numero_pedido),
-              data_pedido: linha.data_pedido || linha.data_venda || '', // Garante compatibilidade
+              data_pedido: dataReal,
               taxa_entrega: taxa,
               desconto: desconto,
               pago: linha.pago === true,
@@ -240,7 +243,6 @@ export default function GestaoPedidos() {
     return '';
   };
 
-  // 🎯 FILTRO AGORA LIGA DIRETAMENTE À COLUNA data_pedido
   const pedidosFiltrados = useMemo(() => {
     return pedidos.filter((pedido) => {
       const dataPedidoFormatada = extrairDataIso(pedido.data_pedido);
@@ -298,7 +300,7 @@ export default function GestaoPedidos() {
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
           <div className="flex flex-col xl:flex-row xl:items-end gap-4">
             <div className="flex-1">
-              <h2 className="text-sm font-bold text-zinc-100">Filtrar por Intervalo de Datas (data_pedido)</h2>
+              <h2 className="text-sm font-bold text-zinc-100">Filtrar por Intervalo de Datas</h2>
               <p className="text-xs text-zinc-500 mt-1">Selecione o dia, mês e ano inicial até ao dia, mês e ano final.</p>
             </div>
 

@@ -39,7 +39,7 @@ export default function GestaoRevenda() {
   const [modalFechoAberto, setModalFechoAberto] = useState(false);
   const [modalRevendedorAberto, setModalRevendedorAberto] = useState(false);
   
-  const [fechoMassa, setFechoMassa] = useState<{ parceiro: string; itens: any[] } | null>(null);
+  const [fechoMassa, setFechoMassa] = useState<{ parceiro: string; itens: any[]; formaPagamento: string; numeroPedidoCustom: string } | null>(null);
 
   const hoje = new Date();
   
@@ -144,7 +144,7 @@ export default function GestaoRevenda() {
           preco_unidade: precoCalculado
         }));
       } else {
-        alert(`O Lote "${loteDigitado}" não foi encontrado na tabela de produção.\n\nVerifique se escreveu corretamente.`);
+        alert(`O Lote "${loteDigitado}" não foi encontrado na tabela de produção.`);
         setFormNovo(prev => ({ ...prev, data_validade: '' }));
       }
     } catch (err) { console.error(err); } finally { setBuscandoLote(false); }
@@ -166,10 +166,10 @@ export default function GestaoRevenda() {
   const valorPotencialRua = ativas.reduce((acc, c) => acc + (Number(c.qtd_deixada) * Number(c.preco_unidade)), 0);
   const fechadas = consignacoes.filter(c => c.status === 'Fechado');
   const lucroRealizado = fechadas.reduce((acc, c) => acc + (Number(c.qtd_vendida) * Number(c.preco_unidade)), 0);
-  const lotesEmRisco = ativas.filter(c => { const dias = calcularDiasValidade(c.data_validade); return dias !== null && dias <= 3; }).length;
+  const lotesEnRisco = ativas.filter(c => { const dias = calcularDiasValidade(c.data_validade); return dias !== null && dias <= 3; }).length;
 
   const abrirNovaConsignacao = () => {
-    if (revendedoresDB.length === 0) return alert("Por favor, registe primeiro um Revendedor clicando no botão 'Gestão Revendedores'.");
+    if (revendedoresDB.length === 0) return alert("Por favor, registe primeiro um Revendedor.");
     setFormNovo({ 
       id: '', parceiro: '', produto: '', sabor: '', lote: 'BR', data_validade: '', preco_unidade: 0, qtd_deixada: 1,
       data_registo: new Date().toISOString().split('T')[0]
@@ -192,7 +192,6 @@ export default function GestaoRevenda() {
     setModalNovoAberto(true);
   };
 
-  // ⚡ FUNÇÃO DE EXCLUSÃO DE PRODUTOS DOS LOTES (FIFO) NO MOMENTO DA REVENDA ⚡
   const abaterProdutoDoLoteDeProducao = async (nomeProduto: string, loteAlvo: string, quantidadeRestante: number) => {
     try {
         const prodDbInfo = produtosDB.find(p => (p.nome || p.descricao) === nomeProduto);
@@ -200,18 +199,15 @@ export default function GestaoRevenda() {
 
         const loteId = prodDbInfo.id;
         
-        // Vai buscar os lotes deste produto que ainda têm unidades
         const { data: lotesAtivos } = await supabase
             .from('lotes_producao')
             .select('id, quantidade_disponivel, codigo_lote')
             .eq('produto_id', loteId)
             .gt('quantidade_disponivel', 0)
-            .order('data_validade', { ascending: true }); // Aplica FIFO
+            .order('data_validade', { ascending: true });
 
         if (lotesAtivos && lotesAtivos.length > 0) {
             let qtdParaAbater = quantidadeRestante;
-
-            // 1ª Tentativa: Procura se o lote especificado tem quantidade
             const loteEscolhido = lotesAtivos.find(l => l.codigo_lote.toUpperCase() === loteAlvo.toUpperCase());
 
             if (loteEscolhido) {
@@ -226,10 +222,9 @@ export default function GestaoRevenda() {
                 qtdParaAbater -= abatimento;
             }
 
-            // 2ª Tentativa (FIFO): Abater noutros lotes se o lote escolhido não chegar para a encomenda toda
             if (qtdParaAbater > 0) {
                for (const lote of lotesAtivos) {
-                  if (lote.codigo_lote.toUpperCase() === loteAlvo.toUpperCase()) continue; // Salta o que já vimos
+                  if (lote.codigo_lote.toUpperCase() === loteAlvo.toUpperCase()) continue;
                   if (qtdParaAbater <= 0) break;
 
                   const abatimento = Math.min(qtdParaAbater, lote.quantidade_disponivel);
@@ -245,7 +240,7 @@ export default function GestaoRevenda() {
             }
         }
     } catch (err) {
-        console.error("Erro a cruzar revenda com os lotes de produção: ", err);
+        console.error("Erro ao cruzar com lotes de produção:", err);
     }
   };
 
@@ -263,12 +258,10 @@ export default function GestaoRevenda() {
       };
 
       if (formNovo.id) {
-        // Obter os detalhes atuais da consignacao para calcular a diferença
         const { data: consAtual } = await supabase.from('revenda_consignacoes').select('qtd_deixada').eq('id', formNovo.id).single();
         const { error } = await supabase.from('revenda_consignacoes').update(payload).eq('id', formNovo.id);
         if (error) throw error;
         
-        // Descontar a diferença (caso o utilizador aumente a quantidade após já ter salvo o registo)
         if (consAtual && formNovo.qtd_deixada > consAtual.qtd_deixada) {
             const diferencaAAbater = formNovo.qtd_deixada - consAtual.qtd_deixada;
             await abaterProdutoDoLoteDeProducao(formNovo.produto, formNovo.lote, diferencaAAbater);
@@ -276,8 +269,6 @@ export default function GestaoRevenda() {
       } else {
         const { error } = await supabase.from('revenda_consignacoes').insert([payload]);
         if (error) throw error;
-
-        // Desconta da tabela de produção dos Brownies!
         await abaterProdutoDoLoteDeProducao(formNovo.produto, formNovo.lote, formNovo.qtd_deixada);
       }
 
@@ -287,12 +278,30 @@ export default function GestaoRevenda() {
     } catch (err: any) { alert("Erro ao guardar lote: " + err.message); } finally { setProcessando(false); }
   };
 
-  const abrirFechoMassa = (parceiro: string, lista: Consignacao[]) => {
+  const abrirFechoMassa = async (parceiro: string, lista: Consignacao[]) => {
     const ativos = lista.filter(c => c.status === 'Ativo');
     if (ativos.length === 0) return alert('Não tem produtos ativos para fechar neste local.');
 
+    // Descobrir automaticamente qual seria o próximo número sequencial de pedido
+    let proximoSugerido = "366";
+    try {
+      const { data: todosPedidos } = await supabase.from('pedidos').select('numero_pedido');
+      let maior = 365;
+      if (todosPedidos && todosPedidos.length > 0) {
+        todosPedidos.forEach(p => {
+          const num = parseInt(p.numero_pedido, 10);
+          if (!isNaN(num) && num > maior) maior = num;
+        });
+      }
+      proximoSugerido = String(maior + 1);
+    } catch (e) {
+      console.error(e);
+    }
+
     setFechoMassa({
       parceiro,
+      formaPagamento: 'Dinheiro',
+      numeroPedidoCustom: proximoSugerido,
       itens: ativos.map(c => ({
         ...c,
         qtd_vendida: c.qtd_vendida || 0,
@@ -313,18 +322,21 @@ export default function GestaoRevenda() {
     });
   };
 
+  // 🚀 GRAVAR BALANÇO E ASSOCIAR/GERAR O PEDIDO COM O NÚMERO DEFINIDO
   const salvarFechoMassa = async () => {
     if (!fechoMassa) return;
+    if (!fechoMassa.numeroPedidoCustom.trim()) return alert('Indique o número do pedido!');
 
     for (const item of fechoMassa.itens) {
       const tot = Number(item.qtd_vendida) + Number(item.qtd_trocada) + Number(item.qtd_vencida);
       if (tot > item.qtd_deixada) {
-        return alert(`Atenção: No produto ${item.produto} (Lote ${item.lote}), a soma (${tot}) ultrapassa os ${item.qtd_deixada} entregues inicialmente.`);
+        return alert(`Atenção: No produto ${item.produto} (Lote ${item.lote}), a soma (${tot}) ultrapassa os ${item.qtd_deixada} entregues.`);
       }
     }
 
     setProcessando(true);
     try {
+      // 1. Atualizar o estado das consignações para 'Fechado'
       await Promise.all(fechoMassa.itens.map(item => 
         supabase.from('revenda_consignacoes').update({
           qtd_vendida: item.qtd_vendida,
@@ -333,10 +345,63 @@ export default function GestaoRevenda() {
           status: 'Fechado'
         }).eq('id', item.id)
       ));
+
+      // 2. Filtrar apenas os itens com vendas reais (> 0)
+      const itensVendidos = fechoMassa.itens.filter(i => Number(i.qtd_vendida) > 0);
+
+      if (itensVendidos.length > 0) {
+        const totalGeralVenda = itensVendidos.reduce((acc, it) => acc + (Number(it.qtd_vendida) * Number(it.preco_unidade)), 0);
+        const estaPago = fechoMassa.formaPagamento !== 'Caderninho';
+        const numeroPedidoFinal = fechoMassa.numeroPedidoCustom.trim();
+        const dataHoraCriacao = new Date().toISOString();
+
+        // Inserir ou atualizar na tabela pedidos com o número especificado
+        const { data: pedidoGravado, error: erroPedido } = await supabase
+          .from('pedidos')
+          .insert([{
+            numero_pedido: numeroPedidoFinal,
+            cliente: fechoMassa.parceiro,
+            canal: 'Revendedores',
+            forma_pagamento: fechoMassa.formaPagamento,
+            taxa_entrega: 0,
+            desconto: 0,
+            total_geral: totalGeralVenda,
+            pago: estaPago,
+            criado_em: dataHoraCriacao
+          }])
+          .select().single();
+
+        if (erroPedido) throw erroPedido;
+
+        if (pedidoGravado) {
+          const itensDB = itensVendidos.map(item => {
+            const prodInfo = produtosDB.find(p => (p.nome || p.descricao) === item.produto);
+            return {
+              pedido_id: pedidoGravado.id,
+              produto_id: prodInfo ? prodInfo.id : null,
+              codigo_produto: prodInfo ? prodInfo.codigo : 'REV',
+              nome_produto: `${item.produto} (Lote: ${item.lote})`,
+              quantidade: item.qtd_vendida,
+              preco_unitario: item.preco_unidade
+            };
+          });
+
+          const { error: erroItens } = await supabase.from('itens_pedido').insert(itensDB);
+          if (erroItens) throw erroItens;
+        }
+
+        alert(`✅ Balanço gravado com sucesso!\n\nPedido #${numeroPedidoFinal} gerado para ${fechoMassa.parceiro} (${totalGeralVenda.toFixed(2)}€).`);
+      } else {
+        alert(`✅ Balanço gravado com sucesso! (Nenhum produto vendido, nenhum pedido gerado).`);
+      }
       
       setFechoMassa(null);
       carregarDadosIniciais();
-    } catch (err: any) { alert("Erro ao gravar balanço completo: " + err.message); } finally { setProcessando(false); }
+    } catch (err: any) { 
+      alert("Erro ao gravar balanço e gerar pedido: " + err.message); 
+    } finally { 
+      setProcessando(false); 
+    }
   };
 
   const salvarRevendedor = async (e: React.FormEvent) => {
@@ -366,7 +431,7 @@ export default function GestaoRevenda() {
       const { error } = await supabase.from('revendedores').delete().eq('id', id);
       if (error) throw error;
       carregarDadosIniciais();
-    } catch (err: any) { alert("Não foi possível eliminar! Este revendedor já tem histórico.\n\n" + err.message); }
+    } catch (err: any) { alert("Não foi possível eliminar! " + err.message); }
   };
 
   const abrirFecho = (cons: Consignacao) => {
@@ -378,7 +443,7 @@ export default function GestaoRevenda() {
     e.preventDefault();
     if (!formFecho) return;
     const totalApurado = Number(formFecho.qtd_vendida) + Number(formFecho.qtd_trocada) + Number(formFecho.qtd_vencida);
-    if (totalApurado > formFecho.qtd_deixada) return alert(`Atenção: A soma dos produtos não pode ser maior que os ${formFecho.qtd_deixada} entregues.`);
+    if (totalApurado > formFecho.qtd_deixada) return alert(`Atenção: A soma não pode ser maior que os ${formFecho.qtd_deixada} entregues.`);
 
     setProcessando(true);
     try {
@@ -403,7 +468,7 @@ export default function GestaoRevenda() {
   };
 
   const excluirRegisto = async (id: string) => {
-    if (!confirm('Deseja eliminar este pedido inteiro? Esta ação não pode ser desfeita.')) return;
+    if (!confirm('Deseja eliminar este registo inteiro?')) return;
     await supabase.from('revenda_consignacoes').delete().eq('id', id);
     carregarDadosIniciais();
   };
@@ -459,10 +524,10 @@ export default function GestaoRevenda() {
             <span className="text-[10px] font-bold text-green-500 uppercase tracking-widest">Lucro Realizado</span>
             <div className="text-3xl font-black text-green-400 font-mono mt-2">{lucroRealizado.toFixed(2)}<span className="text-lg text-green-700 ml-1">€</span></div>
           </div>
-          <div className={`p-6 rounded-[32px] shadow-xl flex flex-col justify-center border ${lotesEmRisco > 0 ? 'bg-orange-950/40 border-orange-500/50' : 'bg-zinc-900 border-zinc-800/80'}`}>
-            <span className={`text-[10px] font-bold uppercase tracking-widest ${lotesEmRisco > 0 ? 'text-orange-400' : 'text-zinc-500'}`}>Lotes em Risco (≤ 3 Dias)</span>
-            <div className={`text-3xl font-black font-mono mt-2 ${lotesEmRisco > 0 ? 'text-orange-500 animate-pulse' : 'text-zinc-600'}`}>
-              {lotesEmRisco} <span className="text-xs font-sans text-zinc-500 ml-1 uppercase">Avisos</span>
+          <div className={`p-6 rounded-[32px] shadow-xl flex flex-col justify-center border ${lotesEnRisco > 0 ? 'bg-orange-950/40 border-orange-500/50' : 'bg-zinc-900 border-zinc-800/80'}`}>
+            <span className={`text-[10px] font-bold uppercase tracking-widest ${lotesEnRisco > 0 ? 'text-orange-400' : 'text-zinc-500'}`}>Lotes em Risco (≤ 3 Dias)</span>
+            <div className={`text-3xl font-black font-mono mt-2 ${lotesEnRisco > 0 ? 'text-orange-500 animate-pulse' : 'text-zinc-600'}`}>
+              {lotesEnRisco} <span className="text-xs font-sans text-zinc-500 ml-1 uppercase">Avisos</span>
             </div>
           </div>
         </div>
@@ -520,7 +585,7 @@ export default function GestaoRevenda() {
                         
                         {ativosLista.length > 0 && (
                           <button onClick={() => abrirFechoMassa(parceiro, ativosLista)} className="bg-amber-500 hover:bg-amber-400 text-zinc-950 px-4 py-2 rounded-xl text-xs font-black shadow-lg transition-transform active:scale-95 flex items-center gap-2">
-                            📝 Fazer Balanço Completo
+                            📝 Fazer Balanço Completo & Gerar Pedido
                           </button>
                         )}
                       </div>
@@ -553,7 +618,7 @@ export default function GestaoRevenda() {
                                 <td className="p-4 text-center font-black font-mono text-base text-white">{cons.qtd_deixada}</td>
                                 <td className="p-4 text-center flex items-center justify-center gap-2">
                                   
-                                  <button onClick={(e) => { e.stopPropagation(); editarConsignacao(cons); }} className="w-8 h-8 flex justify-center items-center bg-zinc-800 hover:bg-amber-500 text-zinc-400 hover:text-zinc-950 rounded-lg transition-colors border border-zinc-700 hover:border-amber-500" title="Editar Dados da Entrega">✏️</button>
+                                  <button onClick={(e) => { e.stopPropagation(); editarConsignacao(cons); }} className="w-8 h-8 flex justify-center items-center bg-zinc-800 hover:bg-amber-500 text-zinc-400 hover:text-zinc-950 rounded-lg transition-colors border border-zinc-700 hover:border-amber-500" title="Editar">✏️</button>
 
                                   {cons.status === 'Ativo' ? (
                                     <span className="text-[10px] text-green-500 bg-green-500/10 px-3 py-1.5 rounded-lg border border-green-500/20 font-bold uppercase tracking-widest">
@@ -564,11 +629,11 @@ export default function GestaoRevenda() {
                                       <span className="text-[10px] text-zinc-500 font-mono">
                                         V: {cons.qtd_vendida} | P: {Number(cons.qtd_vencida) + Number(cons.qtd_trocada)}
                                       </span>
-                                      <button onClick={(e) => { e.stopPropagation(); abrirFecho(cons); }} className="w-6 h-6 flex justify-center items-center rounded bg-zinc-900 text-amber-500 hover:text-white hover:bg-amber-500 transition-colors" title="Corrigir Erro no Balanço">✏️</button>
+                                      <button onClick={(e) => { e.stopPropagation(); abrirFecho(cons); }} className="w-6 h-6 flex justify-center items-center rounded bg-zinc-900 text-amber-500 hover:text-white hover:bg-amber-500 transition-colors" title="Corrigir Balanço">✏️</button>
                                     </div>
                                   )}
 
-                                  <button onClick={(e) => { e.stopPropagation(); excluirRegisto(cons.id); }} className="w-8 h-8 flex justify-center items-center bg-zinc-950 hover:bg-red-500/20 text-zinc-600 hover:text-red-400 rounded-lg transition-colors border border-zinc-900 hover:border-red-500/30 ml-2" title="Excluir Pedido Inteiro">🗑️</button>
+                                  <button onClick={(e) => { e.stopPropagation(); excluirRegisto(cons.id); }} className="w-8 h-8 flex justify-center items-center bg-zinc-950 hover:bg-red-500/20 text-zinc-600 hover:text-red-400 rounded-lg transition-colors border border-zinc-900 hover:border-red-500/30 ml-2" title="Excluir">🗑️</button>
                                 </td>
                               </tr>
                             ))}
@@ -584,15 +649,15 @@ export default function GestaoRevenda() {
         </div>
       </main>
 
-      {/* MODAL: BALANÇO EM MASSA (TODOS OS SABORES) */}
+      {/* 🚀 MODAL: BALANÇO EM MASSA COM NÚMERO DE PEDIDO CUSTOMIZÁVEL E FORMA DE PAGAMENTO */}
       {fechoMassa && (
         <div className="fixed inset-0 bg-zinc-950/80 backdrop-blur-md z-[60] flex flex-col justify-center items-center p-4">
           <div className="bg-zinc-900 w-full max-w-4xl rounded-[32px] flex flex-col overflow-hidden shadow-2xl border border-amber-500/30 max-h-[95vh]">
             
             <div className="p-6 pb-4 flex justify-between items-center border-b border-zinc-800 bg-amber-500/5 shrink-0">
               <div>
-                <h2 className="text-xl font-black text-amber-500">📝 Balanço da Visita</h2>
-                <p className="text-xs text-zinc-400 mt-1">Preencha o resultado dos produtos expostos na <strong>{fechoMassa.parceiro}</strong></p>
+                <h2 className="text-xl font-black text-amber-500">📝 Balanço da Visita & Número do Pedido</h2>
+                <p className="text-xs text-zinc-400 mt-1">Preencha o resultado dos produtos na <strong>{fechoMassa.parceiro}</strong> e confirme o número do pedido</p>
               </div>
               <button onClick={() => setFechoMassa(null)} className="w-8 h-8 flex justify-center items-center rounded-full bg-zinc-800 text-zinc-400 hover:text-white">✕</button>
             </div>
@@ -606,9 +671,7 @@ export default function GestaoRevenda() {
                       <span className="text-base font-black text-white">{item.produto}</span>
                       <span className="bg-zinc-800 text-amber-500 font-mono px-2 py-0.5 rounded text-[10px] font-bold">LOTE: {item.lote}</span>
                     </div>
-                    <div className="text-xs text-zinc-500 mt-1">
-                      Data Entrega: {new Date(item.data_registo).toLocaleDateString('pt-PT')}
-                    </div>
+                    <div className="text-xs text-zinc-500 mt-1">Preço unitário revenda: <strong className="text-green-400 font-mono">{Number(item.preco_unidade).toFixed(2)}€</strong></div>
                     <div className="text-xs font-bold mt-2 text-zinc-400">
                       Entregues / Deixados: <span className="text-lg text-white font-black">{item.qtd_deixada}</span>
                     </div>
@@ -631,11 +694,41 @@ export default function GestaoRevenda() {
 
                 </div>
               ))}
+
+              {/* DEFINIÇÃO DO NÚMERO DO PEDIDO E FORMA DE PAGAMENTO */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 bg-zinc-950 p-5 rounded-2xl border border-zinc-800 mt-6">
+                <div>
+                  <label className="block text-xs font-black text-amber-500 uppercase tracking-widest mb-2">🔢 Número do Pedido</label>
+                  <input 
+                    type="text" 
+                    value={fechoMassa.numeroPedidoCustom} 
+                    onChange={e => setFechoMassa({ ...fechoMassa, numeroPedidoCustom: e.target.value })}
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-3 text-sm font-bold text-amber-400 font-mono outline-none focus:border-amber-500"
+                    placeholder="Ex: 366"
+                  />
+                  <p className="text-[10px] text-zinc-500 mt-1">O sistema sugere automaticamente o próximo número sequencial livre.</p>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-black text-amber-500 uppercase tracking-widest mb-2">💳 Forma de Pagamento</label>
+                  <select 
+                    value={fechoMassa.formaPagamento} 
+                    onChange={e => setFechoMassa({ ...fechoMassa, formaPagamento: e.target.value })}
+                    className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-amber-500 cursor-pointer"
+                  >
+                    <option value="Dinheiro">Dinheiro (Recebido na hora)</option>
+                    <option value="MBWay">MBWay (Recebido na hora)</option>
+                    <option value="Multibanco">Multibanco (Recebido na hora)</option>
+                    <option value="Caderninho">📓 Caderninho (Pagar depois / Crédito)</option>
+                  </select>
+                </div>
+              </div>
+
             </div>
 
             <div className="p-6 border-t border-zinc-800 bg-zinc-900 shrink-0">
-              <button onClick={salvarFechoMassa} disabled={processando} className="w-full bg-amber-500 hover:bg-amber-400 text-zinc-950 py-4 rounded-xl text-sm font-black uppercase tracking-wider disabled:opacity-50 transition-colors">
-                {processando ? 'A Encerrar Lotes...' : 'Gravar Balanço Completo da Visita'}
+              <button onClick={salvarFechoMassa} disabled={processando} className="w-full bg-amber-500 hover:bg-amber-400 text-zinc-950 py-4 rounded-xl text-sm font-black uppercase tracking-wider disabled:opacity-50 transition-colors shadow-lg">
+                {processando ? 'A Gravar & Gerar Pedido...' : 'Gravar Balanço & Gerar Pedido Oficial 🚀'}
               </button>
             </div>
 
@@ -697,7 +790,7 @@ export default function GestaoRevenda() {
                           <p className="text-sm font-bold text-white">{rev.nome_empresa || rev.nome}</p>
                           <p className="text-[11px] text-zinc-500 mt-0.5">Resp: {rev.responsavel || '-'} • Tel: {rev.contacto || '-'}</p>
                         </div>
-                        <div className="flex gap-1 opacity-100 md:opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="flex gap-1">
                           <button onClick={() => editarRevendedor(rev)} className="w-8 h-8 rounded-lg bg-zinc-800 hover:bg-amber-500 hover:text-zinc-900 flex justify-center items-center text-zinc-400 transition-colors" title="Editar">✏️</button>
                           <button onClick={() => excluirRevendedor(rev.id)} className="w-8 h-8 rounded-lg bg-zinc-800 hover:bg-red-500 hover:text-white flex justify-center items-center text-zinc-400 transition-colors" title="Excluir">🗑️</button>
                         </div>
@@ -716,30 +809,30 @@ export default function GestaoRevenda() {
         <div className="fixed inset-0 bg-zinc-950/80 backdrop-blur-md z-[60] flex flex-col justify-center items-center p-4">
           <div className="bg-zinc-900 w-full max-w-lg rounded-[32px] flex flex-col overflow-hidden shadow-2xl border border-zinc-800">
             <div className="p-6 pb-4 flex justify-between items-center border-b border-zinc-800">
-              <h2 className="text-xl font-black text-white">{formNovo.id ? '✏️ Editar Entrega do Lote' : '📦 Entregar Lote'}</h2>
+              <h2 className="text-xl font-black text-white">{formNovo.id ? '✏️ Editar Entrega' : '📦 Entregar Lote'}</h2>
               <button onClick={() => setModalNovoAberto(false)} className="text-zinc-500 hover:text-white">✕</button>
             </div>
             <form onSubmit={salvarNovaConsignacao} className="p-6 space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-[10px] text-amber-500 font-black uppercase mb-1">Ponto de Venda</label>
-                  <select required value={formNovo.parceiro} onChange={e => setFormNovo({...formNovo, parceiro: e.target.value})} className="w-full bg-amber-950/20 border border-amber-500/30 rounded-xl px-4 py-3 text-sm font-bold text-amber-400 outline-none focus:border-amber-500 cursor-pointer">
-                    <option value="" className="bg-zinc-900 text-zinc-500">Selecione o Revendedor...</option>
+                  <select required value={formNovo.parceiro} onChange={e => setFormNovo({...formNovo, parceiro: e.target.value})} className="w-full bg-amber-950/20 border border-amber-500/30 rounded-xl px-4 py-3 text-sm font-bold text-amber-400 outline-none cursor-pointer">
+                    <option value="" className="bg-zinc-900 text-zinc-500">Selecione...</option>
                     {revendedoresDB.map(rev => (
                       <option key={rev.id} value={rev.nome_empresa || rev.nome} className="bg-zinc-900 text-white">{rev.nome_empresa || rev.nome}</option>
                     ))}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-[10px] text-amber-500 font-black uppercase mb-1">Data da Visita / Entrega</label>
-                  <input required type="date" value={formNovo.data_registo} onChange={e => setFormNovo({...formNovo, data_registo: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm font-bold text-white outline-none focus:border-amber-500 transition-all" />
+                  <label className="block text-[10px] text-amber-500 font-black uppercase mb-1">Data da Visita</label>
+                  <input required type="date" value={formNovo.data_registo} onChange={e => setFormNovo({...formNovo, data_registo: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm font-bold text-white outline-none" />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[10px] text-zinc-400 font-black uppercase mb-1">Produto (Apenas Brownies)</label>
-                  <select required value={formNovo.produto} onChange={aoSelecionarProduto} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-white outline-none focus:border-amber-500 cursor-pointer">
-                    <option value="">Selecione o Brownie...</option>
+                  <label className="block text-[10px] text-zinc-400 font-black uppercase mb-1">Produto</label>
+                  <select required value={formNovo.produto} onChange={aoSelecionarProduto} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-white outline-none cursor-pointer">
+                    <option value="">Selecione...</option>
                     {produtosDB.filter(p => (p.nome || p.descricao || '').toLowerCase().includes('brownie')).map(p => (
                       <option key={p.id} value={p.nome || p.descricao}>{p.nome || p.descricao}</option>
                     ))}
@@ -747,7 +840,7 @@ export default function GestaoRevenda() {
                 </div>
                 <div>
                   <label className="block text-[10px] text-zinc-400 font-black uppercase mb-1">Qtd. Entregue</label>
-                  <input required type="number" value={formNovo.qtd_deixada || ''} onChange={e => setFormNovo({...formNovo, qtd_deixada: parseInt(e.target.value) || 0})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-lg font-black text-white text-center outline-none focus:border-amber-500" />
+                  <input required type="number" value={formNovo.qtd_deixada || ''} onChange={e => setFormNovo({...formNovo, qtd_deixada: parseInt(e.target.value) || 0})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-lg font-black text-white text-center outline-none" />
                 </div>
               </div>
               <div className="grid grid-cols-2 gap-4">
@@ -757,63 +850,54 @@ export default function GestaoRevenda() {
                     <div className="absolute inset-y-0 left-0 flex items-center pl-4 pointer-events-none">
                       <span className="text-amber-500 font-black">BR</span>
                     </div>
-                    <input required type="text" value={formNovo.lote.replace(/^BR/, '')} onChange={e => { const val = e.target.value.toUpperCase().replace(/^BR/, ''); setFormNovo({...formNovo, lote: 'BR' + val}); }} onBlur={(e) => cruzarLoteComProducao('BR' + e.target.value.toUpperCase().replace(/^BR/, ''))} className="w-full bg-amber-950/20 border border-amber-500/30 rounded-xl pl-11 pr-4 py-3 text-sm font-mono font-bold text-amber-400 outline-none focus:border-amber-500 transition-all" placeholder="001" />
+                    <input required type="text" value={formNovo.lote.replace(/^BR/, '')} onChange={e => { const val = e.target.value.toUpperCase().replace(/^BR/, ''); setFormNovo({...formNovo, lote: 'BR' + val}); }} onBlur={(e) => cruzarLoteComProducao('BR' + e.target.value.toUpperCase().replace(/^BR/, ''))} className="w-full bg-amber-950/20 border border-amber-500/30 rounded-xl pl-11 pr-4 py-3 text-sm font-mono font-bold text-amber-400 outline-none" placeholder="001" />
                   </div>
-                  {buscandoLote && <span className="text-[10px] text-amber-500 animate-pulse mt-1 ml-1 flex items-center gap-1">🔄 A procurar...</span>}
+                  {buscandoLote && <span className="text-[10px] text-amber-500 animate-pulse mt-1 ml-1">🔄 A procurar...</span>}
                 </div>
                 <div>
-                  <label className="block text-[10px] text-red-400 font-black uppercase mb-1">Data Validade Auto</label>
+                  <label className="block text-[10px] text-red-400 font-black uppercase mb-1">Validade Auto</label>
                   <input required type="date" value={formNovo.data_validade} readOnly className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-sm font-bold text-zinc-500 cursor-not-allowed outline-none" />
                 </div>
               </div>
-              <div className="grid grid-cols-1">
-                <div>
-                  <label className="block text-[10px] text-zinc-400 font-black uppercase mb-1">Preço Revenda (Auto €)</label>
-                  <input required type="number" step="0.01" value={formNovo.preco_unidade || ''} onChange={e => setFormNovo({...formNovo, preco_unidade: parseFloat(e.target.value) || 0})} className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-lg font-bold text-green-400 text-center outline-none focus:border-green-500" />
-                </div>
+              <div>
+                <label className="block text-[10px] text-zinc-400 font-black uppercase mb-1">Preço Revenda (€)</label>
+                <input required type="number" step="0.01" value={formNovo.preco_unidade || ''} onChange={e => setFormNovo({...formNovo, preco_unidade: parseFloat(e.target.value) || 0})} className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-3 text-lg font-bold text-green-400 text-center outline-none" />
               </div>
               <button type="submit" disabled={processando} className="w-full bg-amber-500 hover:bg-amber-400 text-zinc-950 py-4 mt-2 rounded-xl text-sm font-black uppercase tracking-wider disabled:opacity-50">
-                {processando ? 'A Gravar...' : formNovo.id ? 'Atualizar Entrega' : 'Registar Visita e Lote'}
+                {processando ? 'A Gravar...' : 'Registar Visita e Lote'}
               </button>
             </form>
           </div>
         </div>
       )}
 
-      {/* MODAL: BALANÇO INDIVIDUAL PÓS-FECHO (CORREÇÕES) */}
+      {/* MODAL: CORREÇÃO INDIVIDUAL DE BALANÇO */}
       {modalFechoAberto && formFecho && (
         <div className="fixed inset-0 bg-zinc-950/80 backdrop-blur-md z-[60] flex flex-col justify-center items-center p-4">
           <div className="bg-zinc-900 w-full max-w-md rounded-[32px] flex flex-col overflow-hidden shadow-2xl border border-amber-500/30">
             <div className="p-6 pb-4 flex justify-between items-center border-b border-zinc-800 bg-amber-500/5">
-              <h2 className="text-xl font-black text-amber-500">{formFecho.status === 'Fechado' ? '✏️ Corrigir Balanço' : '📝 Balanço da Visita'}</h2>
+              <h2 className="text-xl font-black text-amber-500">✏️ Corrigir Balanço Individual</h2>
               <button onClick={() => setModalFechoAberto(false)} className="text-zinc-500 hover:text-white">✕</button>
             </div>
-            <div className="px-6 pt-4 pb-2 text-center">
-              <p className="text-xs text-zinc-400">Em {new Date(formFecho.data_registo).toLocaleDateString('pt-PT')}, deixou no <strong>{formFecho.parceiro}</strong>:</p>
-              <div className="text-3xl font-black text-white mt-2">{formFecho.qtd_deixada}x {formFecho.produto}</div>
-              <p className="text-sm text-zinc-500 font-bold mt-1">Sabor: {formFecho.sabor} | <span className="font-mono">LOTE {formFecho.lote}</span></p>
-            </div>
-            <form onSubmit={salvarFecho} className="p-6 pt-0 space-y-4">
-              <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 space-y-4 mt-4">
+            <form onSubmit={salvarFecho} className="p-6 space-y-4">
+              <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 space-y-4">
                 <div className="flex items-center justify-between gap-4">
                   <label className="text-sm font-bold text-green-400 flex-1">💰 Vendidos</label>
-                  <input required type="number" min="0" value={formFecho.qtd_vendida} onChange={e => setFormFecho({...formFecho, qtd_vendida: parseInt(e.target.value) || 0})} className="w-24 bg-zinc-900 border border-green-500/50 rounded-lg px-3 py-2 text-lg font-bold text-green-400 text-center outline-none focus:border-green-400" />
+                  <input required type="number" min="0" value={formFecho.qtd_vendida} onChange={e => setFormFecho({...formFecho, qtd_vendida: parseInt(e.target.value) || 0})} className="w-24 bg-zinc-900 border border-green-500/50 rounded-lg px-3 py-2 text-lg font-bold text-green-400 text-center outline-none" />
                 </div>
                 <div className="flex items-center justify-between gap-4">
                   <label className="text-sm font-bold text-orange-400 flex-1">🔄 Trocados</label>
-                  <input required type="number" min="0" value={formFecho.qtd_trocada} onChange={e => setFormFecho({...formFecho, qtd_trocada: parseInt(e.target.value) || 0})} className="w-24 bg-zinc-900 border border-orange-500/50 rounded-lg px-3 py-2 text-lg font-bold text-orange-400 text-center outline-none focus:border-orange-400" />
+                  <input required type="number" min="0" value={formFecho.qtd_trocada} onChange={e => setFormFecho({...formFecho, qtd_trocada: parseInt(e.target.value) || 0})} className="w-24 bg-zinc-900 border border-orange-500/50 rounded-lg px-3 py-2 text-lg font-bold text-orange-400 text-center outline-none" />
                 </div>
                 <div className="flex items-center justify-between gap-4">
-                  <label className="text-sm font-bold text-red-400 flex-1">🗑️ Vencidos (Lixo)</label>
-                  <input required type="number" min="0" value={formFecho.qtd_vencida} onChange={e => setFormFecho({...formFecho, qtd_vencida: parseInt(e.target.value) || 0})} className="w-24 bg-zinc-900 border border-red-500/50 rounded-lg px-3 py-2 text-lg font-bold text-red-400 text-center outline-none focus:border-red-400" />
+                  <label className="text-sm font-bold text-red-400 flex-1">🗑️ Vencidos</label>
+                  <input required type="number" min="0" value={formFecho.qtd_vencida} onChange={e => setFormFecho({...formFecho, qtd_vencida: parseInt(e.target.value) || 0})} className="w-24 bg-zinc-900 border border-red-500/50 rounded-lg px-3 py-2 text-lg font-bold text-red-400 text-center outline-none" />
                 </div>
               </div>
-              <button type="submit" disabled={processando} className="w-full bg-amber-500 hover:bg-amber-400 text-zinc-950 py-4 mt-2 rounded-xl text-sm font-black uppercase tracking-wider disabled:opacity-50">
-                {processando ? 'A Processar...' : formFecho.status === 'Fechado' ? 'Atualizar Números do Fecho' : 'Encerrar Lote no Ponto de Venda'}
+              <button type="submit" disabled={processando} className="w-full bg-amber-500 hover:bg-amber-400 text-zinc-950 py-4 rounded-xl text-sm font-black uppercase tracking-wider disabled:opacity-50">
+                Atualizar Números
               </button>
-              {formFecho.status === 'Fechado' && (
-                <button type="button" onClick={() => anularFecho(formFecho.id)} disabled={processando} className="w-full bg-zinc-950 hover:bg-zinc-800 text-white py-3 mt-2 rounded-xl text-sm font-bold uppercase border border-zinc-800 transition-colors">🔄 Anular e Voltar a "Ativo"</button>
-              )}
+              <button type="button" onClick={() => anularFecho(formFecho.id)} disabled={processando} className="w-full bg-zinc-950 hover:bg-zinc-800 text-white py-3 rounded-xl text-sm font-bold uppercase border border-zinc-800 transition-colors">🔄 Anular e Voltar a "Ativo"</button>
             </form>
           </div>
         </div>
