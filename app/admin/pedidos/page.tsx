@@ -258,7 +258,7 @@ export default function GestaoPedidos() {
     });
 
     const subtotal = itensAtualizados.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
-    const novoTotal = Math.max(0, subtotal + pedidoEditando.taxa_entrega - pedidoEditando.desconto);
+    const novoTotal = Math.max(0, subtotal + pedidoEditando.taxa_entrega - (pedidoEditando.desconto || 0));
 
     setPedidoEditando({
       ...pedidoEditando,
@@ -275,7 +275,7 @@ export default function GestaoPedidos() {
     novosItens[index].quantidade = qtd;
     
     const subtotal = novosItens.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
-    const novoTotal = Math.max(0, subtotal + pedidoEditando.taxa_entrega - pedidoEditando.desconto);
+    const novoTotal = Math.max(0, subtotal + pedidoEditando.taxa_entrega - (pedidoEditando.desconto || 0));
 
     setPedidoEditando({ ...pedidoEditando, itens: novosItens, total_geral: novoTotal });
   };
@@ -285,7 +285,7 @@ export default function GestaoPedidos() {
     const novosItens = pedidoEditando.itens.filter((_, i) => i !== index);
     
     const subtotal = novosItens.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
-    const novoTotal = Math.max(0, subtotal + pedidoEditando.taxa_entrega - pedidoEditando.desconto);
+    const novoTotal = Math.max(0, subtotal + pedidoEditando.taxa_entrega - (pedidoEditando.desconto || 0));
 
     setPedidoEditando({ ...pedidoEditando, itens: novosItens, total_geral: novoTotal });
   };
@@ -314,7 +314,7 @@ export default function GestaoPedidos() {
     }
 
     const subtotal = novosItens.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
-    const novoTotal = Math.max(0, subtotal + pedidoEditando.taxa_entrega - pedidoEditando.desconto);
+    const novoTotal = Math.max(0, subtotal + pedidoEditando.taxa_entrega - (pedidoEditando.desconto || 0));
 
     setPedidoEditando({ ...pedidoEditando, itens: novosItens, total_geral: novoTotal });
   };
@@ -386,7 +386,6 @@ export default function GestaoPedidos() {
 
     let precoComboFinal = somaPrecos;
     
-    // Aplicação correta do desconto exclusivamente sobre os itens do combo
     if (comboSelecionadoParaMontar.tipo_preco === 'fixo') {
       if (pedidoEditando.canal === 'Glovo') {
         precoComboFinal = Number(comboSelecionadoParaMontar.preco_glovo || comboSelecionadoParaMontar.preco_fixo || 0);
@@ -420,7 +419,6 @@ export default function GestaoPedidos() {
     ];
 
     const subtotal = novosItens.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
-    // O desconto global do pedido mantém-se isolado (ex: 0 a menos que seja um desconto manual extra)
     const novoTotal = Math.max(0, subtotal + pedidoEditando.taxa_entrega - (pedidoEditando.desconto || 0));
 
     setPedidoEditando({ ...pedidoEditando, itens: novosItens, total_geral: novoTotal });
@@ -784,8 +782,8 @@ export default function GestaoPedidos() {
 
                 <div>
                   <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Desconto (€)</label>
-                  <input type="number" step="0.01" min="0" value={pedidoEditando.desconto || 0} onChange={e => {
-                    const desc = parseFloat(e.target.value) || 0;
+                  <input type="number" step="0.01" min="0" value={pedidoEditando.desconto ?? ''} onChange={e => {
+                    const desc = e.target.value === '' ? 0 : parseFloat(e.target.value);
                     const subtotal = pedidoEditando.itens?.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0) || 0;
                     const novoTotal = Math.max(0, subtotal + pedidoEditando.taxa_entrega - desc);
                     setPedidoEditando({...pedidoEditando, desconto: desc, total_geral: novoTotal});
