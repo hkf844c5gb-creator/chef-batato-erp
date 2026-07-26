@@ -68,12 +68,11 @@ export default function CaixaPDV() {
   const [taxaEntrega, setTaxaEntrega] = useState('0.00');
   const [descontoManual, setDescontoManual] = useState('0.00');
   
-  // ESTADOS ESPECÍFICOS PARA ABA DE REVENDA
+  // ESTADOS ESPECÍFICOS PARA ABA DE REVENDA (CRUZAMENTO DE CONSIGNADOS)
   const [revendedorSelecionado, setRevendedorSelecionado] = useState('');
   const [formaPagamentoRev, setFormaPagamentoRev] = useState('Dinheiro');
-  const [itensRevenda, setItensRevenda] = useState<{ produtoId: string; nome: string; quantidade: number; preco: number }[]>([]);
-  const [produtoRevendaTemp, setProdutoRevendaTemp] = useState('');
-  const [qtdRevendaTemp, setQtdRevendaTemp] = useState(1);
+  const [consignacoesAtivasParceiro, setConsignacoesAtivasParceiro] = useState<any[]>([]);
+  const [vendasRevendaInput, setVendasRevendaInput] = useState<{ [consignacaoId: string]: number }>({});
 
   // Controle de Botão
   const [isProcessando, setIsProcessando] = useState(false);
@@ -195,6 +194,32 @@ export default function CaixaPDV() {
   }
 
   useEffect(() => { carregarMenuCompleto(); }, [canal]);
+
+  // Cruzamento automático com a tabela revenda_consignacoes ao selecionar o revendedor
+  useEffect(() => {
+    async function buscarConsignacoesDoParceiro() {
+      if (!revendedorSelecionado) {
+        setConsignacoesAtivasParceiro([]);
+        setVendasRevendaInput({});
+        return;
+      }
+      const { data, error } = await supabase
+        .from('revenda_consignacoes')
+        .select('*')
+        .eq('parceiro', revendedorSelecionado)
+        .eq('status', 'Ativo');
+
+      if (!error && data) {
+        setConsignacoesAtivasParceiro(data);
+        const initialInputs: { [id: string]: number } = {};
+        data.forEach(item => {
+          initialInputs[item.id] = item.qtd_deixada || 0;
+        });
+        setVendasRevendaInput(initialInputs);
+      }
+    }
+    buscarConsignacoesDoParceiro();
+  }, [revendedorSelecionado]);
 
   const getPrecoPorCanal = (prod: any) => {
     const precoGlovo = prod.precoGlovo !== undefined ? prod.precoGlovo : prod.preco_glovo;
@@ -428,32 +453,16 @@ export default function CaixaPDV() {
     }
   };
 
-  // Funções de controlo da aba de revendedor
-  const adicionarItemRevendaLocal = () => {
-    if (!produtoRevendaTemp) return alert('Selecione um produto.');
-    const prodObj = produtos.find(p => p.id === produtoRevendaTemp);
-    if (!prodObj) return;
+  const totalRevendaCalculado = consignacoesAtivasParceiro.reduce((acc, item) => {
+    const qtdVendida = Number(vendasRevendaInput[item.id]) || 0;
+    const precoUnit = calcularPrecoRevenda(item.produto);
+    return acc + (qtdVendida * precoUnit);
+  }, 0);
 
-    const precoRev = calcularPrecoRevenda(prodObj.nome);
-    setItensRevenda(prev => [...prev, {
-      produtoId: prodObj.id,
-      nome: prodObj.nome,
-      quantidade: Number(qtdRevendaTemp) || 1,
-      preco: precoRev
-    }]);
-    setProdutoRevendaTemp('');
-    setQtdRevendaTemp(1);
-  };
-
-  const removerItemRevendaLocal = (idx: number) => {
-    setItensRevenda(prev => prev.filter((_, i) => i !== idx));
-  };
-
-  const totalRevendaGeral = itensRevenda.reduce((acc, it) => acc + (it.quantidade * it.preco), 0);
-
+  // Fechar o Pedido do Revendedor cruzando com a tabela revenda_consignacoes
   const finalizarPedidoRevendedor = async () => {
     if (!revendedorSelecionado) return alert('Selecione um revendedor.');
-    if (itensRevenda.length === 0) return alert('Adicione pelo menos um produto ao pedido de revendedor.');
+    if (consignacoesAtivasParceiro.length === 0) return alert('Este revendedor não tem nenhum lote ativo em consignação para fechar.');
 
     setIsProcessando(true);
     const estaPago = formaPagamentoRev !== 'Caderninho';
@@ -461,7 +470,7 @@ export default function CaixaPDV() {
     const dataHoraCriacaoCompleta = `${dataPedido}T${agora.toTimeString().split(' ')[0]}`;
 
     try {
-      // 1. Sequência numérica
+      // 1. Número sequencial de pedido rigoroso (366, 367...)
       const { data: todosPedidos } = await supabase.from('pedidos').select('numero_pedido');
       let maior = 365;
       if (todosPedidos) {
@@ -472,7 +481,7 @@ export default function CaixaPDV() {
       }
       const proximoNumeroStr = String(maior + 1);
 
-      // 2. Gravar pedido canal Revendedores
+      // 2. Gravar o pedido principal no canal 'Revendedores'
       const { data: pedidoGravado, error: erroPed } = await supabase
         .from('pedidos')
         .insert([{
@@ -482,7 +491,7 @@ export default function CaixaPDV() {
           forma_pagamento: formaPagamentoRev,
           taxa_entrega: 0,
           desconto: 0,
-          total_geral: totalRevendaGeral,
+          total_geral: totalRevendaCalculado,
           pago: estaPago,
           criado_em: dataHoraCriacaoCompleta
         }])
@@ -491,47 +500,44 @@ export default function CaixaPDV() {
       if (erroPed) throw erroPed;
 
       if (pedidoGravado) {
-        // 3. Gravar itens_pedido
-        const itensDB = itensRevenda.map(item => ({
-          pedido_id: pedidoGravado.id,
-          produto_id: item.produtoId,
-          codigo_produto: 'REV',
-          nome_produto: item.nome,
-          quantidade: item.quantidade,
-          preco_unitario: item.preco
-        }));
-        await supabase.from('itens_pedido').insert(itensDB);
+        const itensItensPedido: any[] = [];
 
-        // 4. Gravar no histórico de revenda (consignações / lote ANT01)
-        const consignacoesDB = itensRevenda.map(item => ({
-          data_registo: dataPedido,
-          parceiro: revendedorSelecionado,
-          produto: item.nome,
-          lote: 'ANT01',
-          preco_unidade: item.preco,
-          qtd_deixada: item.quantidade,
-          qtd_vendida: item.quantidade,
-          qtd_trocada: 0,
-          qtd_vencida: 0,
-          status: 'Fechado',
-          data_validade: '2026-12-31'
-        }));
-        await supabase.from('revenda_consignacoes').insert(consignacoesDB);
+        // 3. Atualizar o estado na tabela revenda_consignacoes para 'Fechado'
+        for (const cons of consignacoesAtivasParceiro) {
+          const qtdVendida = Number(vendasRevendaInput[cons.id]) || 0;
+          const precoUnit = calcularPrecoRevenda(cons.produto);
 
-        // 5. Abater stock/lotes automaticamente
-        const itensCarrinhoParaBaixa: ItemCarrinho[] = itensRevenda.map(it => ({
-          produto: { id: it.produtoId, codigo: 'REV', nome: it.nome, precoCardapio: it.preco, precoWhatsapp: it.preco, precoGlovo: it.preco, custoUnitario: 0, categoria: 'brownie', ativo: true },
-          quantidade: it.quantidade,
-          precoAplicado: it.preco
-        }));
-        await descontarStockAutomaticamente(itensCarrinhoParaBaixa);
+          await supabase
+            .from('revenda_consignacoes')
+            .update({
+              qtd_vendida: qtdVendida,
+              status: 'Fechado'
+            })
+            .eq('id', cons.id);
+
+          if (qtdVendida > 0) {
+            const prodObj = produtos.find(p => p.nome.toLowerCase() === cons.produto.toLowerCase());
+            itensItensPedido.push({
+              pedido_id: pedidoGravado.id,
+              produto_id: prodObj ? prodObj.id : null,
+              codigo_produto: prodObj ? prodObj.codigo : 'REV',
+              nome_produto: cons.produto,
+              quantidade: qtdVendida,
+              preco_unitario: precoUnit
+            });
+          }
+        }
+
+        if (itensItensPedido.length > 0) {
+          await supabase.from('itens_pedido').insert(itensItensPedido);
+        }
       }
 
-      alert(`✅ Pedido de Revendedor #${proximoNumeroStr} registado com sucesso para ${revendedorSelecionado}!`);
-      setItensRevenda([]);
+      alert(`✅ Pedido de Revendedor #${proximoNumeroStr} fechado e registado com sucesso para ${revendedorSelecionado} (${totalRevendaCalculado.toFixed(2)}€)!`);
       setRevendedorSelecionado('');
+      setConsignacoesAtivasParceiro([]);
     } catch (err: any) {
-      alert(`Erro ao registar revenda: ${err.message}`);
+      alert(`Erro ao fechar revenda: ${err.message}`);
     } finally {
       setIsProcessando(false);
     }
@@ -620,7 +626,7 @@ export default function CaixaPDV() {
       <div className="bg-zinc-900 border-b border-zinc-800 px-5 py-3 flex justify-between items-center">
         <div className="flex gap-2">
           <button onClick={() => setCanal('Balcão')} className={`px-4 py-1.5 rounded-lg text-xs font-bold ${canal !== 'Revendedores' ? 'bg-orange-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}>PDV Normal</button>
-          <button onClick={() => { setCanal('Revendedores'); setCategoriaAtiva('revendedor'); }} className={`px-4 py-1.5 rounded-lg text-xs font-bold ${canal === 'Revendedores' ? 'bg-amber-500 text-zinc-950' : 'bg-zinc-800 text-zinc-400'}`}>🏪 Pedido Revendedor</button>
+          <button onClick={() => setCanal('Revendedores')} className={`px-4 py-1.5 rounded-lg text-xs font-bold ${canal === 'Revendedores' ? 'bg-amber-500 text-zinc-950' : 'bg-zinc-800 text-zinc-400'}`}>🏪 Fecho / Pedido Revendedor</button>
         </div>
         <div className="flex items-center gap-3">
           <span className="text-xl">🥔</span>
@@ -675,13 +681,13 @@ export default function CaixaPDV() {
       {!erroCaixa && (
         <div className="flex-1 flex overflow-hidden">
           
-          {/* SE ESTIVER NO MODO REVENDA, EXIBE O PAINEL DEDICADO; SENÃO EXIBE O PDV NORMAL */}
+          {/* SE ESTIVER NO MODO REVENDA, EXIBE O FECHO CRUZADO COM A TELA DE REVENDA */}
           {canal === 'Revendedores' ? (
             <div className="flex-1 p-8 overflow-y-auto max-w-4xl mx-auto space-y-6">
               <div className="bg-zinc-900 border border-amber-500/30 p-6 rounded-3xl space-y-6 shadow-2xl">
                 <div>
-                  <h2 className="text-xl font-black text-amber-400">🏪 Registo de Pedido de Revendedor</h2>
-                  <p className="text-xs text-zinc-400 mt-1">Preços automáticos aplicados: New York e Fudge (1.70€) | Restantes (2.70€)</p>
+                  <h2 className="text-xl font-black text-amber-400">🏪 Fecho de Consignação / Pedido de Revendedor</h2>
+                  <p className="text-xs text-zinc-400 mt-1">Cruzamento automático com os lotes ativos na rua para apurar as vendas e gerar o pedido oficial.</p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -714,77 +720,68 @@ export default function CaixaPDV() {
                   </div>
                 </div>
 
-                {/* ADICIONAR PRODUTO REVENDA */}
-                <div className="bg-zinc-950 p-5 rounded-2xl border border-zinc-800 space-y-4">
-                  <h3 className="text-xs font-bold text-zinc-400 uppercase">Adicionar Produtos ao Pedido</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-                    <div className="md:col-span-2">
-                      <label className="block text-[10px] text-zinc-500 uppercase mb-1">Produto</label>
-                      <select 
-                        value={produtoRevendaTemp} 
-                        onChange={(e) => setProdutoRevendaTemp(e.target.value)} 
-                        className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-white outline-none"
-                      >
-                        <option value="">Selecione o produto...</option>
-                        {produtos.map(p => (
-                          <option key={p.id} value={p.id}>{p.nome} ({calcularPrecoRevenda(p.nome).toFixed(2)}€)</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-[10px] text-zinc-500 uppercase mb-1">Quantidade</label>
-                      <div className="flex gap-2">
-                        <input 
-                          type="number" 
-                          min="1" 
-                          value={qtdRevendaTemp} 
-                          onChange={(e) => setQtdRevendaTemp(parseInt(e.target.value) || 1)} 
-                          className="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2.5 text-sm text-center font-bold text-white outline-none" 
-                        />
-                        <button onClick={addItemRevendaLocal => adicionarItemRevendaLocal()} className="bg-amber-500 hover:bg-amber-400 text-zinc-950 px-5 rounded-xl font-black text-sm">+</button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {itensRevenda.length > 0 && (
-                    <div className="mt-4 overflow-x-auto">
-                      <table className="w-full text-left text-xs">
-                        <thead className="text-[10px] text-zinc-500 uppercase border-b border-zinc-800">
-                          <tr>
-                            <th className="py-2">Produto</th>
-                            <th className="py-2 text-center">Preço Revenda</th>
-                            <th className="py-2 text-center">Qtd</th>
-                            <th className="py-2 text-right">Subtotal</th>
-                            <th className="py-2 text-center">Remover</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-zinc-800/40">
-                          {itensRevenda.map((it, i) => (
-                            <tr key={i}>
-                              <td className="py-2.5 font-bold text-white">{it.nome}</td>
-                              <td className="py-2.5 text-center text-green-400 font-mono">{it.preco.toFixed(2)}€</td>
-                              <td className="py-2.5 text-center font-mono">{it.quantidade}</td>
-                              <td className="py-2.5 text-right font-mono font-bold text-amber-400">{(it.quantidade * it.preco).toFixed(2)}€</td>
-                              <td className="py-2.5 text-center"><button onClick={() => removerItemRevendaLocal(i)} className="text-red-400 font-bold">✕</button></td>
+                {/* TABELA DE ITENS ATIVOS EM CONSIGNACAO */}
+                {revendedorSelecionado && (
+                  <div className="bg-zinc-950 p-5 rounded-2xl border border-zinc-800 space-y-4">
+                    <h3 className="text-xs font-bold text-amber-400 uppercase tracking-widest">Itens Ativos na Rua (Consignados)</h3>
+                    
+                    {consignacoesAtivasParceiro.length === 0 ? (
+                      <p className="text-xs text-zinc-500 py-6 text-center">Nenhum lote ativo em consignação encontrado para este parceiro.</p>
+                    ) : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead className="text-[10px] text-zinc-500 uppercase border-b border-zinc-800">
+                            <tr>
+                              <th className="py-2">Produto / Brownie</th>
+                              <th className="py-2 text-center">Lote</th>
+                              <th className="py-2 text-center">Qtd Deixada</th>
+                              <th className="py-2 text-center">Preço Unit.</th>
+                              <th className="py-2 text-center">Qtd Vendida</th>
+                              <th className="py-2 text-right">Subtotal</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                </div>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-800/40">
+                            {consignacoesAtivasParceiro.map((cons) => {
+                              const qtdVend = Number(vendasRevendaInput[cons.id]) || 0;
+                              const precoUn = calcularPrecoRevenda(cons.produto);
+                              return (
+                                <tr key={cons.id}>
+                                  <td className="py-3 font-bold text-white">{cons.produto}</td>
+                                  <td className="py-3 text-center text-zinc-400 font-mono">{cons.lote}</td>
+                                  <td className="py-3 text-center font-mono font-bold text-amber-400">{cons.qtd_deixada}</td>
+                                  <td className="py-3 text-center text-green-400 font-mono">{precoUn.toFixed(2)}€</td>
+                                  <td className="py-3 text-center">
+                                    <input 
+                                      type="number" 
+                                      min="0" 
+                                      max={cons.qtd_deixada}
+                                      value={vendasRevendaInput[cons.id] !== undefined ? vendasRevendaInput[cons.id] : cons.qtd_deixada}
+                                      onChange={(e) => setVendasRevendaInput({ ...vendasRevendaInput, [cons.id]: parseInt(e.target.value) || 0 })}
+                                      className="w-20 bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-center font-bold text-white outline-none"
+                                    />
+                                  </td>
+                                  <td className="py-3 text-right font-mono font-black text-amber-400">{(qtdVend * precoUn).toFixed(2)}€</td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 <div className="flex justify-between items-center bg-zinc-950 p-5 rounded-2xl border border-zinc-800">
                   <div>
-                    <span className="text-xs text-zinc-400 uppercase block">Total do Pedido Revenda</span>
-                    <span className="text-2xl font-black text-amber-400 font-mono">{totalRevendaGeral.toFixed(2)}€</span>
+                    <span className="text-xs text-zinc-400 uppercase block">Total do Fecho de Revenda</span>
+                    <span className="text-2xl font-black text-amber-400 font-mono">{totalRevendaCalculado.toFixed(2)}€</span>
                   </div>
                   <button 
                     onClick={finalizarPedidoRevendedor}
-                    disabled={isProcessando}
+                    disabled={isProcessando || consignacoesAtivasParceiro.length === 0}
                     className="bg-amber-500 hover:bg-amber-400 text-zinc-950 px-8 py-3.5 rounded-2xl font-black uppercase text-xs tracking-wider transition-all disabled:opacity-50"
                   >
-                    {isProcessando ? 'A Registar...' : 'Confirmar & Lançar Revenda 🚀'}
+                    {isProcessando ? 'A Fechar...' : 'Concluir Fecho & Gerar Pedido Oficial 🚀'}
                   </button>
                 </div>
 
