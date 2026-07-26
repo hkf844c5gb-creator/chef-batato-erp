@@ -77,7 +77,6 @@ export default function GestaoPedidos() {
       const { data: dataEsts } = await supabase.from('estafetas').select('nome').eq('ativo', true).order('nome', { ascending: true });
       if (dataEsts) setListaEstafetas(dataEsts);
 
-      // Usar a wildcard '*' para garantir que o preco_glovo e preco_whatsapp dos combos são extraídos da BD
       const { data: dataCombos } = await supabase
         .from('combos')
         .select(`
@@ -220,7 +219,7 @@ export default function GestaoPedidos() {
       return 2.70;
     }
     if (canal === 'Glovo') return Number(prod.preco_glovo || prod.preco_cardapio || 0);
-    if (canal === 'WhatsApp') return Number(prod.preco_whatsapp || prod.preco_cardapio || 0);
+    if (canal === 'WhatsApp' || canal === 'Palmbites' || canal === 'Balcão') return Number(prod.preco_cardapio || 0);
     return Number(prod.preco_cardapio || 0);
   };
 
@@ -229,28 +228,27 @@ export default function GestaoPedidos() {
     setModalEditar(true);
   };
 
-  // Recalcular Preços quando o Canal é mudado dinamicamente
   const alterarCanalEdicao = (novoCanal: string) => {
     if (!pedidoEditando) return;
 
     const itensAtualizados = (pedidoEditando.itens || []).map(item => {
-      // 1. Se for um Combo
       if (item.codigo_produto === 'COMBO') {
          const baseName = item.nome_produto.split(' (')[0];
          const comboRef = combosDB.find(c => c.nome === baseName);
          
-         if (comboRef && comboRef.tipo_preco === 'fixo') {
-             let novoPreco = Number(comboRef.preco_fixo || 0);
-             if (novoCanal === 'Glovo') novoPreco = Number(comboRef.preco_glovo || comboRef.preco_fixo || 0);
-             if (novoCanal === 'WhatsApp') novoPreco = Number(comboRef.preco_whatsapp || comboRef.preco_fixo || 0);
-             
-             return { ...item, preco_unitario: novoPreco };
+         if (comboRef) {
+             if (comboRef.tipo_preco === 'fixo') {
+                 let novoPreco = Number(comboRef.preco_fixo || 0);
+                 if (novoCanal === 'Glovo') novoPreco = Number(comboRef.preco_glovo || comboRef.preco_fixo || 0);
+                 if (novoCanal === 'WhatsApp' || novoCanal === 'Balcão' || novoCanal === 'Palmbites') {
+                   novoPreco = Number(comboRef.preco_whatsapp || comboRef.preco_fixo || 0);
+                 }
+                 return { ...item, preco_unitario: novoPreco };
+             }
          }
-         // Se for combo de desconto/dinâmico, mantemos o valor. Recomendamos remover e adicionar para ser perfeito.
          return item; 
       }
 
-      // 2. Se for um Produto Solto
       const prod = produtosDB.find(p => p.id === item.produto_id || p.nome.toLowerCase() === item.nome_produto.toLowerCase());
       if (prod) {
         const novoPreco = calcularPrecoPorCanalEProduto(novoCanal, prod);
@@ -365,7 +363,6 @@ export default function GestaoPedidos() {
 
     Object.values(selecoesComboEdicao).forEach((selGrupo: any) => {
       selGrupo.forEach((item: any) => {
-        // Se for um combo de desconto, a soma dos itens já apanha a tarifa da Glovo perfeitamente!
         const precoItem = calcularPrecoPorCanalEProduto(pedidoEditando.canal, item.produto);
         somaPrecos += precoItem;
         somaAcrescimos += Number(item.acrescimo_preco || 0);
@@ -375,22 +372,24 @@ export default function GestaoPedidos() {
 
     let precoComboFinal = somaPrecos;
     
-    // Assumir preços Glovo e WhatsApp se for Combo Fixo
+    // Regras exatas de preços e descontos para os combos
     if (comboSelecionadoParaMontar.tipo_preco === 'fixo') {
       if (pedidoEditando.canal === 'Glovo') {
         precoComboFinal = Number(comboSelecionadoParaMontar.preco_glovo || comboSelecionadoParaMontar.preco_fixo || 0);
-      } else if (pedidoEditando.canal === 'WhatsApp') {
+      } else if (pedidoEditando.canal === 'WhatsApp' || pedidoEditando.canal === 'Balcão' || pedidoEditando.canal === 'Palmbites') {
         precoComboFinal = Number(comboSelecionadoParaMontar.preco_whatsapp || comboSelecionadoParaMontar.preco_fixo || 0);
       } else {
         precoComboFinal = Number(comboSelecionadoParaMontar.preco_fixo || 0);
       }
     } 
-    else if (comboSelecionadoParaMontar.tipo_preco === 'desconto') {
-      const perc = Number(comboSelecionadoParaMontar.desconto_percentual || 0);
+    else if (comboSelecionadoParaMontar.tipo_preco === 'desconto' || comboSelecionadoParaMontar.nome.toLowerCase().includes('batatô10') || comboSelecionadoParaMontar.nome.toLowerCase().includes('batato10')) {
+      // Regra do Combo Batatô 10: 10% de desconto sobre o valor total dos itens
+      const perc = Number(comboSelecionadoParaMontar.desconto_percentual || 10);
       precoComboFinal = somaPrecos * (1 - perc / 100);
     } 
-    else if (comboSelecionadoParaMontar.tipo_preco === 'desconto_fixo') {
-      const desc = Number(comboSelecionadoParaMontar.desconto_absoluto || 0);
+    else if (comboSelecionadoParaMontar.tipo_preco === 'desconto_fixo' || comboSelecionadoParaMontar.nome.toLowerCase().includes('para dois')) {
+      // Regra do Combo Batatô Para Dois: -1.70€ de desconto fixo
+      const desc = Number(comboSelecionadoParaMontar.desconto_absoluto || 1.70);
       precoComboFinal = Math.max(0, somaPrecos - desc);
     }
 
