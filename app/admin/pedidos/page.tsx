@@ -4,7 +4,8 @@ import { useState, useEffect, useMemo } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
 interface ItemPedido {
-  id: string;
+  id?: string;
+  produto_id?: string;
   codigo_produto: string;
   nome_produto: string;
   quantidade: number;
@@ -29,6 +30,7 @@ interface Pedido {
 
 export default function GestaoPedidos() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
+  const [produtosDB, setProdutosDB] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [dataInicio, setDataInicio] = useState('');
@@ -43,9 +45,14 @@ export default function GestaoPedidos() {
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
 
-  async function carregarPedidosEItens() {
+  async function carregarDadosIniciais() {
     setLoading(true);
     try {
+      // 1. Carregar produtos para poder adicionar novos itens no modal de edição
+      const { data: dataProds } = await supabase.from('produtos').select('*').eq('ativo', true);
+      if (dataProds) setProdutosDB(dataProds);
+
+      // 2. Carregar pedidos e itens
       const { data, error } = await supabase
         .from('pedidos')
         .select(`
@@ -64,7 +71,6 @@ export default function GestaoPedidos() {
           const taxa = Number(linha.taxa_entrega || 0);
           const desconto = Number(linha.desconto || 0);
 
-          // Puxa a data independentemente da coluna usada no BD
           const dataReal = linha.data_pedido || linha.data_venda || linha.criado_em || new Date().toISOString();
 
           const itensDestaLinha = (linha.itens || []).map((item: any) => {
@@ -81,6 +87,7 @@ export default function GestaoPedidos() {
 
             return {
               id: item.id,
+              produto_id: item.produto_id,
               codigo_produto: item.codigo_produto || '',
               nome_produto: item.nome_produto || '',
               quantidade: Number(item.quantidade || 1),
@@ -101,19 +108,12 @@ export default function GestaoPedidos() {
             });
           } else {
             const existente = agrupados.get(chaveNum)!;
-            
             existente.itens?.push(...itensDestaLinha);
             existente.ids_fragmentados?.push(linha.id);
             
-            if (!existente.entregador && linha.entregador) {
-              existente.entregador = linha.entregador;
-            }
-            if (!existente.cliente && linha.cliente) {
-              existente.cliente = linha.cliente;
-            }
-            if (linha.pago === true) {
-              existente.pago = true;
-            }
+            if (!existente.entregador && linha.entregador) existente.entregador = linha.entregador;
+            if (!existente.cliente && linha.cliente) existente.cliente = linha.cliente;
+            if (linha.pago === true) existente.pago = true;
 
             existente.taxa_entrega = Math.max(existente.taxa_entrega, taxa);
             existente.desconto = Math.max(existente.desconto, desconto);
@@ -131,7 +131,7 @@ export default function GestaoPedidos() {
         setPedidos([]);
       }
     } catch (err) {
-      console.error('Erro ao carregar os pedidos:', err);
+      console.error('Erro ao carregar dados:', err);
     } finally {
       setLoading(false);
     }
@@ -157,7 +157,6 @@ export default function GestaoPedidos() {
     
     try {
       await supabase.from('itens_pedido').delete().in('pedido_id', ids);
-      
       const { error } = await supabase.from('pedidos').delete().in('id', ids);
       if (error) throw error;
       
@@ -168,8 +167,62 @@ export default function GestaoPedidos() {
   };
 
   const abrirEdicao = (pedido: Pedido) => {
-    setPedidoEditando({ ...pedido });
+    setPedidoEditando(JSON.parse(JSON.stringify(pedido))); // Cópia profunda para edição segura
     setModalEditar(true);
+  };
+
+  // Funções de alteração de itens dentro do modal
+  const alterarQtdItemEdicao = (index: number, novaQtd: number) => {
+    if (!pedidoEditando || !pedidoEditando.itens) return;
+    const qtd = Math.max(1, novaQtd);
+    const novosItens = [...pedidoEditando.itens];
+    novosItens[index].quantidade = qtd;
+    
+    const subtotal = novosItens.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
+    const novoTotal = Math.max(0, subtotal + pedidoEditando.taxa_entrega - pedidoEditando.desconto);
+
+    setPedidoEditando({ ...pedidoEditando, itens: novosItens, total_geral: novoTotal });
+  };
+
+  const removerItemEdicao = (index: number) => {
+    if (!pedidoEditando || !pedidoEditando.itens) return;
+    const novosItens = pedidoEditando.itens.filter((_, i) => i !== index);
+    
+    const subtotal = novosItens.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
+    const novoTotal = Math.max(0, subtotal + pedidoEditando.taxa_entrega - pedidoEditando.desconto);
+
+    setPedidoEditando({ ...pedidoEditando, itens: novosItens, total_geral: novoTotal });
+  };
+
+  const adicionarProdutoEdicao = (produtoId: string) => {
+    if (!pedidoEditando || !produtoId) return;
+    const prod = produtosDB.find(p => p.id === produtoId);
+    if (!prod) return;
+
+    const precoUnit = pedidoEditando.canal === 'Revendedores' 
+      ? ((prod.nome || '').toLowerCase().includes('fudge') || (prod.nome || '').toLowerCase().includes('new york') ? 1.70 : 2.70)
+      : Number(prod.preco_cardapio || 0);
+
+    const itensAtuais = pedidoEditando.itens || [];
+    const existenteIndex = itensAtuais.findIndex(it => it.produto_id === prod.id);
+
+    let novosItens = [...itensAtuais];
+    if (existenteIndex >= 0) {
+      novosItens[existenteIndex].quantidade += 1;
+    } else {
+      novosItens.push({
+        produto_id: prod.id,
+        codigo_produto: prod.codigo || '',
+        nome_produto: prod.nome,
+        quantidade: 1,
+        preco_unitario: precoUnit
+      });
+    }
+
+    const subtotal = novosItens.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
+    const novoTotal = Math.max(0, subtotal + pedidoEditando.taxa_entrega - pedidoEditando.desconto);
+
+    setPedidoEditando({ ...pedidoEditando, itens: novosItens, total_geral: novoTotal });
   };
 
   const salvarEdicao = async (e: React.FormEvent) => {
@@ -181,6 +234,8 @@ export default function GestaoPedidos() {
       const subtotalItens = pedidoEditando.itens?.reduce((acc, item) => acc + (item.quantidade * item.preco_unitario), 0) || 0;
       const novoTotal = Math.max(0, subtotalItens + Number(pedidoEditando.taxa_entrega) - Number(pedidoEditando.desconto));
 
+      // 1. Atualizar dados principais do pedido
+      const principalId = pedidoEditando.ids_fragmentados?.[0] || pedidoEditando.id;
       const { error: erroPrincipal } = await supabase
         .from('pedidos')
         .update({
@@ -193,25 +248,30 @@ export default function GestaoPedidos() {
           pago: pedidoEditando.pago,
           total_geral: novoTotal
         })
-        .eq('id', pedidoEditando.id);
+        .eq('id', principalId);
 
       if (erroPrincipal) throw erroPrincipal;
 
-      if (pedidoEditando.ids_fragmentados && pedidoEditando.ids_fragmentados.length > 1) {
-        await supabase
-          .from('pedidos')
-          .update({
-            taxa_entrega: 0,
-            desconto: 0,
-            total_geral: 0,
-            pago: pedidoEditando.pago 
-          })
-          .eq('numero_pedido', pedidoEditando.numero_pedido)
-          .neq('id', pedidoEditando.id);
+      // 2. Apagar itens antigos e inserir os novos itens atualizados
+      const idsRelacionados = pedidoEditando.ids_fragmentados || [pedidoEditando.id];
+      await supabase.from('itens_pedido').delete().in('pedido_id', idsRelacionados);
+
+      if (pedidoEditando.itens && pedidoEditando.itens.length > 0) {
+        const novosItensDB = pedidoEditando.itens.map(item => ({
+          pedido_id: principalId,
+          produto_id: item.produto_id || null,
+          codigo_produto: item.codigo_produto,
+          nome_produto: item.nome_produto,
+          quantidade: item.quantidade,
+          preco_unitario: item.preco_unitario
+        }));
+
+        const { error: erroItens } = await supabase.from('itens_pedido').insert(novosItensDB);
+        if (erroItens) throw erroItens;
       }
 
       setModalEditar(false);
-      carregarPedidosEItens(); 
+      carregarDadosIniciais(); 
     } catch (err: any) {
       alert(`Erro ao salvar edição: ${err.message}`);
     } finally {
@@ -220,12 +280,12 @@ export default function GestaoPedidos() {
   };
 
   useEffect(() => {
-    carregarPedidosEItens();
+    carregarDadosIniciais();
 
     const canalAtualizacao = supabase
       .channel('schema-db-changes')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'pedidos' }, () => {
-        carregarPedidosEItens();
+        carregarDadosIniciais();
       })
       .subscribe();
 
@@ -237,30 +297,20 @@ export default function GestaoPedidos() {
   const extrairDataIso = (valor: string) => {
     if (!valor) return '';
     const match = valor.match(/(\d{4})-(\d{2})-(\d{2})/);
-    if (match) {
-      return `${match[1]}-${match[2]}-${match[3]}`;
-    }
-    return '';
+    return match ? `${match[1]}-${match[2]}-${match[3]}` : '';
   };
 
   const pedidosFiltrados = useMemo(() => {
     return pedidos.filter((pedido) => {
       const dataPedidoFormatada = extrairDataIso(pedido.data_pedido);
-      
       if (!dataPedidoFormatada) return true;
-
       if (dataInicio && dataPedidoFormatada < dataInicio) return false;
       if (dataFim && dataPedidoFormatada > dataFim) return false;
-
       return true;
     });
   }, [pedidos, dataInicio, dataFim]);
 
-  const limparFiltroDatas = () => {	
-    setDataInicio('');
-    setDataFim('');
-  };
-
+  const limparFiltroDatas = () => { setDataInicio(''); setDataFim(''); };
   const selecionarHoje = () => {
     const hojeIso = new Date().toISOString().split('T')[0];
     setDataInicio(hojeIso);
@@ -281,84 +331,43 @@ export default function GestaoPedidos() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white flex flex-col font-sans relative">
-      
       <header className="bg-zinc-900 border-b border-zinc-800 px-6 py-4 flex justify-between items-center shadow-lg">
         <div className="flex items-center gap-3">
           <span className="text-2xl">📓</span>
           <h1 className="text-xl font-bold tracking-wide">Registo e Controlo de Vendas</h1>
         </div>
-        <button 
-          onClick={carregarPedidosEItens}
-          className="bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold px-4 py-2 rounded-xl border border-zinc-700 transition-all"
-        >
+        <button onClick={carregarDadosIniciais} className="bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold px-4 py-2 rounded-xl border border-zinc-700 transition-all">
           🔄 Sincronizar Dados
         </button>
       </header>
 
-      {/* 📅 SECÇÃO DE FILTROS POR DATA */}
+      {/* FILTROS POR DATA */}
       <section className="px-6 pt-6">
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
           <div className="flex flex-col xl:flex-row xl:items-end gap-4">
             <div className="flex-1">
               <h2 className="text-sm font-bold text-zinc-100">Filtrar por Intervalo de Datas</h2>
-              <p className="text-xs text-zinc-500 mt-1">Selecione o dia, mês e ano inicial até ao dia, mês e ano final.</p>
+              <p className="text-xs text-zinc-500 mt-1">Selecione o dia inicial e final.</p>
             </div>
-
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full xl:w-auto">
               <div>
                 <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">De (Data Inicial)</label>
-                <input
-                  type="date"
-                  value={dataInicio}
-                  max={dataFim || undefined}
-                  onChange={(e) => setDataInicio(e.target.value)}
-                  className="w-full sm:w-48 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-white focus:border-orange-500 outline-none [color-scheme:dark]"
-                />
+                <input type="date" value={dataInicio} max={dataFim || undefined} onChange={(e) => setDataInicio(e.target.value)} className="w-full sm:w-48 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-white focus:border-orange-500 outline-none [color-scheme:dark]" />
               </div>
-
               <div>
                 <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">Até (Data Final)</label>
-                <input
-                  type="date"
-                  value={dataFim}
-                  min={dataInicio || undefined}
-                  onChange={(e) => setDataFim(e.target.value)}
-                  className="w-full sm:w-48 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-white focus:border-orange-500 outline-none [color-scheme:dark]"
-                />
+                <input type="date" value={dataFim} min={dataInicio || undefined} onChange={(e) => setDataFim(e.target.value)} className="w-full sm:w-48 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-white focus:border-orange-500 outline-none [color-scheme:dark]" />
               </div>
             </div>
-
             <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={selecionarHoje}
-                className="bg-orange-600 hover:bg-orange-500 text-xs font-bold px-4 py-2.5 rounded-xl transition-all shadow-md"
-              >
-                Hoje
-              </button>
-              <button
-                type="button"
-                onClick={limparFiltroDatas}
-                disabled={!dataInicio && !dataFim}
-                className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed text-xs font-bold px-4 py-2.5 rounded-xl border border-zinc-700 transition-all"
-              >
-                Limpar Filtro
-              </button>
+              <button type="button" onClick={selecionarHoje} className="bg-orange-600 hover:bg-orange-500 text-xs font-bold px-4 py-2.5 rounded-xl transition-all shadow-md">Hoje</button>
+              <button type="button" onClick={limparFiltroDatas} disabled={!dataInicio && !dataFim} className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-xs font-bold px-4 py-2.5 rounded-xl border border-zinc-700 transition-all">Limpar Filtro</button>
             </div>
-          </div>
-
-          <div className="mt-4 pt-3 border-t border-zinc-800 flex flex-wrap gap-x-5 gap-y-1 text-xs text-zinc-400">
-            <span><strong className="text-white">{pedidosFiltrados.length}</strong> pedidos encontrados no período</span>
-            {(dataInicio || dataFim) && (
-              <span>
-                Mostrando de <strong className="text-orange-400">{dataInicio || 'início'}</strong> até <strong className="text-orange-400">{dataFim || 'hoje'}</strong>
-              </span>
-            )}
           </div>
         </div>
       </section>
 
-      {/* MÉTRICAS / RESUMO */}
+      {/* MÉTRICAS */}
       <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-zinc-900 border border-zinc-800/60 p-4 rounded-xl flex justify-between items-center">
           <div><span className="text-[10px] text-zinc-400 uppercase font-black">Faturamento Bruto</span><p className="text-2xl font-black mt-1">{faturamentoTotal.toFixed(2)}€</p></div>
@@ -379,22 +388,15 @@ export default function GestaoPedidos() {
           <div className="text-center text-zinc-500 py-24">A carregar registos...</div>
         ) : pedidosFiltrados.length === 0 ? (
           <div className="text-center text-zinc-500 py-24 bg-zinc-900/20 border border-dashed border-zinc-800 rounded-2xl max-w-xl mx-auto">
-            {pedidos.length === 0
-              ? 'Nenhum pedido lançado no sistema até ao momento.'
-              : 'Nenhum pedido encontrado dentro do intervalo de datas selecionado.'}
+            Nenhum pedido encontrado.
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {pedidosFiltrados.map((ped) => (
               <div key={ped.id} className="bg-zinc-900 border border-zinc-800/80 rounded-2xl p-4 flex flex-col justify-between shadow-md hover:border-zinc-700/60 transition-all relative group">
-                
                 <div className="absolute top-3 right-3 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => abrirEdicao(ped)} className="w-7 h-7 bg-zinc-800 hover:bg-blue-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Editar Informações">
-                    ✏️
-                  </button>
-                  <button onClick={() => excluirPedido(ped.numero_pedido, ped.ids_fragmentados!)} className="w-7 h-7 bg-zinc-800 hover:bg-red-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Excluir Pedido">
-                    🗑️
-                  </button>
+                  <button onClick={() => abrirEdicao(ped)} className="w-7 h-7 bg-zinc-800 hover:bg-blue-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Editar Informações e Itens">✏️</button>
+                  <button onClick={() => excluirPedido(ped.numero_pedido, ped.ids_fragmentados!)} className="w-7 h-7 bg-zinc-800 hover:bg-red-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Excluir Pedido">🗑️</button>
                 </div>
 
                 <div>
@@ -404,18 +406,14 @@ export default function GestaoPedidos() {
                       <h3 className="font-bold text-zinc-100 text-sm mt-0.5">{ped.cliente || 'Cliente Anónimo'}</h3>
                     </div>
                     <div className="flex flex-col items-end gap-1">
-                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase tracking-wider ${getCorCanal(ped.canal)}`}>
-                        {ped.canal}
-                      </span>
-                      <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded ${ped.pago ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-                        {ped.pago ? 'Pago' : 'Pendente'}
-                      </span>
+                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase tracking-wider ${getCorCanal(ped.canal)}`}>{ped.canal}</span>
+                      <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded ${ped.pago ? 'bg-green-500/10 text-green-500' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>{ped.pago ? 'Pago' : 'Pendente'}</span>
                     </div>
                   </div>
 
                   <div className="space-y-2 mb-4">
-                    {ped.itens && ped.itens.map((item) => (
-                      <div key={item.id} className="flex justify-between text-xs text-zinc-300">
+                    {ped.itens && ped.itens.map((item, i) => (
+                      <div key={i} className="flex justify-between text-xs text-zinc-300">
                         <span className="line-clamp-1 pr-2">
                           <span className="font-bold text-orange-400 mr-1.5">{item.quantidade}x</span>
                           {item.nome_produto}
@@ -445,51 +443,37 @@ export default function GestaoPedidos() {
                   </div>
 
                   {!ped.pago && (
-                    <button 
-                      onClick={() => liquidarCaderninho(ped.numero_pedido)} 
-                      className="w-full mt-2 bg-green-600 hover:bg-green-700 text-white text-[10px] font-bold py-1.5 rounded-lg transition-all"
-                    >
+                    <button onClick={() => liquidarCaderninho(ped.numero_pedido)} className="w-full mt-2 bg-green-600 hover:bg-green-700 text-white text-[10px] font-bold py-1.5 rounded-lg transition-all">
                       ✓ Recebido (Confirmar Pagamento)
                     </button>
                   )}
                 </div>
-
               </div>
             ))}
           </div>
         )}
       </main>
 
-      {/* MODAL DE EDIÇÃO */}
+      {/* MODAL DE EDIÇÃO AVANÇADA (ITENS + DADOS DO PEDIDO) */}
       {modalEditar && pedidoEditando && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-lg rounded-3xl p-6 shadow-2xl relative">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl p-6 shadow-2xl relative max-h-[90vh] flex flex-col">
             <button onClick={() => setModalEditar(false)} className="absolute top-5 right-5 text-zinc-400 hover:text-white">✕</button>
             
-            <h2 className="text-xl font-bold text-white mb-6 border-b border-zinc-800 pb-3">
+            <h2 className="text-xl font-bold text-white mb-4 border-b border-zinc-800 pb-3">
               Editar Pedido #{pedidoEditando.numero_pedido}
             </h2>
 
-            <form onSubmit={salvarEdicao} className="space-y-4">
+            <form onSubmit={salvarEdicao} className="flex-1 overflow-y-auto space-y-4 pr-1">
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
                   <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Cliente</label>
-                  <input 
-                    type="text" 
-                    required
-                    value={pedidoEditando.cliente || ''} 
-                    onChange={e => setPedidoEditando({...pedidoEditando, cliente: e.target.value})} 
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white focus:border-orange-500 outline-none" 
-                  />
+                  <input type="text" required value={pedidoEditando.cliente || ''} onChange={e => setPedidoEditando({...pedidoEditando, cliente: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none" />
                 </div>
 
                 <div>
                   <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Canal</label>
-                  <select 
-                    value={pedidoEditando.canal} 
-                    onChange={e => setPedidoEditando({...pedidoEditando, canal: e.target.value})} 
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white focus:border-orange-500 outline-none"
-                  >
+                  <select value={pedidoEditando.canal} onChange={e => setPedidoEditando({...pedidoEditando, canal: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none">
                     <option value="Balcão">Balcão</option>
                     <option value="WhatsApp">WhatsApp</option>
                     <option value="Glovo">Glovo</option>
@@ -500,11 +484,7 @@ export default function GestaoPedidos() {
 
                 <div>
                   <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Pagamento</label>
-                  <select 
-                    value={pedidoEditando.forma_pagamento} 
-                    onChange={e => setPedidoEditando({...pedidoEditando, forma_pagamento: e.target.value})} 
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white focus:border-orange-500 outline-none"
-                  >
+                  <select value={pedidoEditando.forma_pagamento} onChange={e => setPedidoEditando({...pedidoEditando, forma_pagamento: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none">
                     <option value="Dinheiro">Dinheiro</option>
                     <option value="MBWay">MBWay</option>
                     <option value="Multibanco">Multibanco</option>
@@ -516,11 +496,7 @@ export default function GestaoPedidos() {
 
                 <div>
                   <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Estado do Pagamento</label>
-                  <select 
-                    value={pedidoEditando.pago ? 'true' : 'false'} 
-                    onChange={e => setPedidoEditando({...pedidoEditando, pago: e.target.value === 'true'})} 
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white focus:border-orange-500 outline-none"
-                  >
+                  <select value={pedidoEditando.pago ? 'true' : 'false'} onChange={e => setPedidoEditando({...pedidoEditando, pago: e.target.value === 'true'})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none">
                     <option value="true">Pago</option>
                     <option value="false">Pendente</option>
                   </select>
@@ -528,49 +504,74 @@ export default function GestaoPedidos() {
 
                 <div>
                   <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Entregador</label>
-                  <input 
-                    type="text" 
-                    value={pedidoEditando.entregador || ''} 
-                    onChange={e => setPedidoEditando({...pedidoEditando, entregador: e.target.value})} 
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white focus:border-orange-500 outline-none"
-                    placeholder="Nome do estafeta"
-                  />
+                  <input type="text" value={pedidoEditando.entregador || ''} onChange={e => setPedidoEditando({...pedidoEditando, entregador: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none" placeholder="Estafeta" />
                 </div>
 
                 <div>
                   <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Taxa de Entrega (€)</label>
-                  <input 
-                    type="number" step="0.01" min="0" 
-                    value={pedidoEditando.taxa_entrega} 
-                    onChange={e => setPedidoEditando({...pedidoEditando, taxa_entrega: parseFloat(e.target.value) || 0})} 
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-orange-400 font-bold focus:border-orange-500 outline-none" 
-                  />
+                  <input type="number" step="0.01" min="0" value={pedidoEditando.taxa_entrega} onChange={e => {
+                    const taxa = parseFloat(e.target.value) || 0;
+                    const subtotal = pedidoEditando.itens?.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0) || 0;
+                    const novoTotal = Math.max(0, subtotal + taxa - pedidoEditando.desconto);
+                    setPedidoEditando({...pedidoEditando, taxa_entrega: taxa, total_geral: novoTotal});
+                  }} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-orange-400 font-bold outline-none" />
                 </div>
 
                 <div>
                   <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Desconto (€)</label>
-                  <input 
-                    type="number" step="0.01" min="0" 
-                    value={pedidoEditando.desconto} 
-                    onChange={e => setPedidoEditando({...pedidoEditando, desconto: parseFloat(e.target.value) || 0})} 
-                    className="w-full bg-zinc-950 border border-red-900/50 rounded-xl px-3 py-2 text-sm text-red-400 font-bold focus:border-red-500 outline-none" 
-                  />
+                  <input type="number" step="0.01" min="0" value={pedidoEditando.desconto} onChange={e => {
+                    const desc = parseFloat(e.target.value) || 0;
+                    const subtotal = pedidoEditando.itens?.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0) || 0;
+                    const novoTotal = Math.max(0, subtotal + pedidoEditando.taxa_entrega - desc);
+                    setPedidoEditando({...pedidoEditando, desconto: desc, total_geral: novoTotal});
+                  }} className="w-full bg-zinc-950 border border-red-900/50 rounded-xl px-3 py-2 text-sm text-red-400 font-bold outline-none" />
                 </div>
               </div>
 
-              <div className="pt-4 border-t border-zinc-800 mt-4 flex justify-end gap-3">
-                <button 
-                  type="button" 
-                  onClick={() => setModalEditar(false)} 
-                  className="px-5 py-2.5 text-sm font-bold text-zinc-400 hover:text-white transition-colors"
-                >
-                  Cancelar
-                </button>
-                <button 
-                  type="submit" 
-                  disabled={salvando}
-                  className="bg-orange-600 hover:bg-orange-500 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-lg transition-transform active:scale-95 disabled:opacity-50"
-                >
+              {/* GESTÃO DOS ITENS DO PEDIDO */}
+              <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 space-y-3 mt-4">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-xs font-bold uppercase text-zinc-400">Itens do Pedido</h3>
+                  <select 
+                    onChange={e => { adicionarProdutoEdicao(e.target.value); e.target.value = ''; }}
+                    defaultValue=""
+                    className="bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none cursor-pointer"
+                  >
+                    <option value="" disabled>+ Adicionar Produto...</option>
+                    {produtosDB.map(p => (
+                      <option key={p.id} value={p.id}>{p.nome}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  {pedidoEditando.itens && pedidoEditando.itens.map((item, idx) => (
+                    <div key={idx} className="flex items-center justify-between bg-zinc-900 p-2.5 rounded-xl border border-zinc-800 text-xs">
+                      <span className="font-bold text-white flex-1 truncate pr-2">{item.nome_produto}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-zinc-400">{item.preco_unitario.toFixed(2)}€</span>
+                        <input 
+                          type="number" 
+                          min="1" 
+                          value={item.quantidade} 
+                          onChange={e => alterarQtdItemEdicao(idx, parseInt(e.target.value) || 1)}
+                          className="w-16 bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1 text-center font-bold text-white outline-none" 
+                        />
+                        <button type="button" onClick={() => removerItemEdicao(idx)} className="text-red-400 hover:text-red-300 px-1 font-bold">✕</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex justify-between items-center pt-2">
+                <span className="text-sm font-bold text-zinc-300">Total Geral Atualizado:</span>
+                <span className="text-xl font-black text-orange-500 font-mono">{pedidoEditando.total_geral.toFixed(2)}€</span>
+              </div>
+
+              <div className="pt-4 border-t border-zinc-800 flex justify-end gap-3">
+                <button type="button" onClick={() => setModalEditar(false)} className="px-5 py-2.5 text-sm font-bold text-zinc-400 hover:text-white">Cancelar</button>
+                <button type="submit" disabled={salvando} className="bg-orange-600 hover:bg-orange-500 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-lg disabled:opacity-50">
                   {salvando ? 'A Guardar...' : 'Guardar Alterações'}
                 </button>
               </div>
