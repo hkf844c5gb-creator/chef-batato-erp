@@ -68,11 +68,10 @@ export default function CaixaPDV() {
   const [taxaEntrega, setTaxaEntrega] = useState('0.00');
   const [descontoManual, setDescontoManual] = useState('0.00');
   
-  // ESTADOS ESPECÍFICOS PARA ABA DE REVENDA (CRUZAMENTO DE CONSIGNADOS)
+  // ESTADOS ESPECÍFICOS PARA ABA DE REVENDA (LISTA DE BROWNES)
   const [revendedorSelecionado, setRevendedorSelecionado] = useState('');
   const [formaPagamentoRev, setFormaPagamentoRev] = useState('Dinheiro');
-  const [consignacoesAtivasParceiro, setConsignacoesAtivasParceiro] = useState<any[]>([]);
-  const [vendasRevendaInput, setVendasRevendaInput] = useState<{ [consignacaoId: string]: number }>({});
+  const [quantidadesBrowniesRev, setQuantidadesBrowniesRev] = useState<{ [produtoId: string]: number }>({});
 
   // Controle de Botão
   const [isProcessando, setIsProcessando] = useState(false);
@@ -145,7 +144,6 @@ export default function CaixaPDV() {
 
       setProdutos(produtosFormatados);
 
-      // Carregar Revendedores da tabela revendedores
       const { data: dataRevs } = await supabase.from('revendedores').select('*').order('nome_empresa', { ascending: true });
       if (dataRevs) setListaRevendedores(dataRevs);
 
@@ -195,32 +193,6 @@ export default function CaixaPDV() {
 
   useEffect(() => { carregarMenuCompleto(); }, [canal]);
 
-  // Cruzamento automático com a tabela revenda_consignacoes ao selecionar o revendedor
-  useEffect(() => {
-    async function buscarConsignacoesDoParceiro() {
-      if (!revendedorSelecionado) {
-        setConsignacoesAtivasParceiro([]);
-        setVendasRevendaInput({});
-        return;
-      }
-      const { data, error } = await supabase
-        .from('revenda_consignacoes')
-        .select('*')
-        .eq('parceiro', revendedorSelecionado)
-        .eq('status', 'Ativo');
-
-      if (!error && data) {
-        setConsignacoesAtivasParceiro(data);
-        const initialInputs: { [id: string]: number } = {};
-        data.forEach(item => {
-          initialInputs[item.id] = item.qtd_deixada || 0;
-        });
-        setVendasRevendaInput(initialInputs);
-      }
-    }
-    buscarConsignacoesDoParceiro();
-  }, [revendedorSelecionado]);
-
   const getPrecoPorCanal = (prod: any) => {
     const precoGlovo = prod.precoGlovo !== undefined ? prod.precoGlovo : prod.preco_glovo;
     const precoWhatsapp = prod.precoWhatsapp !== undefined ? prod.precoWhatsapp : prod.preco_whatsapp;
@@ -239,6 +211,13 @@ export default function CaixaPDV() {
     }
     return 2.70;
   };
+
+  // Filtrar apenas Brownies
+  const produtosBrownies = produtos.filter(p => 
+    (p.nome || '').toLowerCase().includes('brownie') || 
+    (p.categoria || '').toLowerCase().includes('brownie') ||
+    (p.categoria || '').toLowerCase().includes('sobremesa')
+  );
 
   const adicionarAoCarrinho = (produto: Produto) => {
     const precoAtual = getPrecoPorCanal(produto);
@@ -453,16 +432,18 @@ export default function CaixaPDV() {
     }
   };
 
-  const totalRevendaCalculado = consignacoesAtivasParceiro.reduce((acc, item) => {
-    const qtdVendida = Number(vendasRevendaInput[item.id]) || 0;
-    const precoUnit = calcularPrecoRevenda(item.produto);
-    return acc + (qtdVendida * precoUnit);
+  const totalRevendaCalculado = produtosBrownies.reduce((acc, prod) => {
+    const qtd = Number(quantidadesBrowniesRev[prod.id]) || 0;
+    const preco = calcularPrecoRevenda(prod.nome);
+    return acc + (qtd * preco);
   }, 0);
 
-  // Fechar o Pedido do Revendedor cruzando com a tabela revenda_consignacoes
+  // Finalizar Pedido de Revendedor com cruzamento automático e atualização na page revenda (status Fechado)
   const finalizarPedidoRevendedor = async () => {
     if (!revendedorSelecionado) return alert('Selecione um revendedor.');
-    if (consignacoesAtivasParceiro.length === 0) return alert('Este revendedor não tem nenhum lote ativo em consignação para fechar.');
+    
+    const itensComQuantidade = produtosBrownies.filter(prod => (Number(quantidadesBrowniesRev[prod.id]) || 0) > 0);
+    if (itensComQuantidade.length === 0) return alert('Insira a quantidade de pelo menos um brownie.');
 
     setIsProcessando(true);
     const estaPago = formaPagamentoRev !== 'Caderninho';
@@ -501,43 +482,54 @@ export default function CaixaPDV() {
 
       if (pedidoGravado) {
         const itensItensPedido: any[] = [];
+        const consignacoesDB: any[] = [];
+        const itensParaBaixaStock: ItemCarrinho[] = [];
 
-        // 3. Atualizar o estado na tabela revenda_consignacoes para 'Fechado'
-        for (const cons of consignacoesAtivasParceiro) {
-          const qtdVendida = Number(vendasRevendaInput[cons.id]) || 0;
-          const precoUnit = calcularPrecoRevenda(cons.produto);
+        for (const prod of itensComQuantidade) {
+          const qtd = Number(quantidadesBrowniesRev[prod.id]) || 0;
+          const precoUnit = calcularPrecoRevenda(prod.nome);
 
-          await supabase
-            .from('revenda_consignacoes')
-            .update({
-              qtd_vendida: qtdVendida,
-              status: 'Fechado'
-            })
-            .eq('id', cons.id);
+          itensItensPedido.push({
+            pedido_id: pedidoGravado.id,
+            produto_id: prod.id,
+            codigo_produto: prod.codigo || 'REV',
+            nome_produto: prod.nome,
+            quantidade: qtd,
+            preco_unitario: precoUnit
+          });
 
-          if (qtdVendida > 0) {
-            const prodObj = produtos.find(p => p.nome.toLowerCase() === cons.produto.toLowerCase());
-            itensItensPedido.push({
-              pedido_id: pedidoGravado.id,
-              produto_id: prodObj ? prodObj.id : null,
-              codigo_produto: prodObj ? prodObj.codigo : 'REV',
-              nome_produto: cons.produto,
-              quantidade: qtdVendida,
-              preco_unitario: precoUnit
-            });
-          }
+          // Registo cruzado na page revenda (revenda_consignacoes) marcado diretamente como 'Fechado' (vendido)
+          consignacoesDB.push({
+            data_registo: dataPedido,
+            parceiro: revendedorSelecionado,
+            produto: prod.nome,
+            lote: 'ANT01',
+            preco_unidade: precoUnit,
+            qtd_deixada: qtd,
+            qtd_vendida: qtd,
+            qtd_trocada: 0,
+            qtd_vencida: 0,
+            status: 'Fechado',
+            data_validade: '2026-12-31'
+          });
+
+          itensParaBaixaStock.push({
+            produto: prod,
+            quantidade: qtd,
+            precoAplicado: precoUnit
+          });
         }
 
-        if (itensItensPedido.length > 0) {
-          await supabase.from('itens_pedido').insert(itensItensPedido);
-        }
+        await supabase.from('itens_pedido').insert(itensItensPedido);
+        await supabase.from('revenda_consignacoes').insert(consignacoesDB);
+        await descontarStockAutomaticamente(itensParaBaixaStock);
       }
 
-      alert(`✅ Pedido de Revendedor #${proximoNumeroStr} fechado e registado com sucesso para ${revendedorSelecionado} (${totalRevendaCalculado.toFixed(2)}€)!`);
+      alert(`✅ Pedido de Revendedor #${proximoNumeroStr} gerado com sucesso para ${revendedorSelecionado} e atualizado como vendido na page revenda!`);
       setRevendedorSelecionado('');
-      setConsignacoesAtivasParceiro([]);
+      setQuantidadesBrowniesRev({});
     } catch (err: any) {
-      alert(`Erro ao fechar revenda: ${err.message}`);
+      alert(`Erro ao registar revenda: ${err.message}`);
     } finally {
       setIsProcessando(false);
     }
@@ -681,13 +673,13 @@ export default function CaixaPDV() {
       {!erroCaixa && (
         <div className="flex-1 flex overflow-hidden">
           
-          {/* SE ESTIVER NO MODO REVENDA, EXIBE O FECHO CRUZADO COM A TELA DE REVENDA */}
+          {/* SE ESTIVER NO MODO REVENDA, EXIBE TODOS OS BROWNES PARA MARCAR QUANTIDADES E ATUALIZAR A PAGE REVENDA */}
           {canal === 'Revendedores' ? (
             <div className="flex-1 p-8 overflow-y-auto max-w-4xl mx-auto space-y-6">
               <div className="bg-zinc-900 border border-amber-500/30 p-6 rounded-3xl space-y-6 shadow-2xl">
                 <div>
-                  <h2 className="text-xl font-black text-amber-400">🏪 Fecho de Consignação / Pedido de Revendedor</h2>
-                  <p className="text-xs text-zinc-400 mt-1">Cruzamento automático com os lotes ativos na rua para apurar as vendas e gerar o pedido oficial.</p>
+                  <h2 className="text-xl font-black text-amber-400">🏪 Pedido de Revendedor (Atualização Automática na Page Revenda)</h2>
+                  <p className="text-xs text-zinc-400 mt-1">Ao gerar o pedido, os itens são assumidos como vendidos na página de consignações/revenda e o stock é descontado.</p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -720,68 +712,62 @@ export default function CaixaPDV() {
                   </div>
                 </div>
 
-                {/* TABELA DE ITENS ATIVOS EM CONSIGNACAO */}
-                {revendedorSelecionado && (
-                  <div className="bg-zinc-950 p-5 rounded-2xl border border-zinc-800 space-y-4">
-                    <h3 className="text-xs font-bold text-amber-400 uppercase tracking-widest">Itens Ativos na Rua (Consignados)</h3>
-                    
-                    {consignacoesAtivasParceiro.length === 0 ? (
-                      <p className="text-xs text-zinc-500 py-6 text-center">Nenhum lote ativo em consignação encontrado para este parceiro.</p>
-                    ) : (
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left text-xs">
-                          <thead className="text-[10px] text-zinc-500 uppercase border-b border-zinc-800">
-                            <tr>
-                              <th className="py-2">Produto / Brownie</th>
-                              <th className="py-2 text-center">Lote</th>
-                              <th className="py-2 text-center">Qtd Deixada</th>
-                              <th className="py-2 text-center">Preço Unit.</th>
-                              <th className="py-2 text-center">Qtd Vendida</th>
-                              <th className="py-2 text-right">Subtotal</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-zinc-800/40">
-                            {consignacoesAtivasParceiro.map((cons) => {
-                              const qtdVend = Number(vendasRevendaInput[cons.id]) || 0;
-                              const precoUn = calcularPrecoRevenda(cons.produto);
-                              return (
-                                <tr key={cons.id}>
-                                  <td className="py-3 font-bold text-white">{cons.produto}</td>
-                                  <td className="py-3 text-center text-zinc-400 font-mono">{cons.lote}</td>
-                                  <td className="py-3 text-center font-mono font-bold text-amber-400">{cons.qtd_deixada}</td>
-                                  <td className="py-3 text-center text-green-400 font-mono">{precoUn.toFixed(2)}€</td>
-                                  <td className="py-3 text-center">
-                                    <input 
-                                      type="number" 
-                                      min="0" 
-                                      max={cons.qtd_deixada}
-                                      value={vendasRevendaInput[cons.id] !== undefined ? vendasRevendaInput[cons.id] : cons.qtd_deixada}
-                                      onChange={(e) => setVendasRevendaInput({ ...vendasRevendaInput, [cons.id]: parseInt(e.target.value) || 0 })}
-                                      className="w-20 bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-center font-bold text-white outline-none"
-                                    />
-                                  </td>
-                                  <td className="py-3 text-right font-mono font-black text-amber-400">{(qtdVend * precoUn).toFixed(2)}€</td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                )}
+                {/* LISTA DE TODOS OS BROWNES PARA MARCAR QUANTIDADE */}
+                <div className="bg-zinc-950 p-5 rounded-2xl border border-zinc-800 space-y-4">
+                  <h3 className="text-xs font-bold text-amber-400 uppercase tracking-widest">Sabores de Brownies Disponíveis</h3>
+                  
+                  {produtosBrownies.length === 0 ? (
+                    <p className="text-xs text-zinc-500 py-6 text-center">Nenhum brownie encontrado no sistema.</p>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left text-xs">
+                        <thead className="text-[10px] text-zinc-500 uppercase border-b border-zinc-800">
+                          <tr>
+                            <th className="py-2">Sabor do Brownie</th>
+                            <th className="py-2 text-center">Preço Revenda</th>
+                            <th className="py-2 text-center">Quantidade Vendida</th>
+                            <th className="py-2 text-right">Subtotal</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-zinc-800/40">
+                          {produtosBrownies.map((prod) => {
+                            const precoUn = calcularPrecoRevenda(prod.nome);
+                            const qtd = Number(quantidadesBrowniesRev[prod.id]) || 0;
+                            return (
+                              <tr key={prod.id}>
+                                <td className="py-3 font-bold text-white">{prod.nome}</td>
+                                <td className="py-3 text-center text-green-400 font-mono">{precoUn.toFixed(2)}€</td>
+                                <td className="py-3 text-center">
+                                  <input 
+                                    type="number" 
+                                    min="0" 
+                                    value={quantidadesBrowniesRev[prod.id] !== undefined ? quantidadesBrowniesRev[prod.id] : ''}
+                                    placeholder="0"
+                                    onChange={(e) => setQuantidadesBrowniesRev({ ...quantidadesBrowniesRev, [prod.id]: parseInt(e.target.value) || 0 })}
+                                    className="w-20 bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-center font-bold text-white outline-none"
+                                  />
+                                </td>
+                                <td className="py-3 text-right font-mono font-black text-amber-400">{(qtd * precoUn).toFixed(2)}€</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
 
                 <div className="flex justify-between items-center bg-zinc-950 p-5 rounded-2xl border border-zinc-800">
                   <div>
-                    <span className="text-xs text-zinc-400 uppercase block">Total do Fecho de Revenda</span>
+                    <span className="text-xs text-zinc-400 uppercase block">Total do Pedido Revenda</span>
                     <span className="text-2xl font-black text-amber-400 font-mono">{totalRevendaCalculado.toFixed(2)}€</span>
                   </div>
                   <button 
                     onClick={finalizarPedidoRevendedor}
-                    disabled={isProcessando || consignacoesAtivasParceiro.length === 0}
+                    disabled={isProcessando}
                     className="bg-amber-500 hover:bg-amber-400 text-zinc-950 px-8 py-3.5 rounded-2xl font-black uppercase text-xs tracking-wider transition-all disabled:opacity-50"
                   >
-                    {isProcessando ? 'A Fechar...' : 'Concluir Fecho & Gerar Pedido Oficial 🚀'}
+                    {isProcessando ? 'A Registar...' : 'Concluir & Gerar Pedido Oficial 🚀'}
                   </button>
                 </div>
 
