@@ -33,8 +33,11 @@ export default function GestaoPedidos() {
   const [produtosDB, setProdutosDB] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Filtros
   const [dataInicio, setDataInicio] = useState('');
   const [dataFim, setDataFim] = useState('');
+  const [termoPesquisa, setTermoPesquisa] = useState('');
+  const [ordemDirecao, setOrdemDirecao] = useState<'desc' | 'asc'>('desc');
 
   const [modalEditar, setModalEditar] = useState(false);
   const [pedidoEditando, setPedidoEditando] = useState<Pedido | null>(null);
@@ -48,11 +51,9 @@ export default function GestaoPedidos() {
   async function carregarDadosIniciais() {
     setLoading(true);
     try {
-      // 1. Carregar produtos para poder adicionar novos itens no modal de edição
       const { data: dataProds } = await supabase.from('produtos').select('*').eq('ativo', true);
       if (dataProds) setProdutosDB(dataProds);
 
-      // 2. Carregar pedidos e itens
       const { data, error } = await supabase
         .from('pedidos')
         .select(`
@@ -70,7 +71,6 @@ export default function GestaoPedidos() {
           const chaveNum = String(linha.numero_pedido); 
           const taxa = Number(linha.taxa_entrega || 0);
           const desconto = Number(linha.desconto || 0);
-
           const dataReal = linha.data_pedido || linha.data_venda || linha.criado_em || new Date().toISOString();
 
           const itensDestaLinha = (linha.itens || []).map((item: any) => {
@@ -124,7 +124,7 @@ export default function GestaoPedidos() {
           const subtotalItens = (ped.itens || []).reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
           ped.total_geral = subtotalItens + ped.taxa_entrega - ped.desconto;
           return ped;
-        }).sort((a, b) => b.numero_pedido - a.numero_pedido);
+        });
 
         setPedidos(pedidosFormatados);
       } else {
@@ -167,11 +167,10 @@ export default function GestaoPedidos() {
   };
 
   const abrirEdicao = (pedido: Pedido) => {
-    setPedidoEditando(JSON.parse(JSON.stringify(pedido))); // Cópia profunda para edição segura
+    setPedidoEditando(JSON.parse(JSON.stringify(pedido)));
     setModalEditar(true);
   };
 
-  // Funções de alteração de itens dentro do modal
   const alterarQtdItemEdicao = (index: number, novaQtd: number) => {
     if (!pedidoEditando || !pedidoEditando.itens) return;
     const qtd = Math.max(1, novaQtd);
@@ -234,7 +233,6 @@ export default function GestaoPedidos() {
       const subtotalItens = pedidoEditando.itens?.reduce((acc, item) => acc + (item.quantidade * item.preco_unitario), 0) || 0;
       const novoTotal = Math.max(0, subtotalItens + Number(pedidoEditando.taxa_entrega) - Number(pedidoEditando.desconto));
 
-      // 1. Atualizar dados principais do pedido
       const principalId = pedidoEditando.ids_fragmentados?.[0] || pedidoEditando.id;
       const { error: erroPrincipal } = await supabase
         .from('pedidos')
@@ -252,7 +250,6 @@ export default function GestaoPedidos() {
 
       if (erroPrincipal) throw erroPrincipal;
 
-      // 2. Apagar itens antigos e inserir os novos itens atualizados
       const idsRelacionados = pedidoEditando.ids_fragmentados || [pedidoEditando.id];
       await supabase.from('itens_pedido').delete().in('pedido_id', idsRelacionados);
 
@@ -300,17 +297,47 @@ export default function GestaoPedidos() {
     return match ? `${match[1]}-${match[2]}-${match[3]}` : '';
   };
 
+  // REGRAS DE FILTRAGEM E PESQUISA (NENHUM PEDIDO APARECE SE NADA FOR PESQUISADO/FILTRADO)
   const pedidosFiltrados = useMemo(() => {
+    const temFiltroAtivo = dataInicio !== '' || dataFim !== '' || termoPesquisa.trim() !== '';
+
+    if (!temFiltroAtivo) {
+      return []; // Retorna vazio por defeito até que o utilizador pesquise ou filtre
+    }
+
     return pedidos.filter((pedido) => {
       const dataPedidoFormatada = extrairDataIso(pedido.data_pedido);
-      if (!dataPedidoFormatada) return true;
+      
       if (dataInicio && dataPedidoFormatada < dataInicio) return false;
       if (dataFim && dataPedidoFormatada > dataFim) return false;
-      return true;
-    });
-  }, [pedidos, dataInicio, dataFim]);
 
-  const limparFiltroDatas = () => { setDataInicio(''); setDataFim(''); };
+      if (termoPesquisa.trim() !== '') {
+        const termo = termoPesquisa.toLowerCase().trim();
+        const nomeCliente = (pedido.cliente || '').toLowerCase();
+        const numPedidoStr = String(pedido.numero_pedido);
+
+        const correspondeNome = nomeCliente.includes(termo);
+        const correspondeNumero = numPedidoStr.includes(termo);
+
+        if (!correspondeNome && !correspondeNumero) return false;
+      }
+
+      return true;
+    }).sort((a, b) => {
+      if (ordemDirecao === 'desc') {
+        return b.numero_pedido - a.numero_pedido;
+      } else {
+        return a.numero_pedido - b.numero_pedido;
+      }
+    });
+  }, [pedidos, dataInicio, dataFim, termoPesquisa, ordemDirecao]);
+
+  const limparFiltros = () => { 
+    setDataInicio(''); 
+    setDataFim(''); 
+    setTermoPesquisa('');
+  };
+
   const selecionarHoje = () => {
     const hojeIso = new Date().toISOString().split('T')[0];
     setDataInicio(hojeIso);
@@ -341,27 +368,52 @@ export default function GestaoPedidos() {
         </button>
       </header>
 
-      {/* FILTROS POR DATA */}
+      {/* BARRA DE PESQUISA E FILTROS */}
       <section className="px-6 pt-6">
-        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4">
-          <div className="flex flex-col xl:flex-row xl:items-end gap-4">
-            <div className="flex-1">
-              <h2 className="text-sm font-bold text-zinc-100">Filtrar por Intervalo de Datas</h2>
-              <p className="text-xs text-zinc-500 mt-1">Selecione o dia inicial e final.</p>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-4">
+          <div className="flex flex-col md:flex-row gap-4 items-center">
+            
+            {/* PESQUISA POR NOME OU NUMERO */}
+            <div className="flex-1 w-full">
+              <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">Pesquisar Pedido</label>
+              <input 
+                type="text" 
+                value={termoPesquisa}
+                onChange={e => setTermoPesquisa(e.target.value)}
+                placeholder="Pesquise por nome do cliente ou número do pedido..."
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-orange-500 outline-none"
+              />
             </div>
+
+            {/* ORDENAÇÃO */}
+            <div>
+              <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">Ordem</label>
+              <select 
+                value={ordemDirecao} 
+                onChange={(e) => setOrdemDirecao(e.target.value as 'desc' | 'asc')}
+                className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-orange-500 outline-none cursor-pointer"
+              >
+                <option value="desc">⬇️ Decrescente (Mais Recentes)</option>
+                <option value="asc">⬆️ Crescente (Mais Antigos)</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="flex flex-col xl:flex-row xl:items-end justify-between gap-4 pt-3 border-t border-zinc-800">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full xl:w-auto">
               <div>
                 <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">De (Data Inicial)</label>
-                <input type="date" value={dataInicio} max={dataFim || undefined} onChange={(e) => setDataInicio(e.target.value)} className="w-full sm:w-48 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-white focus:border-orange-500 outline-none [color-scheme:dark]" />
+                <input type="date" value={dataInicio} max={dataFim || undefined} onChange={(e) => setDataInicio(e.target.value)} className="w-full sm:w-48 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white focus:border-orange-500 outline-none [color-scheme:dark]" />
               </div>
               <div>
                 <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">Até (Data Final)</label>
-                <input type="date" value={dataFim} min={dataInicio || undefined} onChange={(e) => setDataFim(e.target.value)} className="w-full sm:w-48 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-white focus:border-orange-500 outline-none [color-scheme:dark]" />
+                <input type="date" value={dataFim} min={dataInicio || undefined} onChange={(e) => setDataFim(e.target.value)} className="w-full sm:w-48 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white focus:border-orange-500 outline-none [color-scheme:dark]" />
               </div>
             </div>
+
             <div className="flex items-center gap-2">
               <button type="button" onClick={selecionarHoje} className="bg-orange-600 hover:bg-orange-500 text-xs font-bold px-4 py-2.5 rounded-xl transition-all shadow-md">Hoje</button>
-              <button type="button" onClick={limparFiltroDatas} disabled={!dataInicio && !dataFim} className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-xs font-bold px-4 py-2.5 rounded-xl border border-zinc-700 transition-all">Limpar Filtro</button>
+              <button type="button" onClick={limparFiltros} disabled={!dataInicio && !dataFim && !termoPesquisa} className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-xs font-bold px-4 py-2.5 rounded-xl border border-zinc-700 transition-all">Limpar Filtros</button>
             </div>
           </div>
         </div>
@@ -387,8 +439,9 @@ export default function GestaoPedidos() {
         {loading ? (
           <div className="text-center text-zinc-500 py-24">A carregar registos...</div>
         ) : pedidosFiltrados.length === 0 ? (
-          <div className="text-center text-zinc-500 py-24 bg-zinc-900/20 border border-dashed border-zinc-800 rounded-2xl max-w-xl mx-auto">
-            Nenhum pedido encontrado.
+          <div className="text-center text-zinc-500 py-24 bg-zinc-900/20 border border-dashed border-zinc-800 rounded-2xl max-w-xl mx-auto space-y-2">
+            <p className="text-base font-bold text-zinc-300">Nenhum pedido para exibir</p>
+            <p className="text-xs text-zinc-500">Utilize os filtros de data ou pesquise pelo nome do cliente / número do pedido para visualizar os registos.</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -454,7 +507,7 @@ export default function GestaoPedidos() {
         )}
       </main>
 
-      {/* MODAL DE EDIÇÃO AVANÇADA (ITENS + DADOS DO PEDIDO) */}
+      {/* MODAL DE EDIÇÃO */}
       {modalEditar && pedidoEditando && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl p-6 shadow-2xl relative max-h-[90vh] flex flex-col">
@@ -528,7 +581,7 @@ export default function GestaoPedidos() {
                 </div>
               </div>
 
-              {/* GESTÃO DOS ITENS DO PEDIDO */}
+              {/* ITENS DO PEDIDO */}
               <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 space-y-3 mt-4">
                 <div className="flex justify-between items-center">
                   <h3 className="text-xs font-bold uppercase text-zinc-400">Itens do Pedido</h3>
