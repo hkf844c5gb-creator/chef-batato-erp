@@ -329,7 +329,7 @@ export default function GestaoPedidos() {
     setModalComboEdicao(true);
   };
 
-  // Permite selecionar o mesmo produto múltiplas vezes se o grupo aceitar mais do que 1
+  // Lógica corrigida para permitir marcar o mesmo sabor várias vezes até atingir a quantidade máxima do grupo
   const toggleSelecaoComboEdicao = (grupo: any, itemVinculado: any) => {
     setSelecoesComboEdicao(prev => {
       const selecoesGrupo = [...(prev[grupo.id] || [])];
@@ -337,12 +337,19 @@ export default function GestaoPedidos() {
       const totalSelecionadoNoGrupo = selecoesGrupo.reduce((acc, curr) => acc + (curr.quantidade || 1), 0);
 
       if (indexExistente >= 0) {
-        if (selecoesGrupo[indexExistente].quantidade > 1) {
-          selecoesGrupo[indexExistente].quantidade -= 1;
+        // Se já foi selecionado pelo menos uma vez, incrementa a quantidade se houver vaga no grupo, ou remove se clicar novamente e o utilizador quiser decrementar
+        if (totalSelecionadoNoGrupo < grupo.quantidade_maxima) {
+          selecoesGrupo[indexExistente].quantidade += 1;
         } else {
-          selecoesGrupo.splice(indexExistente, 1);
+          // Se já atingiu o máximo, clicar no mesmo produto diminui/remove
+          if (selecoesGrupo[indexExistente].quantidade > 1) {
+            selecoesGrupo[indexExistente].quantidade -= 1;
+          } else {
+            selecoesGrupo.splice(indexExistente, 1);
+          }
         }
       } else {
+        // Se ainda não existe na lista do grupo e há vaga, adiciona com quantidade 1
         if (totalSelecionadoNoGrupo < grupo.quantidade_maxima) {
           selecoesGrupo.push({ ...itemVinculado, quantidade: 1 });
         } else if (grupo.quantidade_maxima === 1) {
