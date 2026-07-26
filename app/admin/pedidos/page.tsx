@@ -329,7 +329,6 @@ export default function GestaoPedidos() {
     setModalComboEdicao(true);
   };
 
-  // Lógica corrigida para permitir marcar o mesmo sabor várias vezes até atingir a quantidade máxima do grupo
   const toggleSelecaoComboEdicao = (grupo: any, itemVinculado: any) => {
     setSelecoesComboEdicao(prev => {
       const selecoesGrupo = [...(prev[grupo.id] || [])];
@@ -337,11 +336,9 @@ export default function GestaoPedidos() {
       const totalSelecionadoNoGrupo = selecoesGrupo.reduce((acc, curr) => acc + (curr.quantidade || 1), 0);
 
       if (indexExistente >= 0) {
-        // Se já foi selecionado pelo menos uma vez, incrementa a quantidade se houver vaga no grupo, ou remove se clicar novamente e o utilizador quiser decrementar
         if (totalSelecionadoNoGrupo < grupo.quantidade_maxima) {
           selecoesGrupo[indexExistente].quantidade += 1;
         } else {
-          // Se já atingiu o máximo, clicar no mesmo produto diminui/remove
           if (selecoesGrupo[indexExistente].quantidade > 1) {
             selecoesGrupo[indexExistente].quantidade -= 1;
           } else {
@@ -349,7 +346,6 @@ export default function GestaoPedidos() {
           }
         }
       } else {
-        // Se ainda não existe na lista do grupo e há vaga, adiciona com quantidade 1
         if (totalSelecionadoNoGrupo < grupo.quantidade_maxima) {
           selecoesGrupo.push({ ...itemVinculado, quantidade: 1 });
         } else if (grupo.quantidade_maxima === 1) {
@@ -390,6 +386,7 @@ export default function GestaoPedidos() {
 
     let precoComboFinal = somaPrecos;
     
+    // Aplicação correta do desconto exclusivamente sobre os itens do combo
     if (comboSelecionadoParaMontar.tipo_preco === 'fixo') {
       if (pedidoEditando.canal === 'Glovo') {
         precoComboFinal = Number(comboSelecionadoParaMontar.preco_glovo || comboSelecionadoParaMontar.preco_fixo || 0);
@@ -423,7 +420,8 @@ export default function GestaoPedidos() {
     ];
 
     const subtotal = novosItens.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
-    const novoTotal = Math.max(0, subtotal + pedidoEditando.taxa_entrega - pedidoEditando.desconto);
+    // O desconto global do pedido mantém-se isolado (ex: 0 a menos que seja um desconto manual extra)
+    const novoTotal = Math.max(0, subtotal + pedidoEditando.taxa_entrega - (pedidoEditando.desconto || 0));
 
     setPedidoEditando({ ...pedidoEditando, itens: novosItens, total_geral: novoTotal });
     setModalComboEdicao(false);
@@ -437,7 +435,7 @@ export default function GestaoPedidos() {
     setSalvando(true);
     try {
       const subtotalItens = pedidoEditando.itens?.reduce((acc, item) => acc + (item.quantidade * item.preco_unitario), 0) || 0;
-      const novoTotal = Math.max(0, subtotalItens + Number(pedidoEditando.taxa_entrega) - Number(pedidoEditando.desconto));
+      const novoTotal = Math.max(0, subtotalItens + Number(pedidoEditando.taxa_entrega) - Number(pedidoEditando.desconto || 0));
 
       const principalId = pedidoEditando.ids_fragmentados?.[0] || pedidoEditando.id;
       const { error: erroPrincipal } = await supabase
@@ -448,7 +446,7 @@ export default function GestaoPedidos() {
           forma_pagamento: pedidoEditando.forma_pagamento,
           entregador: pedidoEditando.entregador || null,
           taxa_entrega: pedidoEditando.taxa_entrega,
-          desconto: pedidoEditando.desconto,
+          desconto: pedidoEditando.desconto || 0,
           pago: pedidoEditando.pago,
           total_geral: novoTotal
         })
@@ -779,14 +777,14 @@ export default function GestaoPedidos() {
                   <input type="number" step="0.01" min="0" value={pedidoEditando.taxa_entrega} onChange={e => {
                     const taxa = parseFloat(e.target.value) || 0;
                     const subtotal = pedidoEditando.itens?.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0) || 0;
-                    const novoTotal = Math.max(0, subtotal + taxa - pedidoEditando.desconto);
+                    const novoTotal = Math.max(0, subtotal + taxa - (pedidoEditando.desconto || 0));
                     setPedidoEditando({...pedidoEditando, taxa_entrega: taxa, total_geral: novoTotal});
                   }} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-orange-400 font-bold outline-none" />
                 </div>
 
                 <div>
                   <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Desconto (€)</label>
-                  <input type="number" step="0.01" min="0" value={pedidoEditando.desconto} onChange={e => {
+                  <input type="number" step="0.01" min="0" value={pedidoEditando.desconto || 0} onChange={e => {
                     const desc = parseFloat(e.target.value) || 0;
                     const subtotal = pedidoEditando.itens?.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0) || 0;
                     const novoTotal = Math.max(0, subtotal + pedidoEditando.taxa_entrega - desc);
