@@ -58,11 +58,9 @@ export default function GestaoPedidos() {
   async function carregarDadosIniciais() {
     setLoading(true);
     try {
-      // 1. Carregar produtos ativos
       const { data: dataProds } = await supabase.from('produtos').select('*').eq('ativo', true);
       if (dataProds) setProdutosDB(dataProds);
 
-      // 2. Carregar combos ativos com grupos e produtos vinculados
       const { data: dataCombos } = await supabase
         .from('combos')
         .select(`
@@ -80,7 +78,6 @@ export default function GestaoPedidos() {
 
       if (dataCombos) setCombosDB(dataCombos);
 
-      // 3. Carregar pedidos e itens
       const { data, error } = await supabase
         .from('pedidos')
         .select(`
@@ -193,9 +190,48 @@ export default function GestaoPedidos() {
     }
   };
 
+  // Função auxiliar para determinar o preço correto com base no canal atual
+  const calcularPrecoPorCanalEProduto = (canal: string, prod: any) => {
+    const nome = (prod.nome || '').toLowerCase();
+    if (canal === 'Revendedores') {
+      if (nome.includes('fudge') || nome.includes('new york')) return 1.70;
+      return 2.70;
+    }
+    if (canal === 'Glovo') return Number(prod.preco_glovo || prod.preco_cardapio || 0);
+    if (canal === 'WhatsApp') return Number(prod.preco_whatsapp || prod.preco_cardapio || 0);
+    return Number(prod.preco_cardapio || 0);
+  };
+
   const abrirEdicao = (pedido: Pedido) => {
     setPedidoEditando(JSON.parse(JSON.stringify(pedido)));
     setModalEditar(true);
+  };
+
+  // Alterar canal no modal de edição e recalcular preços dos itens automaticamente
+  const alterarCanalEdicao = (novoCanal: string) => {
+    if (!pedidoEditando) return;
+
+    const itensAtualizados = (pedidoEditando.itens || []).map(item => {
+      // Se for combo, mantém o preço fixado ou recalcula se necessário
+      if (item.codigo_produto === 'COMBO') return item;
+
+      const prod = produtosDB.find(p => p.id === item.produto_id || p.nome.toLowerCase() === item.nome_produto.toLowerCase());
+      if (prod) {
+        const novoPreco = calcularPrecoPorCanalEProduto(novoCanal, prod);
+        return { ...item, preco_unitario: novoPreco };
+      }
+      return item;
+    });
+
+    const subtotal = itensAtualizados.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
+    const novoTotal = Math.max(0, subtotal + pedidoEditando.taxa_entrega - pedidoEditando.desconto);
+
+    setPedidoEditando({
+      ...pedidoEditando,
+      canal: novoCanal,
+      itens: itensAtualizados,
+      total_geral: novoTotal
+    });
   };
 
   const alterarQtdItemEdicao = (index: number, novaQtd: number) => {
@@ -225,9 +261,7 @@ export default function GestaoPedidos() {
     const prod = produtosDB.find(p => p.id === produtoId);
     if (!prod) return;
 
-    const precoUnit = pedidoEditando.canal === 'Revendedores' 
-      ? ((prod.nome || '').toLowerCase().includes('fudge') || (prod.nome || '').toLowerCase().includes('new york') ? 1.70 : 2.70)
-      : Number(prod.preco_cardapio || 0);
+    const precoUnit = calcularPrecoPorCanalEProduto(pedidoEditando.canal, prod);
 
     const itensAtuais = pedidoEditando.itens || [];
     const existenteIndex = itensAtuais.findIndex(it => it.produto_id === prod.id && !it.nome_produto.includes('('));
@@ -251,7 +285,6 @@ export default function GestaoPedidos() {
     setPedidoEditando({ ...pedidoEditando, itens: novosItens, total_geral: novoTotal });
   };
 
-  // Iniciar montagem do Combo na Edição
   const iniciarMontagemComboEdicao = (comboId: string) => {
     if (!comboId) return;
     const combo = combosDB.find(c => c.id === comboId);
@@ -296,7 +329,7 @@ export default function GestaoPedidos() {
 
     Object.values(selecoesComboEdicao).forEach((selGrupo: any) => {
       selGrupo.forEach((item: any) => {
-        const precoItem = Number(item.produto?.preco_cardapio || 2.70);
+        const precoItem = calcularPrecoPorCanalEProduto(pedidoEditando.canal, item.produto);
         somaPrecos += precoItem;
         somaAcrescimos += Number(item.acrescimo_preco || 0);
         detalhes.push(`${item.produto.nome}`);
@@ -632,8 +665,12 @@ export default function GestaoPedidos() {
                 </div>
 
                 <div>
-                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Canal</label>
-                  <select value={pedidoEditando.canal} onChange={e => setPedidoEditando({...pedidoEditando, canal: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none">
+                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Canal (Assume Preços Automáticos)</label>
+                  <select 
+                    value={pedidoEditando.canal} 
+                    onChange={e => alterarCanalEdicao(e.target.value)} 
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-amber-400 font-bold outline-none cursor-pointer"
+                  >
                     <option value="Balcão">Balcão</option>
                     <option value="WhatsApp">WhatsApp</option>
                     <option value="Glovo">Glovo</option>
@@ -688,13 +725,12 @@ export default function GestaoPedidos() {
                 </div>
               </div>
 
-              {/* GESTÃO DOS ITENS E COMBOS DO PEDIDO */}
+              {/* ITENS E COMBOS */}
               <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 space-y-3 mt-4">
                 <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
                   <h3 className="text-xs font-bold uppercase text-zinc-400">Itens e Combos do Pedido</h3>
                   
                   <div className="flex gap-2 w-full sm:w-auto">
-                    {/* Adicionar Produto Individual */}
                     <select 
                       onChange={e => { adicionarProdutoEdicao(e.target.value); e.target.value = ''; }}
                       defaultValue=""
@@ -706,7 +742,6 @@ export default function GestaoPedidos() {
                       ))}
                     </select>
 
-                    {/* Adicionar Combo */}
                     <select 
                       onChange={e => { iniciarMontagemComboEdicao(e.target.value); e.target.value = ''; }}
                       defaultValue=""
@@ -756,7 +791,7 @@ export default function GestaoPedidos() {
         </div>
       )}
 
-      {/* MODAL DE MONTAGEM DE COMBO NA EDIÇÃO */}
+      {/* MODAL DE COMBO */}
       {modalComboEdicao && comboSelecionadoParaMontar && (
         <div className="fixed inset-0 bg-black/85 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
           <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl p-6 flex flex-col max-h-[90vh] shadow-2xl relative">
@@ -792,7 +827,6 @@ export default function GestaoPedidos() {
                             }`}
                           >
                             <span className="font-medium block">{itemVinculado.produto?.nome}</span>
-                            {itemVinculado.acrescimo_preco > 0 && <span className="text-[10px] text-orange-400 font-mono mt-0.5 block">(+{itemVinculado.acrescimo_preco.toFixed(2)}€)</span>}
                           </button>
                         );
                       })}
