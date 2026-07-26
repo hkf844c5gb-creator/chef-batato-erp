@@ -329,21 +329,28 @@ export default function GestaoPedidos() {
     setModalComboEdicao(true);
   };
 
+  // Permite selecionar o mesmo produto múltiplas vezes se o grupo aceitar mais do que 1
   const toggleSelecaoComboEdicao = (grupo: any, itemVinculado: any) => {
     setSelecoesComboEdicao(prev => {
-      const selecoesGrupo = prev[grupo.id] || [];
-      const jaSel = selecoesGrupo.some(s => s.produto_id === itemVinculado.produto_id);
+      const selecoesGrupo = [...(prev[grupo.id] || [])];
+      const indexExistente = selecoesGrupo.findIndex(s => s.produto_id === itemVinculado.produto_id);
+      const totalSelecionadoNoGrupo = selecoesGrupo.reduce((acc, curr) => acc + (curr.quantidade || 1), 0);
 
-      if (jaSel) {
-        return { ...prev, [grupo.id]: selecoesGrupo.filter(s => s.produto_id !== itemVinculado.produto_id) };
-      } else {
-        if (selecoesGrupo.length < grupo.quantidade_maxima) {
-          return { ...prev, [grupo.id]: [...selecoesGrupo, itemVinculado] };
-        } else if (grupo.quantidade_maxima === 1) {
-          return { ...prev, [grupo.id]: [itemVinculado] };
+      if (indexExistente >= 0) {
+        if (selecoesGrupo[indexExistente].quantidade > 1) {
+          selecoesGrupo[indexExistente].quantidade -= 1;
+        } else {
+          selecoesGrupo.splice(indexExistente, 1);
         }
-        return prev;
+      } else {
+        if (totalSelecionadoNoGrupo < grupo.quantidade_maxima) {
+          selecoesGrupo.push({ ...itemVinculado, quantidade: 1 });
+        } else if (grupo.quantidade_maxima === 1) {
+          return { ...prev, [grupo.id]: [{ ...itemVinculado, quantidade: 1 }] };
+        }
       }
+
+      return { ...prev, [grupo.id]: selecoesGrupo };
     });
   };
 
@@ -352,7 +359,8 @@ export default function GestaoPedidos() {
 
     for (const grupo of comboSelecionadoParaMontar.combo_grupos) {
       const selecoes = selecoesComboEdicao[grupo.id] || [];
-      if (grupo.obrigatorio && selecoes.length < grupo.quantidade_minima) {
+      const totalGrupo = selecoes.reduce((acc, s) => acc + (s.quantidade || 1), 0);
+      if (grupo.obrigatorio && totalGrupo < grupo.quantidade_minima) {
         return alert(`O grupo "${grupo.nome}" exige no mínimo ${grupo.quantidade_minima} item(ns).`);
       }
     }
@@ -363,16 +371,18 @@ export default function GestaoPedidos() {
 
     Object.values(selecoesComboEdicao).forEach((selGrupo: any) => {
       selGrupo.forEach((item: any) => {
-        const precoItem = calcularPrecoPorCanalEProduto(pedidoEditando.canal, item.produto);
-        somaPrecos += precoItem;
-        somaAcrescimos += Number(item.acrescimo_preco || 0);
-        detalhes.push(`${item.produto.nome}`);
+        const qtdItem = item.quantidade || 1;
+        for (let i = 0; i < qtdItem; i++) {
+          const precoItem = calcularPrecoPorCanalEProduto(pedidoEditando.canal, item.produto);
+          somaPrecos += precoItem;
+          somaAcrescimos += Number(item.acrescimo_preco || 0);
+          detalhes.push(`${item.produto.nome}`);
+        }
       });
     });
 
     let precoComboFinal = somaPrecos;
     
-    // Regras exatas de preços e descontos para os combos
     if (comboSelecionadoParaMontar.tipo_preco === 'fixo') {
       if (pedidoEditando.canal === 'Glovo') {
         precoComboFinal = Number(comboSelecionadoParaMontar.preco_glovo || comboSelecionadoParaMontar.preco_fixo || 0);
@@ -383,12 +393,10 @@ export default function GestaoPedidos() {
       }
     } 
     else if (comboSelecionadoParaMontar.tipo_preco === 'desconto' || comboSelecionadoParaMontar.nome.toLowerCase().includes('batatô10') || comboSelecionadoParaMontar.nome.toLowerCase().includes('batato10')) {
-      // Regra do Combo Batatô 10: 10% de desconto sobre o valor total dos itens
       const perc = Number(comboSelecionadoParaMontar.desconto_percentual || 10);
       precoComboFinal = somaPrecos * (1 - perc / 100);
     } 
     else if (comboSelecionadoParaMontar.tipo_preco === 'desconto_fixo' || comboSelecionadoParaMontar.nome.toLowerCase().includes('para dois')) {
-      // Regra do Combo Batatô Para Dois: -1.70€ de desconto fixo
       const desc = Number(comboSelecionadoParaMontar.desconto_absoluto || 1.70);
       precoComboFinal = Math.max(0, somaPrecos - desc);
     }
@@ -857,23 +865,27 @@ export default function GestaoPedidos() {
             <div className="flex-1 overflow-y-auto space-y-5 pr-1">
               {comboSelecionadoParaMontar.combo_grupos.map((grupo: any) => {
                 const selecoesDesteGrupo = selecoesComboEdicao[grupo.id] || [];
-                const atingiuMaximo = selecoesDesteGrupo.length >= grupo.quantidade_maxima;
+                const totalGrupo = selecoesDesteGrupo.reduce((acc, s) => acc + (s.quantidade || 1), 0);
+                const atingiuMaximo = totalGrupo >= grupo.quantidade_maxima;
 
                 return (
                   <div key={grupo.id} className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800">
                     <h3 className="text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2.5 flex justify-between">
-                      <span>{grupo.nome} ({selecoesDesteGrupo.length}/{grupo.quantidade_maxima})</span>
+                      <span>{grupo.nome} ({totalGrupo}/{grupo.quantidade_maxima})</span>
                       {grupo.obrigatorio && <span className="text-orange-500">Obrigatório</span>}
                     </h3>
                     <div className="grid grid-cols-2 gap-2">
                       {grupo.combo_grupo_produtos.filter((i: any) => i.ativo).map((itemVinculado: any) => {
-                        const selecionado = selecoesDesteGrupo.some((s: any) => s.produto_id === itemVinculado.produto_id);
+                        const selItem = selecoesDesteGrupo.find((s: any) => s.produto_id === itemVinculado.produto_id);
+                        const qtdSelecionada = selItem ? selItem.quantidade : 0;
+                        const selecionado = qtdSelecionada > 0;
+
                         return (
                           <button
                             key={itemVinculado.produto_id}
                             type="button"
                             onClick={() => toggleSelecaoComboEdicao(grupo, itemVinculado)}
-                            className={`p-3 text-left rounded-xl text-xs border transition-all ${
+                            className={`p-3 text-left rounded-xl text-xs border transition-all relative ${
                               selecionado 
                                 ? 'bg-orange-600/20 border-orange-500 text-white shadow' 
                                 : atingiuMaximo 
@@ -882,6 +894,11 @@ export default function GestaoPedidos() {
                             }`}
                           >
                             <span className="font-medium block">{itemVinculado.produto?.nome}</span>
+                            {qtdSelecionada > 0 && (
+                              <span className="absolute top-2 right-2 bg-orange-500 text-white text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center">
+                                {qtdSelecionada}
+                              </span>
+                            )}
                           </button>
                         );
                       })}
