@@ -31,6 +31,7 @@ interface Pedido {
 export default function GestaoPedidos() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [produtosDB, setProdutosDB] = useState<any[]>([]);
+  const [combosDB, setCombosDB] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Filtros
@@ -39,9 +40,15 @@ export default function GestaoPedidos() {
   const [termoPesquisa, setTermoPesquisa] = useState('');
   const [ordemDirecao, setOrdemDirecao] = useState<'desc' | 'asc'>('desc');
 
+  // Modais de Edição
   const [modalEditar, setModalEditar] = useState(false);
   const [pedidoEditando, setPedidoEditando] = useState<Pedido | null>(null);
   const [salvando, setSalvando] = useState(false);
+
+  // Modal de Montagem de Combo na Edição
+  const [modalComboEdicao, setModalComboEdicao] = useState(false);
+  const [comboSelecionadoParaMontar, setComboSelecionadoParaMontar] = useState<any | null>(null);
+  const [selecoesComboEdicao, setSelecoesComboEdicao] = useState<{ [grupoId: string]: any[] }>({});
 
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -51,9 +58,29 @@ export default function GestaoPedidos() {
   async function carregarDadosIniciais() {
     setLoading(true);
     try {
+      // 1. Carregar produtos ativos
       const { data: dataProds } = await supabase.from('produtos').select('*').eq('ativo', true);
       if (dataProds) setProdutosDB(dataProds);
 
+      // 2. Carregar combos ativos com grupos e produtos vinculados
+      const { data: dataCombos } = await supabase
+        .from('combos')
+        .select(`
+          id, codigo, nome, descricao, tipo_preco, preco_fixo, desconto_percentual, desconto_absolute:desconto_absoluto, item_gratis_categoria,
+          combo_grupos (
+            id, nome, quantidade_minima, quantidade_maxima, obrigatorio, ordem,
+            combo_grupo_produtos (
+              produto_id, acrescimo_preco, ativo,
+              produto:produtos (id, codigo, nome, categoria, preco_cardapio, preco_whatsapp, preco_glovo)
+            )
+          )
+        `)
+        .eq('ativo', true)
+        .eq('esgotado', false);
+
+      if (dataCombos) setCombosDB(dataCombos);
+
+      // 3. Carregar pedidos e itens
       const { data, error } = await supabase
         .from('pedidos')
         .select(`
@@ -203,7 +230,7 @@ export default function GestaoPedidos() {
       : Number(prod.preco_cardapio || 0);
 
     const itensAtuais = pedidoEditando.itens || [];
-    const existenteIndex = itensAtuais.findIndex(it => it.produto_id === prod.id);
+    const existenteIndex = itensAtuais.findIndex(it => it.produto_id === prod.id && !it.nome_produto.includes('('));
 
     let novosItens = [...itensAtuais];
     if (existenteIndex >= 0) {
@@ -222,6 +249,91 @@ export default function GestaoPedidos() {
     const novoTotal = Math.max(0, subtotal + pedidoEditando.taxa_entrega - pedidoEditando.desconto);
 
     setPedidoEditando({ ...pedidoEditando, itens: novosItens, total_geral: novoTotal });
+  };
+
+  // Iniciar montagem do Combo na Edição
+  const iniciarMontagemComboEdicao = (comboId: string) => {
+    if (!comboId) return;
+    const combo = combosDB.find(c => c.id === comboId);
+    if (!combo) return;
+
+    setComboSelecionadoParaMontar(combo);
+    setSelecoesComboEdicao({});
+    setModalComboEdicao(true);
+  };
+
+  const toggleSelecaoComboEdicao = (grupo: any, itemVinculado: any) => {
+    setSelecoesComboEdicao(prev => {
+      const selecoesGrupo = prev[grupo.id] || [];
+      const jaSel = selecoesGrupo.some(s => s.produto_id === itemVinculado.produto_id);
+
+      if (jaSel) {
+        return { ...prev, [grupo.id]: selecoesGrupo.filter(s => s.produto_id !== itemVinculado.produto_id) };
+      } else {
+        if (selecoesGrupo.length < grupo.quantidade_maxima) {
+          return { ...prev, [grupo.id]: [...selecoesGrupo, itemVinculado] };
+        } else if (grupo.quantidade_maxima === 1) {
+          return { ...prev, [grupo.id]: [itemVinculado] };
+        }
+        return prev;
+      }
+    });
+  };
+
+  const confirmarComboEdicao = () => {
+    if (!comboSelecionadoParaMontar || !pedidoEditando) return;
+
+    for (const grupo of comboSelecionadoParaMontar.combo_grupos) {
+      const selecoes = selecoesComboEdicao[grupo.id] || [];
+      if (grupo.obrigatorio && selecoes.length < grupo.quantidade_minima) {
+        return alert(`O grupo "${grupo.nome}" exige no mínimo ${grupo.quantidade_minima} item(ns).`);
+      }
+    }
+
+    let somaPrecos = 0;
+    let somaAcrescimos = 0;
+    const detalhes: string[] = [];
+
+    Object.values(selecoesComboEdicao).forEach((selGrupo: any) => {
+      selGrupo.forEach((item: any) => {
+        const precoItem = Number(item.produto?.preco_cardapio || 2.70);
+        somaPrecos += precoItem;
+        somaAcrescimos += Number(item.acrescimo_preco || 0);
+        detalhes.push(`${item.produto.nome}`);
+      });
+    });
+
+    let precoComboFinal = somaPrecos;
+    if (comboSelecionadoParaMontar.tipo_preco === 'fixo') {
+      precoComboFinal = Number(comboSelecionadoParaMontar.preco_fixo || 0);
+    } else if (comboSelecionadoParaMontar.tipo_preco === 'desconto') {
+      const perc = Number(comboSelecionadoParaMontar.desconto_percentual || 0);
+      precoComboFinal = somaPrecos * (1 - perc / 100);
+    } else if (comboSelecionadoParaMontar.tipo_preco === 'desconto_fixo') {
+      const desc = Number(comboSelecionadoParaMontar.desconto_absoluto || 0);
+      precoComboFinal = Math.max(0, somaPrecos - desc);
+    }
+
+    const precoFinalAplicado = precoComboFinal + somaAcrescimos;
+    const nomeComboFormatado = `${comboSelecionadoParaMontar.nome} (${detalhes.join(', ')})`;
+
+    const novosItens = [
+      ...(pedidoEditando.itens || []),
+      {
+        produto_id: undefined,
+        codigo_produto: 'COMBO',
+        nome_produto: nomeComboFormatado,
+        quantidade: 1,
+        preco_unitario: Number(precoFinalAplicado.toFixed(2))
+      }
+    ];
+
+    const subtotal = novosItens.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
+    const novoTotal = Math.max(0, subtotal + pedidoEditando.taxa_entrega - pedidoEditando.desconto);
+
+    setPedidoEditando({ ...pedidoEditando, itens: novosItens, total_geral: novoTotal });
+    setModalComboEdicao(false);
+    setComboSelecionadoParaMontar(null);
   };
 
   const salvarEdicao = async (e: React.FormEvent) => {
@@ -297,12 +409,11 @@ export default function GestaoPedidos() {
     return match ? `${match[1]}-${match[2]}-${match[3]}` : '';
   };
 
-  // REGRAS DE FILTRAGEM E PESQUISA (NENHUM PEDIDO APARECE SE NADA FOR PESQUISADO/FILTRADO)
   const pedidosFiltrados = useMemo(() => {
     const temFiltroAtivo = dataInicio !== '' || dataFim !== '' || termoPesquisa.trim() !== '';
 
     if (!temFiltroAtivo) {
-      return []; // Retorna vazio por defeito até que o utilizador pesquise ou filtre
+      return []; 
     }
 
     return pedidos.filter((pedido) => {
@@ -368,12 +479,10 @@ export default function GestaoPedidos() {
         </button>
       </header>
 
-      {/* BARRA DE PESQUISA E FILTROS */}
+      {/* PESQUISA E FILTROS */}
       <section className="px-6 pt-6">
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-4">
           <div className="flex flex-col md:flex-row gap-4 items-center">
-            
-            {/* PESQUISA POR NOME OU NUMERO */}
             <div className="flex-1 w-full">
               <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">Pesquisar Pedido</label>
               <input 
@@ -384,8 +493,6 @@ export default function GestaoPedidos() {
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-orange-500 outline-none"
               />
             </div>
-
-            {/* ORDENAÇÃO */}
             <div>
               <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">Ordem</label>
               <select 
@@ -448,7 +555,7 @@ export default function GestaoPedidos() {
             {pedidosFiltrados.map((ped) => (
               <div key={ped.id} className="bg-zinc-900 border border-zinc-800/80 rounded-2xl p-4 flex flex-col justify-between shadow-md hover:border-zinc-700/60 transition-all relative group">
                 <div className="absolute top-3 right-3 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => abrirEdicao(ped)} className="w-7 h-7 bg-zinc-800 hover:bg-blue-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Editar Informações e Itens">✏️</button>
+                  <button onClick={() => abrirEdicao(ped)} className="w-7 h-7 bg-zinc-800 hover:bg-blue-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Editar Informações e Itens/Combos">✏️</button>
                   <button onClick={() => excluirPedido(ped.numero_pedido, ped.ids_fragmentados!)} className="w-7 h-7 bg-zinc-800 hover:bg-red-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Excluir Pedido">🗑️</button>
                 </div>
 
@@ -581,28 +688,44 @@ export default function GestaoPedidos() {
                 </div>
               </div>
 
-              {/* ITENS DO PEDIDO */}
+              {/* GESTÃO DOS ITENS E COMBOS DO PEDIDO */}
               <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 space-y-3 mt-4">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-xs font-bold uppercase text-zinc-400">Itens do Pedido</h3>
-                  <select 
-                    onChange={e => { adicionarProdutoEdicao(e.target.value); e.target.value = ''; }}
-                    defaultValue=""
-                    className="bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none cursor-pointer"
-                  >
-                    <option value="" disabled>+ Adicionar Produto...</option>
-                    {produtosDB.map(p => (
-                      <option key={p.id} value={p.id}>{p.nome}</option>
-                    ))}
-                  </select>
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                  <h3 className="text-xs font-bold uppercase text-zinc-400">Itens e Combos do Pedido</h3>
+                  
+                  <div className="flex gap-2 w-full sm:w-auto">
+                    {/* Adicionar Produto Individual */}
+                    <select 
+                      onChange={e => { adicionarProdutoEdicao(e.target.value); e.target.value = ''; }}
+                      defaultValue=""
+                      className="bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none cursor-pointer flex-1 sm:flex-none"
+                    >
+                      <option value="" disabled>+ Adicionar Produto...</option>
+                      {produtosDB.map(p => (
+                        <option key={p.id} value={p.id}>{p.nome}</option>
+                      ))}
+                    </select>
+
+                    {/* Adicionar Combo */}
+                    <select 
+                      onChange={e => { iniciarMontagemComboEdicao(e.target.value); e.target.value = ''; }}
+                      defaultValue=""
+                      className="bg-orange-600/20 border border-orange-500/40 rounded-xl px-3 py-1.5 text-xs text-orange-400 font-bold outline-none cursor-pointer flex-1 sm:flex-none"
+                    >
+                      <option value="" disabled>+ Adicionar Combo...</option>
+                      {combosDB.map(c => (
+                        <option key={c.id} value={c.id}>{c.nome}</option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
                   {pedidoEditando.itens && pedidoEditando.itens.map((item, idx) => (
-                    <div key={idx} className="flex items-center justify-between bg-zinc-900 p-2.5 rounded-xl border border-zinc-800 text-xs">
-                      <span className="font-bold text-white flex-1 truncate pr-2">{item.nome_produto}</span>
+                    <div key={idx} className="flex items-center justify-between bg-zinc-900 p-2.5 rounded-xl border border-zinc-800 text-xs gap-2">
+                      <span className="font-bold text-white flex-1 truncate">{item.nome_produto}</span>
                       <div className="flex items-center gap-2">
-                        <span className="font-mono text-zinc-400">{item.preco_unitario.toFixed(2)}€</span>
+                        <span className="font-mono text-zinc-400">{(item.preco_unitario * item.quantidade).toFixed(2)}€</span>
                         <input 
                           type="number" 
                           min="1" 
@@ -629,6 +752,60 @@ export default function GestaoPedidos() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL DE MONTAGEM DE COMBO NA EDIÇÃO */}
+      {modalComboEdicao && comboSelecionadoParaMontar && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl p-6 flex flex-col max-h-[90vh] shadow-2xl relative">
+            <button onClick={() => setModalComboEdicao(false)} className="absolute top-5 right-5 text-zinc-400 hover:text-white font-bold">✕</button>
+            <h2 className="text-xl font-bold text-orange-500 mb-1">Montar Combo: {comboSelecionadoParaMontar.nome}</h2>
+            <p className="text-xs text-zinc-400 mb-4">{comboSelecionadoParaMontar.descricao}</p>
+
+            <div className="flex-1 overflow-y-auto space-y-5 pr-1">
+              {comboSelecionadoParaMontar.combo_grupos.map((grupo: any) => {
+                const selecoesDesteGrupo = selecoesComboEdicao[grupo.id] || [];
+                const atingiuMaximo = selecoesDesteGrupo.length >= grupo.quantidade_maxima;
+
+                return (
+                  <div key={grupo.id} className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800">
+                    <h3 className="text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2.5 flex justify-between">
+                      <span>{grupo.nome} ({selecoesDesteGrupo.length}/{grupo.quantidade_maxima})</span>
+                      {grupo.obrigatorio && <span className="text-orange-500">Obrigatório</span>}
+                    </h3>
+                    <div className="grid grid-cols-2 gap-2">
+                      {grupo.combo_grupo_produtos.filter((i: any) => i.ativo).map((itemVinculado: any) => {
+                        const selecionado = selecoesDesteGrupo.some((s: any) => s.produto_id === itemVinculado.produto_id);
+                        return (
+                          <button
+                            key={itemVinculado.produto_id}
+                            type="button"
+                            onClick={() => toggleSelecaoComboEdicao(grupo, itemVinculado)}
+                            className={`p-3 text-left rounded-xl text-xs border transition-all ${
+                              selecionado 
+                                ? 'bg-orange-600/20 border-orange-500 text-white shadow' 
+                                : atingiuMaximo 
+                                  ? 'bg-zinc-900/40 border-zinc-800/40 text-zinc-600 opacity-50' 
+                                  : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-800'
+                            }`}
+                          >
+                            <span className="font-medium block">{itemVinculado.produto?.nome}</span>
+                            {itemVinculado.acrescimo_preco > 0 && <span className="text-[10px] text-orange-400 font-mono mt-0.5 block">(+{itemVinculado.acrescimo_preco.toFixed(2)}€)</span>}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="pt-4 border-t border-zinc-800 mt-4 flex justify-end gap-3">
+              <button type="button" onClick={() => setModalComboEdicao(false)} className="px-5 py-2.5 text-xs font-bold text-zinc-400 hover:text-white">Cancelar</button>
+              <button type="button" onClick={confirmarComboEdicao} className="bg-orange-600 hover:bg-orange-500 text-white px-6 py-2.5 rounded-xl text-xs font-bold shadow-lg">Adicionar Combo ao Pedido</button>
+            </div>
           </div>
         </div>
       )}
