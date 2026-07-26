@@ -28,10 +28,23 @@ interface Pedido {
   ids_fragmentados?: string[]; 
 }
 
+interface Combo {
+  id: string; codigo: string; nome: string; descricao: string;
+  tipo_preco: 'fixo' | 'desconto' | 'desconto_fixo' | 'item_gratis';
+  preco_fixo: number | null;
+  preco_glovo?: number | null;
+  preco_whatsapp?: number | null;
+  desconto_percentual: number;
+  desconto_absoluto: number;
+  item_gratis_categoria: string;
+  combo_grupos: any[];
+}
+
 export default function GestaoPedidos() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [produtosDB, setProdutosDB] = useState<any[]>([]);
-  const [combosDB, setCombosDB] = useState<any[]>([]);
+  const [combosDB, setCombosDB] = useState<Combo[]>([]);
+  const [listaEstafetas, setListaEstafetas] = useState<{ nome: string }[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Filtros
@@ -47,7 +60,7 @@ export default function GestaoPedidos() {
 
   // Modal de Montagem de Combo na Edição
   const [modalComboEdicao, setModalComboEdicao] = useState(false);
-  const [comboSelecionadoParaMontar, setComboSelecionadoParaMontar] = useState<any | null>(null);
+  const [comboSelecionadoParaMontar, setComboSelecionadoParaMontar] = useState<Combo | null>(null);
   const [selecoesComboEdicao, setSelecoesComboEdicao] = useState<{ [grupoId: string]: any[] }>({});
 
   const supabase = createBrowserClient(
@@ -61,22 +74,32 @@ export default function GestaoPedidos() {
       const { data: dataProds } = await supabase.from('produtos').select('*').eq('ativo', true);
       if (dataProds) setProdutosDB(dataProds);
 
+      const { data: dataEsts } = await supabase.from('estafetas').select('nome').eq('ativo', true).order('nome', { ascending: true });
+      if (dataEsts) setListaEstafetas(dataEsts);
+
+      // Usar a wildcard '*' para garantir que o preco_glovo e preco_whatsapp dos combos são extraídos da BD
       const { data: dataCombos } = await supabase
         .from('combos')
         .select(`
-          id, codigo, nome, descricao, tipo_preco, preco_fixo, desconto_percentual, desconto_absolute:desconto_absoluto, item_gratis_categoria,
+          *,
           combo_grupos (
-            id, nome, quantidade_minima, quantidade_maxima, obrigatorio, ordem,
+            *,
             combo_grupo_produtos (
-              produto_id, acrescimo_preco, ativo,
-              produto:produtos (id, codigo, nome, categoria, preco_cardapio, preco_whatsapp, preco_glovo)
+              *,
+              produto:produtos (*)
             )
           )
         `)
         .eq('ativo', true)
         .eq('esgotado', false);
 
-      if (dataCombos) setCombosDB(dataCombos);
+      if (dataCombos) {
+        const combosOrdenados = dataCombos.map(cb => ({
+          ...cb,
+          combo_grupos: (cb.combo_grupos || []).sort((a: any, b: any) => a.ordem - b.ordem)
+        }));
+        setCombosDB(combosOrdenados);
+      }
 
       const { data, error } = await supabase
         .from('pedidos')
@@ -190,7 +213,6 @@ export default function GestaoPedidos() {
     }
   };
 
-  // Função auxiliar para determinar o preço correto com base no canal atual
   const calcularPrecoPorCanalEProduto = (canal: string, prod: any) => {
     const nome = (prod.nome || '').toLowerCase();
     if (canal === 'Revendedores') {
@@ -207,14 +229,28 @@ export default function GestaoPedidos() {
     setModalEditar(true);
   };
 
-  // Alterar canal no modal de edição e recalcular preços dos itens automaticamente
+  // Recalcular Preços quando o Canal é mudado dinamicamente
   const alterarCanalEdicao = (novoCanal: string) => {
     if (!pedidoEditando) return;
 
     const itensAtualizados = (pedidoEditando.itens || []).map(item => {
-      // Se for combo, mantém o preço fixado ou recalcula se necessário
-      if (item.codigo_produto === 'COMBO') return item;
+      // 1. Se for um Combo
+      if (item.codigo_produto === 'COMBO') {
+         const baseName = item.nome_produto.split(' (')[0];
+         const comboRef = combosDB.find(c => c.nome === baseName);
+         
+         if (comboRef && comboRef.tipo_preco === 'fixo') {
+             let novoPreco = Number(comboRef.preco_fixo || 0);
+             if (novoCanal === 'Glovo') novoPreco = Number(comboRef.preco_glovo || comboRef.preco_fixo || 0);
+             if (novoCanal === 'WhatsApp') novoPreco = Number(comboRef.preco_whatsapp || comboRef.preco_fixo || 0);
+             
+             return { ...item, preco_unitario: novoPreco };
+         }
+         // Se for combo de desconto/dinâmico, mantemos o valor. Recomendamos remover e adicionar para ser perfeito.
+         return item; 
+      }
 
+      // 2. Se for um Produto Solto
       const prod = produtosDB.find(p => p.id === item.produto_id || p.nome.toLowerCase() === item.nome_produto.toLowerCase());
       if (prod) {
         const novoPreco = calcularPrecoPorCanalEProduto(novoCanal, prod);
@@ -329,6 +365,7 @@ export default function GestaoPedidos() {
 
     Object.values(selecoesComboEdicao).forEach((selGrupo: any) => {
       selGrupo.forEach((item: any) => {
+        // Se for um combo de desconto, a soma dos itens já apanha a tarifa da Glovo perfeitamente!
         const precoItem = calcularPrecoPorCanalEProduto(pedidoEditando.canal, item.produto);
         somaPrecos += precoItem;
         somaAcrescimos += Number(item.acrescimo_preco || 0);
@@ -337,12 +374,22 @@ export default function GestaoPedidos() {
     });
 
     let precoComboFinal = somaPrecos;
+    
+    // Assumir preços Glovo e WhatsApp se for Combo Fixo
     if (comboSelecionadoParaMontar.tipo_preco === 'fixo') {
-      precoComboFinal = Number(comboSelecionadoParaMontar.preco_fixo || 0);
-    } else if (comboSelecionadoParaMontar.tipo_preco === 'desconto') {
+      if (pedidoEditando.canal === 'Glovo') {
+        precoComboFinal = Number(comboSelecionadoParaMontar.preco_glovo || comboSelecionadoParaMontar.preco_fixo || 0);
+      } else if (pedidoEditando.canal === 'WhatsApp') {
+        precoComboFinal = Number(comboSelecionadoParaMontar.preco_whatsapp || comboSelecionadoParaMontar.preco_fixo || 0);
+      } else {
+        precoComboFinal = Number(comboSelecionadoParaMontar.preco_fixo || 0);
+      }
+    } 
+    else if (comboSelecionadoParaMontar.tipo_preco === 'desconto') {
       const perc = Number(comboSelecionadoParaMontar.desconto_percentual || 0);
       precoComboFinal = somaPrecos * (1 - perc / 100);
-    } else if (comboSelecionadoParaMontar.tipo_preco === 'desconto_fixo') {
+    } 
+    else if (comboSelecionadoParaMontar.tipo_preco === 'desconto_fixo') {
       const desc = Number(comboSelecionadoParaMontar.desconto_absoluto || 0);
       precoComboFinal = Math.max(0, somaPrecos - desc);
     }
@@ -385,7 +432,7 @@ export default function GestaoPedidos() {
           cliente: pedidoEditando.cliente,
           canal: pedidoEditando.canal,
           forma_pagamento: pedidoEditando.forma_pagamento,
-          entregador: pedidoEditando.entregador,
+          entregador: pedidoEditando.entregador || null,
           taxa_entrega: pedidoEditando.taxa_entrega,
           desconto: pedidoEditando.desconto,
           pago: pedidoEditando.pago,
@@ -701,7 +748,16 @@ export default function GestaoPedidos() {
 
                 <div>
                   <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Entregador</label>
-                  <input type="text" value={pedidoEditando.entregador || ''} onChange={e => setPedidoEditando({...pedidoEditando, entregador: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none" placeholder="Estafeta" />
+                  <select 
+                    value={pedidoEditando.entregador || ''} 
+                    onChange={e => setPedidoEditando({...pedidoEditando, entregador: e.target.value})} 
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none cursor-pointer"
+                  >
+                    <option value="">-- Nenhum --</option>
+                    {listaEstafetas.map(est => (
+                      <option key={est.nome} value={est.nome}>{est.nome}</option>
+                    ))}
+                  </select>
                 </div>
 
                 <div>
