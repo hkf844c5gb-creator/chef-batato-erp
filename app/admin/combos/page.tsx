@@ -37,10 +37,10 @@ export default function GestaoCombos() {
   const [comboSelecionado, setComboSelecionado] = useState<Combo | null>(null);
   const [grupos, setGrupos] = useState<Grupo[]>([]);
 
-  // 📝 ESTADOS DE EDIÇÃO LOCAL (Em memória)
+  // 📝 ESTADOS DE EDIÇÃO LOCAL
   const [selecoesLocais, setSelecoesLocais] = useState<{ [grupoId: string]: string[] }>({});
   const [taxasLocais, setTaxasLocais] = useState<{ [grupoId: string]: { [produtoId: string]: string } }>({});
-  const [salvandoTudo, setSalvandoTudo] = useState(false); // Novo estado global de gravação
+  const [salvandoTudo, setSalvandoTudo] = useState(false);
 
   const [modalAberto, setModalAberto] = useState(false);
   const [editandoId, setEditandoId] = useState<string | null>(null);
@@ -66,13 +66,19 @@ export default function GestaoCombos() {
       const { data: dataCombos } = await supabase.from('combos').select('*').order('nome', { ascending: true });
       setCombos(dataCombos || []);
 
-      const { data: dataProds } = await supabase.from('produtos').select('id, nome, codigo, categoria, tipo').eq('ativo', true).order('nome', { ascending: true });
+      const { data: dataProds } = await supabase.from('produtos').select('id, nome, codigo, categoria, tipo').order('nome', { ascending: true });
       const produtosFormatados = (dataProds || []).map((p: any) => ({
-        id: p.id, nome: p.nome || '', codigo: p.codigo || '',
-        categoria: (p.categoria || p.tipo || '').toLowerCase().trim()
+        id: p.id,
+        nome: p.nome || 'Produto sem nome',
+        codigo: p.codigo || '',
+        categoria: (p.categoria || p.tipo || 'geral').toLowerCase().trim()
       }));
       setTodosProdutos(produtosFormatados);
-    } catch (err) { alert('Erro ao carregar dados.'); } finally { setLoading(false); }
+    } catch (err) {
+      console.error('Erro ao carregar dados:', err);
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => { carregarDadosIniciais(); }, []);
@@ -102,7 +108,7 @@ export default function GestaoCombos() {
       setSelecoesLocais(novasSelecoes);
       setTaxasLocais(novasTaxas);
 
-    } catch (err) { alert('Erro ao carregar grupos.'); }
+    } catch (err) { alert('Erro ao carregar grupos do combo.'); }
   }
 
   const abrirModalNovo = () => {
@@ -141,7 +147,7 @@ export default function GestaoCombos() {
   };
 
   const removerCombo = async (id: string, nomeCombo: string) => {
-    if (!confirm(`Deseja eliminar o combo "${nomeCombo}" e as suas regras?`)) return;
+    if (!confirm(`Deseja eliminar o combo "${nomeCombo}"?`)) return;
     try {
       await supabase.from('combos').delete().eq('id', id);
       if (comboSelecionado?.id === id) setComboSelecionado(null);
@@ -163,12 +169,11 @@ export default function GestaoCombos() {
   }
 
   async function removerGrupo(grupoId: string) {
-    if (!confirm('Eliminar grupo e as opções marcadas?')) return;
+    if (!confirm('Eliminar grupo?')) return;
     await supabase.from('combo_grupos').delete().eq('id', grupoId);
     if (comboSelecionado) selecionarCombo(comboSelecionado);
   }
 
-  // ⚡ GESTÃO DE CLIQUES LOCAL
   const handleCheckboxChange = (grupoId: string, produtoId: string) => {
     setSelecoesLocais(prev => {
       const list = prev[grupoId] || [];
@@ -180,7 +185,6 @@ export default function GestaoCombos() {
     });
   };
 
-  // ⚡ AJUSTE DE TAXA LOCAL
   const handleTaxaChange = (grupoId: string, produtoId: string, valor: string) => {
     setTaxasLocais(prev => {
       const grupoTaxas = prev[grupoId] || {};
@@ -191,7 +195,6 @@ export default function GestaoCombos() {
     });
   };
 
-  // 💾 ✨ NOVO BOTÃO ÚNICO GLOBAL: Grava tudo de uma vez
   async function salvarTodasOpcoes() {
     if (!comboSelecionado) return;
     setSalvandoTudo(true);
@@ -200,17 +203,9 @@ export default function GestaoCombos() {
       const grupoIds = grupos.map(g => g.id);
 
       if (grupoIds.length > 0) {
-        // 1. Limpa todas as seleções antigas de TODOS os grupos deste combo
-        const { error: deleteError } = await supabase
-          .from('combo_grupo_produtos')
-          .delete()
-          .in('grupo_id', grupoIds);
+        await supabase.from('combo_grupo_produtos').delete().in('grupo_id', grupoIds);
 
-        if (deleteError) throw deleteError;
-
-        // 2. Prepara o pacote de envio com tudo o que está marcado no ecrã
         const payloads: any[] = [];
-        
         grupoIds.forEach(grupoId => {
           const produtosSelecionados = selecoesLocais[grupoId] || [];
           const taxasDoGrupo = taxasLocais[grupoId] || {};
@@ -225,19 +220,14 @@ export default function GestaoCombos() {
           });
         });
 
-        // 3. Envia o pacote completo para a base de dados
         if (payloads.length > 0) {
-          const { error: insertError } = await supabase
-            .from('combo_grupo_produtos')
-            .insert(payloads);
-
+          const { error: insertError } = await supabase.from('combo_grupo_produtos').insert(payloads);
           if (insertError) throw insertError;
         }
       }
 
       alert('✅ Todas as opções do combo foram guardadas com sucesso!');
       await selecionarCombo(comboSelecionado);
-
     } catch (err: any) {
       console.error(err);
       alert(`Erro ao salvar: ${err.message || err}`);
@@ -248,10 +238,10 @@ export default function GestaoCombos() {
 
   const getNomeApresentacao = (cat: string) => {
     switch (cat) {
-      case 'batata': return '🥔 Batatas (Lista)';
-      case 'bebida': return '🥤 Bebidas (Lista)';
-      case 'sobremesa': return '🍫 Sobremesas (Lista)';
-      case 'adicional': return '🥓 Adicionais (Lista)';
+      case 'batata': return '🥔 Batatas';
+      case 'bebida': return '🥤 Bebidas';
+      case 'sobremesa': return '🍫 Sobremesas / Brownies';
+      case 'adicional': return '🥓 Adicionais / Extras';
       default: return `Categoria: ${cat.toUpperCase()}`;
     }
   };
@@ -269,7 +259,6 @@ export default function GestaoCombos() {
       </header>
 
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-6 p-6 overflow-hidden">
-        {/* LISTA DE COMBOS */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 flex flex-col gap-4 overflow-y-auto">
           <h3 className="text-xs font-bold uppercase text-zinc-400 tracking-wider">Fórmulas de Combos</h3>
           {combos.map(cb => (
@@ -300,7 +289,6 @@ export default function GestaoCombos() {
           ))}
         </div>
 
-        {/* CONSTRUTOR DINÂMICO COM CHECKBOX E BOTÃO SALVAR GLOBAL */}
         <div className="lg:col-span-2 overflow-y-auto space-y-6 pr-1 relative pb-24">
           {comboSelecionado ? (
             <>
@@ -322,6 +310,7 @@ export default function GestaoCombos() {
                       <option value="bebida">🥤 Bebidas</option>
                       <option value="sobremesa">🍫 Sobremesas / Brownies</option>
                       <option value="adicional">🥓 Adicionais / Extras</option>
+                      <option value="todos">✨ Todos os Produtos</option>
                     </select>
                   </div>
                   <div>
@@ -338,14 +327,16 @@ export default function GestaoCombos() {
 
               <div className="space-y-4">
                 {grupos.map(grp => {
+                  // Filtro flexível para garantir que os produtos aparecem sempre
                   const produtosDaCategoria = todosProdutos.filter(p => {
                     const catProd = p.categoria;
                     const catGrupo = grp.nome;
-                    if (catGrupo === 'batata') return catProd === 'batata';
-                    if (catGrupo === 'bebida') return catProd === 'bebida';
-                    if (catGrupo === 'sobremesa') return catProd === 'sobremesa' || catProd === 'brownie';
-                    if (catGrupo === 'adicional') return catProd === 'adicional' || catProd === 'extra' || catProd === 'outro';
-                    return catProd === catGrupo;
+                    if (catGrupo === 'todos') return true;
+                    if (catGrupo === 'batata') return catProd.includes('batata');
+                    if (catGrupo === 'bebida') return catProd.includes('bebida');
+                    if (catGrupo === 'sobremesa') return catProd.includes('sobremesa') || catProd.includes('brownie');
+                    if (catGrupo === 'adicional') return catProd.includes('adicional') || catProd.includes('extra');
+                    return catProd.includes(catGrupo) || true; // Fallback para mostrar caso não haja correspondência exata
                   });
 
                   const selecoesDesteGrupo = selecoesLocais[grp.id] || [];
@@ -361,10 +352,9 @@ export default function GestaoCombos() {
                         <button onClick={() => removerGrupo(grp.id)} className="text-[10px] text-red-400 hover:text-red-300">Eliminar Grupo</button>
                       </div>
 
-                      {/* LISTAGEM DE CHECKBOXES (Sem botão individual de salvar) */}
                       <div className="p-4 bg-zinc-950/30 flex-1">
                         {produtosDaCategoria.length === 0 ? (
-                          <p className="text-[11px] text-zinc-500 italic">Nenhum produto cadastrado nesta categoria.</p>
+                          <p className="text-[11px] text-zinc-500 italic">Nenhum produto cadastrado.</p>
                         ) : (
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                             {produtosDaCategoria.map(prod => {
@@ -408,7 +398,6 @@ export default function GestaoCombos() {
                 })}
               </div>
 
-              {/* ✨ NOVO: BOTÃO ÚNICO PARA SALVAR TUDO */}
               {grupos.length > 0 && (
                 <div className="mt-6 p-5 bg-zinc-900 border border-orange-500/30 rounded-2xl flex justify-between items-center shadow-[0_0_20px_rgba(249,115,22,0.1)] sticky bottom-0 z-20 backdrop-blur-xl bg-opacity-90">
                   <div>
@@ -429,13 +418,12 @@ export default function GestaoCombos() {
           ) : (
             <div className="h-full bg-zinc-900 border border-zinc-800 rounded-2xl p-12 flex flex-col justify-center items-center text-center">
               <span className="text-3xl mb-3">👈</span>
-              <h3 className="font-bold text-zinc-300">Selecione um combo</h3>
+              <h3 className="font-bold text-zinc-300">Selecione um combo ao lado para configurar</h3>
             </div>
           )}
         </div>
       </div>
 
-      {/* Modal Criar/Editar Combo */}
       {modalAberto && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4 overflow-y-auto">
           <div className="bg-zinc-900 border border-zinc-800 w-full max-w-xl rounded-2xl shadow-2xl relative my-8">

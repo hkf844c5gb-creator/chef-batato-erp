@@ -1,470 +1,401 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
-interface Insumo {
+interface ItemReceita {
   id: string;
-  nome: string;
-  unidade_medida: string;
-  quantidade_atual: number;
-  quantidade_alerta: number;
-  custo_por_unidade?: number;
-  custo_unidade?: number;
-}
-
-interface Produto {
-  id: string;
-  nome: string;
+  receita_id: string;
+  nome_item: string;
+  quantidade: number;
+  preco_unitario: number;
+  subtotal: number;
   categoria: string;
-  rendimento?: number; 
+  receita?: {
+    cliente_canal: string;
+    data_receita: string;
+    numero_documento: string;
+  };
 }
 
-interface FichaItem {
-  id: string;
-  insumo_id: string;
-  quantidade_necessaria: number; 
-  unidade_receita: string; 
-  insumos: Insumo; 
-}
+const CATEGORIAS_RECEITAS = [
+  { id: 'geral', label: '🌐 Geral' },
+  { id: 'brownie', label: '🍫 Brownie' },
+  { id: 'batata', label: '🥔 Batatas / Pratos' },
+  { id: 'bebidas', label: '🥤 Bebidas' },
+  { id: 'combos', label: '🍟 Combos' },
+  { id: 'taxas_entregas', label: '🛵 Taxas de Entrega' },
+];
 
-export default function ReceitasEStocks() {
+export default function GestaoConciliacaoReceitas() {
+  const [todosItens, setTodosItens] = useState<ItemReceita[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // Filtros
+  const [filtroCategoria, setFiltroCategoria] = useState('');
+  const [termoPesquisa, setTermoPesquisa] = useState('');
+
+  // Modal para registar/importar receita conciliada
+  const [modalAberto, setModalAberto] = useState(false);
+  const [clienteCanal, setClienteCanal] = useState('');
+  const [numeroDocumento, setNumeroDocumento] = useState('');
+  const [dataReceita, setDataReceita] = useState(new Date().toISOString().split('T')[0]);
+  const [itensTemp, setItensTemp] = useState<Omit<ItemReceita, 'id' | 'receita_id'>[]>([]);
+  const [salvando, setSalvando] = useState(false);
+
+  // Campos temporários
+  const [tempNome, setTempNome] = useState('');
+  const [tempQtd, setTempQtd] = useState('1');
+  const [tempPreco, setTempPreco] = useState('');
+
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
 
-  const [loading, setLoading] = useState(true);
-  const [insumos, setInsumos] = useState<Insumo[]>([]);
-  const [produtos, setProdutos] = useState<Produto[]>([]);
-  
-  const [produtoSelecionado, setProdutoSelecionado] = useState<string>('');
-  const [fichaAtual, setFichaAtual] = useState<FichaItem[]>([]);
-  const [rendimentoProduto, setRendimentoProduto] = useState<number>(1);
-  const [salvouRendimento, setSalvouRendimento] = useState(false); // Estado para o botão OK
-
-  const [formInsumo, setFormInsumo] = useState({ nome: '', unidade_medida: 'unid', quantidade_atual: 0, quantidade_alerta: 0, custo_por_unidade: 0 });
-  const [formFicha, setFormFicha] = useState({ insumo_id: '', quantidade_receita: 0, unidade_receita: 'g' });
-  
-  const [isProcessando, setIsProcessando] = useState(false);
-
-  // 1. CARREGAR DADOS
-  async function carregarDadosBase() {
+  async function carregarDadosReceitas() {
     setLoading(true);
     try {
-      const { data: dataInsumos, error: errInsumos } = await supabase.from('insumos').select('*').order('nome', { ascending: true });
-      if (errInsumos) console.error("Erro ao carregar insumos:", errInsumos);
-      else setInsumos(dataInsumos || []);
+      const { data, error } = await supabase
+        .from('itens_receita')
+        .select(`
+          *,
+          receita:receitas_entradas (cliente_canal, data_receita, numero_documento)
+        `)
+        .order('criado_em', { ascending: false });
 
-      const { data: dataProdutos, error: errProdutos } = await supabase.from('produtos').select('id, nome, categoria, rendimento').eq('ativo', true).order('nome', { ascending: true });
-      if (errProdutos) throw errProdutos;
-      
-      const produtosSemBebidas = (dataProdutos || []).filter((p: Produto) => {
-        const categoria = (p.categoria || '').toLowerCase().trim();
-        return categoria !== 'bebida' && categoria !== 'bebidas';
-      });
-      setProdutos(produtosSemBebidas);
-
-    } catch (err: any) {
-      console.error("Erro geral ao carregar dados:", err.message);
+      if (error) throw error;
+      setTodosItens(data || []);
+    } catch (err) {
+      console.error('Erro ao carregar receitas:', err);
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => { carregarDadosBase(); }, []);
-
-  // Ao selecionar um produto, atualiza o rendimento atual dele
   useEffect(() => {
-    if (produtoSelecionado) {
-      const prod = produtos.find(p => p.id === produtoSelecionado);
-      setRendimentoProduto(prod?.rendimento || 1);
-    }
-  }, [produtoSelecionado, produtos]);
+    carregarDadosReceitas();
+  }, []);
 
-  // 2. CARREGAR FICHA DO PRATO SELECIONADO
-  useEffect(() => {
-    async function carregarFichaDoProduto() {
-      if (!produtoSelecionado) return setFichaAtual([]);
-      try {
-        const { data, error } = await supabase.from('fichas_tecnicas').select('id, insumo_id, quantidade_necessaria, unidade_receita, insumos(*)').eq('produto_id', produtoSelecionado);
-        if (error) throw error;
-        
-        const fichasFormatadas = (data || []).map((item: any) => ({
-          id: item.id,
-          insumo_id: item.insumo_id,
-          quantidade_necessaria: item.quantidade_necessaria,
-          unidade_receita: item.unidade_receita || (Array.isArray(item.insumos) ? item.insumos[0]?.unidade_medida : item.insumos?.unidade_medida) || 'un',
-          insumos: Array.isArray(item.insumos) ? item.insumos[0] : item.insumos
-        })) as FichaItem[];
-        setFichaAtual(fichasFormatadas);
-      } catch (err: any) { console.error("Erro ao carregar ficha técnica", err); }
-    }
-    carregarFichaDoProduto();
-  }, [produtoSelecionado]);
-
-  // Função disparada pelo botão "OK" do Rendimento
-  const handleSalvarRendimento = async () => {
-    const rendimentoSeguro = rendimentoProduto < 1 ? 1 : rendimentoProduto;
-    setRendimentoProduto(rendimentoSeguro);
-    
-    if (!produtoSelecionado) return;
+  const selecionarCategoriaItem = async (item: ItemReceita, novaCategoria: string) => {
     try {
-      await supabase.from('produtos').update({ rendimento: rendimentoSeguro }).eq('id', produtoSelecionado);
-      setProdutos(produtos.map(p => p.id === produtoSelecionado ? { ...p, rendimento: rendimentoSeguro } : p));
-      
-      // Feedback visual no botão
-      setSalvouRendimento(true);
-      setTimeout(() => setSalvouRendimento(false), 2000);
-    } catch(e) {
-      console.error("Erro ao atualizar rendimento", e);
-    }
-  };
+      const { error } = await supabase
+        .from('itens_receita')
+        .update({ categoria: novaCategoria })
+        .eq('id', item.id);
 
-  // FUNÇÕES BÁSICAS DA DESPENSA
-  const adicionarInsumo = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formInsumo.nome) return alert('Dê um nome ao insumo.');
-    setIsProcessando(true);
-    try {
-      const { error } = await supabase.from('insumos').insert([formInsumo]);
       if (error) throw error;
-      setFormInsumo({ nome: '', unidade_medida: 'unid', quantidade_atual: 0, quantidade_alerta: 0, custo_por_unidade: 0 });
-      carregarDadosBase();
-    } catch (err: any) { alert("Erro ao guardar insumo: " + err.message); } finally { setIsProcessando(false); }
-  };
 
-  const atualizarStockInsumo = async (id: string, novaQuantidade: number) => {
-    try {
-      const { error } = await supabase.from('insumos').update({ quantidade_atual: novaQuantidade }).eq('id', id);
-      if (error) throw error;
-      setInsumos(insumos.map(i => i.id === id ? { ...i, quantidade_atual: novaQuantidade } : i));
-    } catch (err: any) { alert("Erro ao atualizar stock: " + err.message); }
-  };
-
-  const excluirInsumo = async (id: string) => {
-    if (!confirm('Atenção: Excluir este insumo vai removê-lo de TODAS as fichas técnicas. Continuar?')) return;
-    try {
-      const { error } = await supabase.from('insumos').delete().eq('id', id);
-      if (error) throw error;
-      carregarDadosBase();
-    } catch (err: any) { alert("Erro ao excluir: " + err.message); }
-  };
-
-  // 3. O MOTOR DE CONVERSÃO MATEMÁTICO
-  const converterUnidade = (quantidade: number, unidadeDeOrigem: string, unidadeDeDestino: string) => {
-    const orig = unidadeDeOrigem.toLowerCase().trim();
-    const dest = unidadeDeDestino.toLowerCase().trim();
-    
-    if (orig === dest) return quantidade;
-
-    if (orig === 'g' && dest === 'kg') return quantidade / 1000;
-    if (orig === 'kg' && dest === 'g') return quantidade * 1000;
-    
-    if (orig === 'ml' && (dest === 'litro' || dest === 'l')) return quantidade / 1000;
-    if ((orig === 'litro' || orig === 'l') && dest === 'ml') return quantidade * 1000;
-
-    return quantidade; 
-  };
-
-  const adicionarNaFicha = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!produtoSelecionado) return alert('Selecione um prato primeiro.');
-    if (!formFicha.insumo_id || formFicha.quantidade_receita <= 0) {
-      return alert('Preencha a quantidade corretamente (maior que 0).');
-    }
-    
-    const insumoEscolhido = insumos.find(i => i.id === formFicha.insumo_id);
-    if (!insumoEscolhido) return alert("Insumo não encontrado na despensa.");
-
-    setIsProcessando(true);
-    try {
-      const qtdConvertidaParaArmazem = converterUnidade(formFicha.quantidade_receita, formFicha.unidade_receita, insumoEscolhido.unidade_medida);
-
-      const { error } = await supabase.from('fichas_tecnicas').insert([{
-        produto_id: produtoSelecionado,
-        insumo_id: formFicha.insumo_id,
-        quantidade_necessaria: qtdConvertidaParaArmazem, 
-        unidade_receita: formFicha.unidade_receita 
-      }]);
-      
-      if (error) {
-        if (error.code === '23505') throw new Error('Este insumo já faz parte desta receita.');
-        throw error;
+      if (item.receita?.cliente_canal) {
+        await supabase
+          .from('regras_categorizacao_receitas')
+          .upsert(
+            {
+              cliente_canal: item.receita.cliente_canal.trim().toLowerCase(),
+              nome_item: item.nome_item.trim().toLowerCase(),
+              categoria: novaCategoria
+            },
+            { onConflict: 'cliente_canal,nome_item' }
+          );
       }
-      
-      setFormFicha({ insumo_id: '', quantidade_receita: 0, unidade_receita: 'g' });
-      
-      const { data } = await supabase.from('fichas_tecnicas').select('id, insumo_id, quantidade_necessaria, unidade_receita, insumos(*)').eq('produto_id', produtoSelecionado);
-      if (data) {
-        const fichasFormatadas = data.map((item: any) => ({
-          id: item.id,
-          insumo_id: item.insumo_id,
-          quantidade_necessaria: item.quantidade_necessaria,
-          unidade_receita: item.unidade_receita || (Array.isArray(item.insumos) ? item.insumos[0]?.unidade_medida : item.insumos?.unidade_medida) || 'un',
-          insumos: Array.isArray(item.insumos) ? item.insumos[0] : item.insumos
-        })) as FichaItem[];
-        setFichaAtual(fichasFormatadas);
-      }
+
+      setTodosItens(prev =>
+        prev.map(i => (i.id === item.id ? { ...i, categoria: novaCategoria } : i))
+      );
     } catch (err: any) {
-      alert(err.message);
-    } finally {
-      setIsProcessando(false);
+      alert(`Erro ao atualizar categoria: ${err.message}`);
     }
   };
 
-  const removerDaFicha = async (idFicha: string) => {
-    try {
-      const { error } = await supabase.from('fichas_tecnicas').delete().eq('id', idFicha);
-      if (error) throw error;
-      setFichaAtual(fichaAtual.filter(f => f.id !== idFicha));
-    } catch (err: any) { alert("Erro ao remover da ficha: " + err.message); }
+  const abrirModalNovo = () => {
+    setClienteCanal('');
+    setNumeroDocumento('');
+    setDataReceita(new Date().toISOString().split('T')[0]);
+    setItensTemp([]);
+    setTempNome('');
+    setTempQtd('1');
+    setTempPreco('');
+    setModalAberto(true);
   };
 
-  if (loading && insumos.length === 0) return <div className="min-h-screen bg-zinc-950 flex items-center justify-center text-zinc-500 font-bold uppercase tracking-widest text-xs">A Carregar Cozinha...</div>;
+  const adicionarItemTemp = async () => {
+    if (!tempNome || !tempPreco) return alert('Informe o nome do item e o preço unitário.');
+    const qtd = parseFloat(tempQtd) || 1;
+    const preco = parseFloat(tempPreco) || 0;
+    const subtotal = qtd * preco;
 
-  // Cálculos da Receita Completa
-  const custoTotalPanela = fichaAtual.reduce((acc, ficha) => {
-    const custoUnit = Number(ficha.insumos?.custo_por_unidade || ficha.insumos?.custo_unidade || 0);
-    return acc + (ficha.quantidade_necessaria * custoUnit);
-  }, 0);
+    let categoriaSugerida = 'geral';
 
-  const custoPorPorcao = custoTotalPanela / (rendimentoProduto || 1);
+    if (clienteCanal.trim()) {
+      const { data: regra } = await supabase
+        .from('regras_categorizacao_receitas')
+        .select('categoria')
+        .eq('cliente_canal', clienteCanal.trim().toLowerCase())
+        .eq('nome_item', tempNome.trim().toLowerCase())
+        .single();
+
+      if (regra) {
+        categoriaSugerida = regra.categoria; // Reconhece automaticamente!
+      }
+    }
+
+    setItensTemp([
+      ...itensTemp,
+      {
+        nome_item: tempNome,
+        quantidade: qtd,
+        preco_unitario: preco,
+        subtotal,
+        categoria: categoriaSugerida
+      }
+    ]);
+
+    setTempNome('');
+    setTempQtd('1');
+    setTempPreco('');
+  };
+
+  const removerItemTemp = (index: number) => {
+    setItensTemp(itensTemp.filter((_, i) => i !== index));
+  };
+
+  const salvarReceitaConciliada = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!clienteCanal) return alert('Informe o canal ou cliente.');
+    if (itensTemp.length === 0) return alert('Adicione pelo menos um item.');
+
+    setSalvando(true);
+    try {
+      const valorTotal = itensTemp.reduce((acc, it) => acc + it.subtotal, 0);
+
+      const { data: receitaData, error: receitaError } = await supabase
+        .from('receitas_entradas')
+        .insert([{
+          cliente_canal: clienteCanal,
+          numero_documento: numeroDocumento,
+          data_receita: dataReceita,
+          valor_total: valorTotal,
+          estado: 'conciliado'
+        }])
+        .select()
+        .single();
+
+      if (receitaError) throw receitaError;
+
+      const itensParaInserir = itensTemp.map(item => ({
+        receita_id: receitaData.id,
+        nome_item: item.nome_item,
+        quantidade: item.quantidade,
+        preco_unitario: item.preco_unitario,
+        subtotal: item.subtotal,
+        categoria: item.categoria
+      }));
+
+      const { error: itensError } = await supabase.from('itens_receita').insert(itensParaInserir);
+      if (itensError) throw itensError;
+
+      for (const item of itensTemp) {
+        await supabase
+          .from('regras_categorizacao_receitas')
+          .upsert(
+            {
+              cliente_canal: clienteCanal.trim().toLowerCase(),
+              nome_item: item.nome_item.trim().toLowerCase(),
+              categoria: item.categoria
+            },
+            { onConflict: 'cliente_canal,nome_item' }
+          );
+      }
+
+      setModalAberto(false);
+      carregarDadosReceitas();
+    } catch (err: any) {
+      alert(`Erro: ${err.message}`);
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  const itensFiltrados = useMemo(() => {
+    return todosItens.filter(item => {
+      if (filtroCategoria && item.categoria !== filtroCategoria) return false;
+      if (termoPesquisa) {
+        const termo = termoPesquisa.toLowerCase();
+        const nomeMatch = item.nome_item.toLowerCase().includes(termo);
+        const canalMatch = item.receita?.cliente_canal?.toLowerCase().includes(termo);
+        if (!nomeMatch && !canalMatch) return false;
+      }
+      return true;
+    });
+  }, [todosItens, filtroCategoria, termoPesquisa]);
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white font-sans flex flex-col pb-12 selection:bg-orange-500/30">
-      
-      <header className="sticky top-0 z-20 bg-zinc-950/80 backdrop-blur-xl border-b border-zinc-800/60 px-5 py-5 flex justify-between items-center">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-orange-500 to-red-700 flex items-center justify-center shadow-lg shadow-orange-900/40 text-2xl">📦</div>
-          <div>
-            <h1 className="text-2xl font-black text-white tracking-tight">Stocks & Receitas</h1>
-            <p className="text-[11px] text-zinc-400 font-bold uppercase tracking-widest mt-0.5">Custo e Controlo de Insumos</p>
-          </div>
+    <div className="min-h-screen bg-zinc-950 text-white flex flex-col font-sans">
+      <header className="bg-zinc-900 border-b border-zinc-800 px-6 py-4 flex justify-between items-center shadow-lg">
+        <div className="flex items-center gap-3">
+          <span className="text-2xl">💰</span>
+          <h1 className="text-xl font-bold tracking-wide">Conciliação de Receitas: Categorização Item por Item</h1>
         </div>
-        <button onClick={carregarDadosBase} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold px-4 py-2 rounded-xl transition-colors">🔄 Atualizar Despensa</button>
+        <button onClick={abrirModalNovo} className="bg-orange-600 hover:bg-orange-700 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg transition-all">
+          + Importar / Registar Receita
+        </button>
       </header>
 
-      <main className="flex-1 w-full max-w-[1400px] mx-auto p-5 md:p-8 grid grid-cols-1 lg:grid-cols-2 gap-8">
-        
-        {/* -------------------- LADO ESQUERDO: A DESPENSA -------------------- */}
-        <section className="bg-zinc-900 border border-zinc-800 rounded-[32px] overflow-hidden flex flex-col shadow-xl">
-          <div className="p-6 border-b border-zinc-800/80 bg-zinc-950/50 flex justify-between items-center">
-            <h2 className="text-lg font-black uppercase text-zinc-300 tracking-widest flex items-center gap-2">
-              <span className="text-orange-500">1.</span> A Minha Despensa (Faturas)
-            </h2>
+      {/* FILTROS */}
+      <section className="px-6 pt-6">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 flex flex-col md:flex-row gap-4">
+          <div className="flex-1">
+            <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">Pesquisar Item ou Canal</label>
+            <input 
+              type="text" 
+              value={termoPesquisa}
+              onChange={e => setTermoPesquisa(e.target.value)}
+              placeholder="Ex: Frango Cremoso, Glovo..."
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm text-white focus:border-orange-500 outline-none"
+            />
           </div>
-
-          <div className="p-6">
-            <form onSubmit={adicionarInsumo} className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-              <div className="col-span-2 sm:col-span-4">
-                <label className="block text-[10px] text-zinc-500 font-bold uppercase mb-1">Nome do Ingrediente/Embalagem</label>
-                <input required type="text" value={formInsumo.nome} onChange={e => setFormInsumo({...formInsumo, nome: e.target.value})} className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-orange-500" placeholder="Ex: Nata para Cozinhar..." />
-              </div>
-              <div>
-                <label className="block text-[10px] text-zinc-500 font-bold uppercase mb-1">Medida na Compra</label>
-                <select value={formInsumo.unidade_medida} onChange={e => setFormInsumo({...formInsumo, unidade_medida: e.target.value})} className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-orange-500">
-                  <option value="kg">Kg</option>
-                  <option value="g">Gramas (g)</option>
-                  <option value="litro">Litro (L)</option>
-                  <option value="ml">Mililitros (ml)</option>
-                  <option value="unid">Unid.</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-[10px] text-zinc-500 font-bold uppercase mb-1">Qtd Atual</label>
-                <input required type="number" step="0.01" value={formInsumo.quantidade_atual} onChange={e => setFormInsumo({...formInsumo, quantidade_atual: parseFloat(e.target.value) || 0})} className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none focus:border-orange-500" />
-              </div>
-              <div>
-                <label className="block text-[10px] text-red-500 font-bold uppercase mb-1">Alerta em</label>
-                <input required type="number" step="0.01" value={formInsumo.quantidade_alerta} onChange={e => setFormInsumo({...formInsumo, quantidade_alerta: parseFloat(e.target.value) || 0})} className="w-full bg-zinc-900 border border-red-900/50 rounded-xl px-3 py-2 text-sm text-red-400 outline-none focus:border-red-500" />
-              </div>
-              <div>
-                <label className="block text-[10px] text-transparent select-none mb-1">Ação</label>
-                <button type="submit" disabled={isProcessando} className="w-full bg-orange-600 hover:bg-orange-500 text-white rounded-xl px-3 py-2 text-sm font-bold transition-all shadow-lg disabled:opacity-50">+ Add</button>
-              </div>
-            </form>
-
-            <div className="space-y-2 max-h-[500px] overflow-y-auto pr-2">
-              {insumos.length === 0 ? (
-                <p className="text-zinc-500 text-sm text-center py-8">A despensa está vazia. Leia faturas no Conciliador para preencher.</p>
-              ) : null}
-              {insumos.map(ins => {
-                const emAlerta = ins.quantidade_atual <= ins.quantidade_alerta;
-                return (
-                  <div key={ins.id} className={`flex items-center justify-between p-3 rounded-xl border ${emAlerta ? 'bg-red-950/20 border-red-900/50' : 'bg-zinc-950 border-zinc-800'}`}>
-                    <div className="flex flex-col flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="font-bold text-sm text-zinc-200">{ins.nome}</span>
-                        {emAlerta && <span className="bg-red-600 text-white text-[9px] font-black uppercase px-1.5 py-0.5 rounded animate-pulse">ACABANDO</span>}
-                      </div>
-                      <span className="text-[10px] text-zinc-500">Custo un/kg: {Number(ins.custo_por_unidade || ins.custo_unidade || 0).toFixed(2)}€</span>
-                    </div>
-                    
-                    <div className="flex items-center gap-3">
-                      <div className="flex items-center bg-zinc-900 rounded-lg border border-zinc-700 overflow-hidden">
-                        <input 
-                          type="number" step="0.01" value={ins.quantidade_atual} 
-                          onChange={(e) => atualizarStockInsumo(ins.id, parseFloat(e.target.value) || 0)}
-                          className={`w-20 bg-transparent text-center font-mono text-sm py-1.5 font-bold outline-none ${emAlerta ? 'text-red-400' : 'text-green-400'}`} 
-                        />
-                        <span className="bg-zinc-800 text-zinc-400 text-xs px-2 py-1.5 font-bold border-l border-zinc-700">{ins.unidade_medida || 'un'}</span>
-                      </div>
-                      <button onClick={() => excluirInsumo(ins.id)} className="text-zinc-600 hover:text-red-500 transition-colors px-1" title="Excluir">✕</button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+          <div>
+            <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">Filtrar por Categoria</label>
+            <select 
+              value={filtroCategoria} 
+              onChange={e => setFiltroCategoria(e.target.value)} 
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-sm text-white focus:border-orange-500 outline-none cursor-pointer"
+            >
+              <option value="">Todas as Categorias</option>
+              {CATEGORIAS_RECEITAS.map(cat => (
+                <option key={cat.id} value={cat.id}>{cat.label}</option>
+              ))}
+            </select>
           </div>
-        </section>
+        </div>
+      </section>
 
-        {/* -------------------- LADO DIREITO: FICHAS TÉCNICAS (CONVERSOR) -------------------- */}
-        <section className="bg-zinc-900 border border-zinc-800 rounded-[32px] overflow-hidden flex flex-col shadow-xl">
-          <div className="p-6 border-b border-zinc-800/80 bg-zinc-950/50 flex justify-between items-center">
-            <h2 className="text-lg font-black uppercase text-zinc-300 tracking-widest flex items-center gap-2">
-              <span className="text-orange-500">2.</span> Ficha Técnica da Panela
-            </h2>
-          </div>
+      {/* TABELA DE ITENS DE RECEITA */}
+      <main className="flex-1 p-6 overflow-y-auto">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-xl">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-zinc-950 border-b border-zinc-800 text-zinc-400 uppercase text-[10px] tracking-wider">
+              <tr>
+                <th className="p-4 font-bold">Data</th>
+                <th className="p-4 font-bold">Canal / Cliente</th>
+                <th className="p-4 font-bold">Item Detalhado</th>
+                <th className="p-4 font-bold">Qtd / Preço</th>
+                <th className="p-4 font-bold">Subtotal</th>
+                <th className="p-4 font-bold">Selecionar Categoria</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-800/50">
+              {loading ? (
+                <tr><td colSpan={6} className="text-center p-8 text-zinc-500">A carregar itens de receitas...</td></tr>
+              ) : itensFiltrados.length === 0 ? (
+                <tr><td colSpan={6} className="text-center p-8 text-zinc-500">Nenhum item de receita encontrado.</td></tr>
+              ) : (
+                itensFiltrados.map(item => (
+                  <tr key={item.id} className="hover:bg-zinc-800/30 transition-colors">
+                    <td className="p-4 font-mono text-xs text-zinc-400">
+                      {item.receita?.data_receita || '---'}
+                    </td>
+                    <td className="p-4 font-medium text-zinc-300">{item.receita?.cliente_canal || '---'}</td>
+                    <td className="p-4 font-bold text-white">{item.nome_item}</td>
+                    <td className="p-4 font-mono text-xs text-zinc-400">
+                      {item.quantidade}x · {Number(item.preco_unitario).toFixed(2)}€
+                    </td>
+                    <td className="p-4 font-mono font-bold text-green-400">+{Number(item.subtotal).toFixed(2)}€</td>
+                    <td className="p-4">
+                      <select 
+                        value={item.categoria} 
+                        onChange={e => selecionarCategoriaItem(item, e.target.value)}
+                        className="bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs font-bold text-white outline-none cursor-pointer focus:border-orange-500"
+                      >
+                        {CATEGORIAS_RECEITAS.map(cat => (
+                          <option key={cat.id} value={cat.id}>{cat.label}</option>
+                        ))}
+                      </select>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </main>
 
-          <div className="p-6 flex flex-col h-full">
-            
-            <div className="mb-6">
-              <label className="block text-[10px] text-zinc-500 font-bold uppercase mb-2">Selecione o Prato Final:</label>
-              <select 
-                value={produtoSelecionado} onChange={(e) => setProdutoSelecionado(e.target.value)}
-                className="w-full bg-zinc-950 border border-zinc-700 rounded-xl px-4 py-3 text-white font-bold outline-none focus:border-orange-500 cursor-pointer"
-              >
-                <option value="">-- Selecionar Prato/Produto --</option>
-                {produtos.map(p => (<option key={p.id} value={p.id}>{p.nome} ({p.categoria})</option>))}
-              </select>
+      {/* MODAL IMPORTAR / REGISTAR RECEITA */}
+      {modalAberto && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4 overflow-y-auto">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-2xl shadow-2xl relative my-8">
+            <div className="p-6 border-b border-zinc-800 flex justify-between items-center">
+              <h2 className="text-lg font-bold text-orange-500">Conciliação de Receita (Reconhecimento Automático)</h2>
+              <button onClick={() => setModalAberto(false)} className="text-zinc-400 hover:text-white text-xl">✕</button>
             </div>
 
-            {!produtoSelecionado ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-zinc-500 text-sm border-2 border-dashed border-zinc-800 rounded-2xl p-8">
-                <span className="text-4xl mb-3 opacity-20">📖</span>
-                <p>Selecione um produto acima para construir a sua ficha técnica.</p>
+            <form onSubmit={salvarReceitaConciliada} className="p-6 space-y-5">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="md:col-span-2">
+                  <label className="block text-xs font-bold text-zinc-400 mb-1">CANAL / CLIENTE</label>
+                  <input required type="text" value={clienteCanal} onChange={e => setClienteCanal(e.target.value)} placeholder="Ex: Glovo, Palmbites, Balcão..." className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white outline-none" />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-zinc-400 mb-1">Nº DOCUMENTO</label>
+                  <input type="text" value={numeroDocumento} onChange={e => setNumeroDocumento(e.target.value)} placeholder="Opcional" className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white outline-none" />
+                </div>
               </div>
-            ) : (
-              <div className="flex-1 flex flex-col">
+
+              <div>
+                <label className="block text-xs font-bold text-zinc-400 mb-1">DATA DA RECEITA</label>
+                <input required type="date" value={dataReceita} onChange={e => setDataReceita(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-white [color-scheme:dark]" />
+              </div>
+
+              {/* LISTAGEM ITEM POR ITEM DA RECEITA */}
+              <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800 space-y-3">
+                <h3 className="text-xs font-bold uppercase text-zinc-400">Itens Vendidos (Categorização Automática ou Manual)</h3>
                 
-                {/* 🎯 ÁREA DE RENDIMENTO AGORA APARECE SEMPRE NO TOPO DA RECEITA */}
-                <div className="bg-orange-950/20 border border-orange-900/50 p-4 rounded-xl mb-4 flex items-center justify-between">
-                  <div>
-                    <h4 className="text-sm font-black text-orange-400 uppercase tracking-wider">Rendimento da Receita</h4>
-                    <p className="text-[10px] text-orange-500/70 mt-1">Quantas porções/pratos a panela inteira rende?</p>
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                  <div className="sm:col-span-6">
+                    <input type="text" value={tempNome} onChange={e => setTempNome(e.target.value)} placeholder="Nome do item..." className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white outline-none" />
                   </div>
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center bg-zinc-950 border border-orange-500/50 rounded-lg overflow-hidden">
-                      <input
-                        type="number"
-                        min="1"
-                        value={rendimentoProduto}
-                        onChange={(e) => setRendimentoProduto(Number(e.target.value) || 1)}
-                        className="w-16 bg-transparent px-2 py-2 text-center text-white font-bold outline-none"
-                      />
-                      <span className="pr-3 text-[10px] text-orange-500/70 font-bold uppercase select-none">Doses</span>
-                    </div>
-                    <button 
-                      onClick={handleSalvarRendimento}
-                      className={`px-4 py-2 rounded-lg font-black text-xs transition-all ${salvouRendimento ? 'bg-green-600 text-white' : 'bg-orange-600 hover:bg-orange-500 text-white shadow-lg'}`}
-                    >
-                      {salvouRendimento ? '✔️ Salvo' : 'OK'}
-                    </button>
+                  <div className="sm:col-span-2">
+                    <input type="number" step="0.1" min="0.1" value={tempQtd} onChange={e => setTempQtd(e.target.value)} placeholder="Qtd" className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white outline-none" />
+                  </div>
+                  <div className="sm:col-span-3">
+                    <input type="number" step="0.01" min="0" value={tempPreco} onChange={e => setTempPreco(e.target.value)} placeholder="Preço Unit. (€)" className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white outline-none" />
+                  </div>
+                  <div className="sm:col-span-1">
+                    <button type="button" onClick={adicionarItemTemp} className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 rounded-lg text-xs transition-all">＋</button>
                   </div>
                 </div>
 
-                {/* LISTAGEM DOS INSUMOS E CUSTO DA PANELA */}
-                <div className="flex-1 min-h-[200px] bg-zinc-950 rounded-2xl border border-zinc-800 p-4 mb-4">
-                  <h3 className="text-[11px] font-bold text-zinc-400 uppercase tracking-widest mb-4 border-b border-zinc-800 pb-2">Ingredientes da Receita:</h3>
-                  
-                  {fichaAtual.length === 0 ? (
-                    <p className="text-zinc-600 text-sm italic text-center py-6">Adicione os ingredientes abaixo para formar a panela/lote.</p>
-                  ) : (
-                    <ul className="space-y-2">
-                      {fichaAtual.map(ficha => {
-                        const custoUnitarioCompra = Number(ficha.insumos?.custo_por_unidade || ficha.insumos?.custo_unidade || 0);
-                        const custoTotalDesteItem = ficha.quantidade_necessaria * custoUnitarioCompra;
-                        const quantidadeOriginalTela = converterUnidade(ficha.quantidade_necessaria, ficha.insumos?.unidade_medida || 'un', ficha.unidade_receita || 'un');
-
-                        return (
-                          <li key={ficha.id} className="flex justify-between items-center bg-zinc-900 border border-zinc-800 p-3 rounded-xl">
-                            <div>
-                              <span className="text-sm font-bold text-white block">{ficha.insumos?.nome || 'Insumo'}</span>
-                              <span className="text-[10px] text-zinc-500 uppercase flex gap-1 items-center mt-1">
-                                Qtd: <strong className="text-orange-400 font-mono text-xs">{quantidadeOriginalTela.toFixed(2)} {ficha.unidade_receita}</strong> 
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-3">
-                              <span className="text-xs font-black font-mono text-zinc-400 bg-zinc-950 border border-zinc-800 px-2.5 py-1 rounded-lg">
-                                {custoTotalDesteItem.toFixed(2)}€
-                              </span>
-                              <button onClick={() => removerDaFicha(ficha.id)} className="w-8 h-8 rounded-lg bg-red-950/30 text-red-500 hover:bg-red-600 hover:text-white flex items-center justify-center transition-colors">🗑️</button>
-                            </div>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  )}
-                </div>
-
-                {/* SOMATÓRIO E MATEMÁTICA */}
-                {fichaAtual.length > 0 && (
-                  <div className="grid grid-cols-2 gap-3 mb-4">
-                    <div className="bg-zinc-900 border border-zinc-800 p-3 rounded-xl">
-                      <p className="text-[10px] text-zinc-500 uppercase font-bold mb-1">Custo da Panela Toda</p>
-                      <p className="text-lg font-black text-zinc-300 font-mono">{custoTotalPanela.toFixed(2)}€</p>
-                    </div>
-                    <div className="bg-green-950/20 border border-green-900/30 p-3 rounded-xl shadow-[0_0_15px_rgba(34,197,94,0.05)]">
-                      <p className="text-[10px] text-green-500 uppercase font-bold mb-1">Custo Final por Prato</p>
-                      <p className="text-xl font-black text-green-400 font-mono">{custoPorPorcao.toFixed(2)}€</p>
-                    </div>
+                {itensTemp.length > 0 && (
+                  <div className="space-y-2 pt-2 border-t border-zinc-800">
+                    {itensTemp.map((it, i) => (
+                      <div key={i} className="flex justify-between items-center bg-zinc-900 p-2 rounded-lg text-xs">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-orange-400">{it.quantidade}x</span>
+                          <span className="text-zinc-200">{it.nome_item}</span>
+                          <span className="text-[9px] font-bold text-green-400 uppercase bg-green-500/10 px-1.5 py-0.5 rounded border border-green-500/20">
+                            Categoria: {it.categoria}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="font-mono text-zinc-300">{Number(it.subtotal).toFixed(2)}€</span>
+                          <button type="button" onClick={() => removerItemTemp(i)} className="text-red-400 hover:text-red-300 font-bold">✕</button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 )}
-
-                {/* FORMULÁRIO DE ADIÇÃO À RECEITA */}
-                <form onSubmit={adicionarNaFicha} className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 grid grid-cols-12 gap-3 mt-auto">
-                  <div className="col-span-12">
-                    <label className="block text-[10px] text-green-500 font-bold uppercase mb-1">1. Qual ingrediente usou?</label>
-                    <select required value={formFicha.insumo_id} onChange={e => setFormFicha({...formFicha, insumo_id: e.target.value})} className="w-full bg-zinc-900 border border-green-900/50 rounded-xl px-3 py-2.5 text-sm text-white outline-none focus:border-green-500">
-                      <option value="">-- Escolher da Despensa --</option>
-                      {insumos.map(ins => (
-                        <option key={ins.id} value={ins.id}>
-                          {ins.nome} (Comprado em {ins.unidade_medida || 'un'})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  
-                  <div className="col-span-7">
-                    <label className="block text-[10px] text-zinc-500 font-bold uppercase mb-1">2. Qtd na Panela</label>
-                    <input required type="number" step="0.01" min="0.01" value={formFicha.quantidade_receita || ''} onChange={e => setFormFicha({...formFicha, quantidade_receita: parseFloat(e.target.value) || 0})} className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2.5 text-sm text-white font-mono font-bold outline-none focus:border-orange-500" placeholder="Ex: 500" />
-                  </div>
-
-                  <div className="col-span-5">
-                    <label className="block text-[10px] text-zinc-500 font-bold uppercase mb-1">Unidade</label>
-                    <select required value={formFicha.unidade_receita} onChange={e => setFormFicha({...formFicha, unidade_receita: e.target.value})} className="w-full bg-zinc-900 border border-zinc-800 rounded-xl px-2 py-2.5 text-sm text-zinc-300 outline-none focus:border-orange-500">
-                      <option value="g">g</option>
-                      <option value="kg">Kg</option>
-                      <option value="ml">ml</option>
-                      <option value="litro">L</option>
-                      <option value="un">unid.</option>
-                    </select>
-                  </div>
-
-                  <div className="col-span-12 pt-1">
-                    <button type="submit" disabled={isProcessando} className="w-full bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-white rounded-xl px-3 py-3 text-sm font-bold transition-all shadow-lg flex items-center justify-center gap-2">
-                      <span>🔗 Inserir Ingrediente na Panela</span>
-                    </button>
-                  </div>
-                </form>
-
               </div>
-            )}
-          </div>
-        </section>
 
-      </main>
+              <div className="flex gap-3 pt-4">
+                <button type="button" onClick={() => setModalAberto(false)} className="flex-1 bg-zinc-800 hover:bg-zinc-700 py-3 rounded-xl text-sm font-bold text-zinc-300 transition-all">Cancelar</button>
+                <button type="submit" disabled={salvando} className="flex-1 bg-orange-600 hover:bg-orange-700 py-3 rounded-xl text-sm font-bold shadow-lg transition-all disabled:opacity-50">
+                  {salvando ? 'A Registar...' : 'Guardar e Memorizar Receita'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
