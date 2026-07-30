@@ -17,7 +17,6 @@ interface Grupo {
 
 interface GrupoProduto {
   id: string; grupo_id: string; produto_id: string; acrescimo_preco: number; ativo: boolean;
-  produto?: { nome: string; codigo: string; };
 }
 
 interface ProdutoSimples {
@@ -37,7 +36,6 @@ export default function GestaoCombos() {
   const [comboSelecionado, setComboSelecionado] = useState<Combo | null>(null);
   const [grupos, setGrupos] = useState<Grupo[]>([]);
 
-  // 📝 ESTADOS DE EDIÇÃO LOCAL
   const [selecoesLocais, setSelecoesLocais] = useState<{ [grupoId: string]: string[] }>({});
   const [taxasLocais, setTaxasLocais] = useState<{ [grupoId: string]: { [produtoId: string]: string } }>({});
   const [salvandoTudo, setSalvandoTudo] = useState(false);
@@ -50,7 +48,7 @@ export default function GestaoCombos() {
   const [descricao, setDescricao] = useState('');
   const [tipoPreco, setTipoPreco] = useState<'fixo' | 'desconto' | 'desconto_fixo' | 'item_gratis'>('desconto');
   const [precoFixo, setPrecoFixo] = useState('');
-  const [descontoPercentual, setDescontoPercentual] = useState('');
+  const [descontoPercentual, setDescontoPercentual] = useState('10');
   const [descontoAbsoluto, setDescontoAbsoluto] = useState('');
   const [itemGratisCategoria, setItemGratisCategoria] = useState('bebida');
   const [ativo, setAtivo] = useState(true);
@@ -88,7 +86,7 @@ export default function GestaoCombos() {
     try {
       const { data: dataGrupos } = await supabase.from('combo_grupos').select(`
           id, nome, quantidade_minima, quantidade_maxima, obrigatorio, ordem,
-          combo_grupo_produtos (id, grupo_id, produto_id, acrescimo_preco, ativo, produto:produtos (nome, codigo))
+          combo_grupo_produtos (id, grupo_id, produto_id, acrescimo_preco, ativo)
         `).eq('combo_id', combo.id).order('ordem', { ascending: true });
       
       const grps = dataGrupos || [];
@@ -107,7 +105,6 @@ export default function GestaoCombos() {
 
       setSelecoesLocais(novasSelecoes);
       setTaxasLocais(novasTaxas);
-
     } catch (err) { alert('Erro ao carregar grupos do combo.'); }
   }
 
@@ -226,7 +223,7 @@ export default function GestaoCombos() {
         }
       }
 
-      alert('✅ Todas as opções do combo foram guardadas com sucesso!');
+      alert('✅ Opções de produtos do combo guardadas com sucesso!');
       await selecionarCombo(comboSelecionado);
     } catch (err: any) {
       console.error(err);
@@ -251,7 +248,7 @@ export default function GestaoCombos() {
       <header className="bg-zinc-900 border-b border-zinc-800 px-6 py-4 flex justify-between items-center z-10">
         <div>
           <h1 className="text-xl font-bold text-orange-500">⚙️ Chef Batatô · Gestão de Combos</h1>
-          <p className="text-xs text-zinc-400 mt-1">Desenhe o seu combo completo e clique no botão final para gravar.</p>
+          <p className="text-xs text-zinc-400 mt-1">Selecione o combo para configurar os grupos e produtos correspondentes.</p>
         </div>
         <button onClick={abrirModalNovo} className="bg-orange-600 hover:bg-orange-700 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg transition-all">
           + Novo Combo
@@ -327,7 +324,6 @@ export default function GestaoCombos() {
 
               <div className="space-y-4">
                 {grupos.map(grp => {
-                  // Filtro flexível para garantir que os produtos aparecem sempre
                   const produtosDaCategoria = todosProdutos.filter(p => {
                     const catProd = p.categoria;
                     const catGrupo = grp.nome;
@@ -336,7 +332,7 @@ export default function GestaoCombos() {
                     if (catGrupo === 'bebida') return catProd.includes('bebida');
                     if (catGrupo === 'sobremesa') return catProd.includes('sobremesa') || catProd.includes('brownie');
                     if (catGrupo === 'adicional') return catProd.includes('adicional') || catProd.includes('extra');
-                    return catProd.includes(catGrupo) || true; // Fallback para mostrar caso não haja correspondência exata
+                    return true;
                   });
 
                   const selecoesDesteGrupo = selecoesLocais[grp.id] || [];
@@ -418,7 +414,7 @@ export default function GestaoCombos() {
           ) : (
             <div className="h-full bg-zinc-900 border border-zinc-800 rounded-2xl p-12 flex flex-col justify-center items-center text-center">
               <span className="text-3xl mb-3">👈</span>
-              <h3 className="font-bold text-zinc-300">Selecione um combo ao lado para configurar</h3>
+              <h3 className="font-bold text-zinc-300">Selecione um combo ao lado para configurar os produtos</h3>
             </div>
           )}
         </div>
