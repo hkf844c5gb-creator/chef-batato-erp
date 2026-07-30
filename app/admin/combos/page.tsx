@@ -12,11 +12,7 @@ interface Combo {
 
 interface Grupo {
   id: string; nome: string; quantidade_minima: number; quantidade_maxima: number;
-  obrigatorio: boolean; ordem: number; produtos_vinculados?: GrupoProduto[];
-}
-
-interface GrupoProduto {
-  id: string; grupo_id: string; produto_id: string; acrescimo_preco: number; ativo: boolean;
+  obrigatorio: boolean; ordem: number;
 }
 
 interface ProdutoSimples {
@@ -36,10 +32,12 @@ export default function GestaoCombos() {
   const [comboSelecionado, setComboSelecionado] = useState<Combo | null>(null);
   const [grupos, setGrupos] = useState<Grupo[]>([]);
 
+  // Estados locais para seleção de produtos e taxas nos grupos
   const [selecoesLocais, setSelecoesLocais] = useState<{ [grupoId: string]: string[] }>({});
   const [taxasLocais, setTaxasLocais] = useState<{ [grupoId: string]: { [produtoId: string]: string } }>({});
   const [salvandoTudo, setSalvandoTudo] = useState(false);
 
+  // Modal Principal do Combo (Criar/Editar)
   const [modalAberto, setModalAberto] = useState(false);
   const [editandoId, setEditandoId] = useState<string | null>(null);
 
@@ -54,15 +52,18 @@ export default function GestaoCombos() {
   const [ativo, setAtivo] = useState(true);
   const [esgotado, setEsgotado] = useState(false);
 
-  const [novoGrupo, setNovoGrupo] = useState({
-    nome: 'batata', quantidade_minima: 1, quantidade_maxima: 1, obrigatorio: true, ordem: 0
-  });
+  // Estados para adicionar novo grupo diretamente no modal ou painel
+  const [novoGrupoNome, setNovoGrupoNome] = useState('batata');
+  const [novoQtdMin, setNovoQtdMin] = useState(1);
+  const [novoQtdMax, setNovoQtdMax] = useState(1);
+  const [novoObrigatorio, setNovoObrigatorio] = useState(true);
 
-  async function carregarDadosIniciais() {
+  async function carregarDadosIniciais(comboIdParaSelecionar?: string) {
     setLoading(true);
     try {
       const { data: dataCombos } = await supabase.from('combos').select('*').order('nome', { ascending: true });
-      setCombos(dataCombos || []);
+      const listaCombos = dataCombos || [];
+      setCombos(listaCombos);
 
       const { data: dataProds } = await supabase.from('produtos').select('id, nome, codigo, categoria, tipo').order('nome', { ascending: true });
       const produtosFormatados = (dataProds || []).map((p: any) => ({
@@ -72,6 +73,11 @@ export default function GestaoCombos() {
         categoria: (p.categoria || p.tipo || 'geral').toLowerCase().trim()
       }));
       setTodosProdutos(produtosFormatados);
+
+      if (comboIdParaSelecionar) {
+        const recemCriado = listaCombos.find(c => c.id === comboIdParaSelecionar);
+        if (recemCriado) selecionarCombo(recemCriado);
+      }
     } catch (err) {
       console.error('Erro ao carregar dados:', err);
     } finally {
@@ -124,7 +130,7 @@ export default function GestaoCombos() {
 
   const lidarSalvarCombo = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!nome) return alert('Nome obrigatório.');
+    if (!nome) return alert('Nome do combo obrigatório.');
     const payload = {
       codigo: codigo || `CMB${Date.now().toString().slice(-4)}`,
       nome, descricao, tipo_preco: tipoPreco,
@@ -136,10 +142,18 @@ export default function GestaoCombos() {
     };
 
     try {
-      if (editandoId) { await supabase.from('combos').update(payload).eq('id', editandoId); } 
-      else { await supabase.from('combos').insert([payload]); }
-      setModalAberto(false); carregarDadosIniciais();
-      if (editandoId && comboSelecionado?.id === editandoId) setComboSelecionado(null);
+      if (editandoId) { 
+        await supabase.from('combos').update(payload).eq('id', editandoId); 
+        setModalAberto(false); 
+        carregarDadosIniciais(editandoId);
+      } else { 
+        const { data: novoCmb, error } = await supabase.from('combos').insert([payload]).select().single();
+        if (error) throw error;
+        setModalAberto(false); 
+        if (novoCmb) {
+          await carregarDadosIniciais(novoCmb.id);
+        }
+      }
     } catch (err: any) { alert(`Erro: ${err.message}`); }
   };
 
@@ -152,21 +166,24 @@ export default function GestaoCombos() {
     } catch (err: any) { alert('Erro ao eliminar.'); }
   };
 
-  async function lidarCriarGrupo(e: React.FormEvent) {
+  async function adicionarGrupoAoCombo(e: React.FormEvent) {
     e.preventDefault();
     if (!comboSelecionado) return;
     try {
       await supabase.from('combo_grupos').insert([{
-        combo_id: comboSelecionado.id, nome: novoGrupo.nome, quantidade_minima: novoGrupo.quantidade_minima,
-        quantidade_maxima: novoGrupo.quantidade_maxima, obrigatorio: novoGrupo.obrigatorio, ordem: novoGrupo.ordem
+        combo_id: comboSelecionado.id, 
+        nome: novoGrupoNome, 
+        quantidade_minima: novoQtdMin,
+        quantidade_maxima: novoQtdMax, 
+        obrigatorio: novoObrigatorio, 
+        ordem: grupos.length
       }]);
-      setNovoGrupo({ nome: 'batata', quantidade_minima: 1, quantidade_maxima: 1, obrigatorio: true, ordem: 0 });
       selecionarCombo(comboSelecionado);
     } catch (err) { alert('Erro ao criar grupo.'); }
   }
 
   async function removerGrupo(grupoId: string) {
-    if (!confirm('Eliminar grupo?')) return;
+    if (!confirm('Eliminar este grupo de escolha?')) return;
     await supabase.from('combo_grupos').delete().eq('id', grupoId);
     if (comboSelecionado) selecionarCombo(comboSelecionado);
   }
@@ -223,7 +240,7 @@ export default function GestaoCombos() {
         }
       }
 
-      alert('✅ Opções de produtos do combo guardadas com sucesso!');
+      alert('✅ Composição do combo guardada com sucesso!');
       await selecionarCombo(comboSelecionado);
     } catch (err: any) {
       console.error(err);
@@ -235,20 +252,20 @@ export default function GestaoCombos() {
 
   const getNomeApresentacao = (cat: string) => {
     switch (cat) {
-      case 'batata': return '🥔 Batatas';
-      case 'bebida': return '🥤 Bebidas';
-      case 'sobremesa': return '🍫 Sobremesas / Brownies';
-      case 'adicional': return '🥓 Adicionais / Extras';
+      case 'batata': return '🥔 Categoria: Batatas';
+      case 'bebida': return '🥤 Categoria: Bebidas';
+      case 'sobremesa': return '🍫 Categoria: Sobremesas / Brownies';
+      case 'adicional': return '🥓 Categoria: Adicionais / Extras';
       default: return `Categoria: ${cat.toUpperCase()}`;
     }
   };
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white font-sans flex flex-col relative">
-      <header className="bg-zinc-900 border-b border-zinc-800 px-6 py-4 flex justify-between items-center z-10">
+      <header className="bg-zinc-900 border-b border-zinc-800 px-6 py-4 flex justify-between items-center z-10 shadow-lg">
         <div>
           <h1 className="text-xl font-bold text-orange-500">⚙️ Chef Batatô · Gestão de Combos</h1>
-          <p className="text-xs text-zinc-400 mt-1">Selecione o combo para configurar os grupos e produtos correspondentes.</p>
+          <p className="text-xs text-zinc-400 mt-1">Crie os seus combos e configure batatas, bebidas e sobremesas com obrigatoriedade e quantidades.</p>
         </div>
         <button onClick={abrirModalNovo} className="bg-orange-600 hover:bg-orange-700 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg transition-all">
           + Novo Combo
@@ -256,170 +273,191 @@ export default function GestaoCombos() {
       </header>
 
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-6 p-6 overflow-hidden">
-        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 flex flex-col gap-4 overflow-y-auto">
-          <h3 className="text-xs font-bold uppercase text-zinc-400 tracking-wider">Fórmulas de Combos</h3>
-          {combos.map(cb => (
-            <div key={cb.id} onClick={() => selecionarCombo(cb)} className={`p-4 rounded-xl border cursor-pointer transition-all flex flex-col gap-3 ${comboSelecionado?.id === cb.id ? 'bg-orange-500/10 border-orange-500/40' : 'bg-zinc-950 border-zinc-800 hover:border-zinc-700'}`}>
-              <div className="flex justify-between items-start">
-                <div>
-                  <h4 className="font-bold text-zinc-200 text-sm">{cb.nome}</h4>
-                  <span className="text-[10px] text-zinc-500 font-mono block mt-1">{cb.codigo}</span>
+        {/* LISTA DE COMBOS */}
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 flex flex-col gap-4 overflow-y-auto shadow-xl">
+          <h3 className="text-xs font-bold uppercase text-zinc-400 tracking-wider">Combos Registados</h3>
+          {combos.length === 0 ? (
+            <p className="text-xs text-zinc-500 italic p-4 text-center">Nenhum combo criado ainda. Clique em "+ Novo Combo".</p>
+          ) : (
+            combos.map(cb => (
+              <div key={cb.id} onClick={() => selecionarCombo(cb)} className={`p-4 rounded-xl border cursor-pointer transition-all flex flex-col gap-3 ${comboSelecionado?.id === cb.id ? 'bg-orange-500/10 border-orange-500/40 shadow' : 'bg-zinc-950 border-zinc-800 hover:border-zinc-700'}`}>
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h4 className="font-bold text-zinc-200 text-sm">{cb.nome}</h4>
+                    <span className="text-[10px] text-zinc-500 font-mono block mt-1">{cb.codigo}</span>
+                  </div>
+                  <div className="text-right">
+                      <span className="font-black font-mono text-orange-500 text-sm">
+                        {cb.tipo_preco === 'fixo' && `${Number(cb.preco_fixo).toFixed(2)}€`}
+                        {cb.tipo_preco === 'desconto' && `-${cb.desconto_percentual}%`}
+                        {cb.tipo_preco === 'desconto_fixo' && `-${Number(cb.desconto_absoluto).toFixed(2)}€`}
+                        {cb.tipo_preco === 'item_gratis' && `🎁 Item`}
+                      </span>
+                  </div>
                 </div>
-                <div className="text-right">
-                    <span className="font-black font-mono text-orange-500 text-sm">
-                      {cb.tipo_preco === 'fixo' && `${Number(cb.preco_fixo).toFixed(2)}€`}
-                      {cb.tipo_preco === 'desconto' && `-${cb.desconto_percentual}%`}
-                      {cb.tipo_preco === 'desconto_fixo' && `-${Number(cb.desconto_absoluto).toFixed(2)}€`}
-                      {cb.tipo_preco === 'item_gratis' && `🎁 Item`}
-                    </span>
+                <div className="flex gap-2 border-t border-zinc-800/50 pt-3">
+                  <button onClick={(e) => { e.stopPropagation(); abrirModalEditar(cb); }} className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-1.5 rounded-lg text-xs font-semibold border border-zinc-700 transition-all">
+                    Editar Combo
+                  </button>
+                  <button onClick={(e) => { e.stopPropagation(); removerCombo(cb.id, cb.nome); }} className="flex-1 bg-red-950/40 hover:bg-red-900/60 text-red-400 py-1.5 rounded-lg text-xs font-semibold border border-red-900/50 transition-all">
+                    Eliminar
+                  </button>
                 </div>
               </div>
-              <div className="flex gap-2 border-t border-zinc-800/50 pt-3">
-                <button onClick={(e) => { e.stopPropagation(); abrirModalEditar(cb); }} className="flex-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 py-1.5 rounded-lg text-xs font-semibold border border-zinc-700 transition-all">
-                  Editar Info
-                </button>
-                <button onClick={(e) => { e.stopPropagation(); removerCombo(cb.id, cb.nome); }} className="flex-1 bg-red-950/40 hover:bg-red-900/60 text-red-400 py-1.5 rounded-lg text-xs font-semibold border border-red-900/50 transition-all">
-                  Eliminar
-                </button>
-              </div>
-            </div>
-          ))}
+            ))
+          )}
         </div>
 
+        {/* PAINEL DE MONTAGEM DE PRODUTOS E CATEGORIAS DO COMBO */}
         <div className="lg:col-span-2 overflow-y-auto space-y-6 pr-1 relative pb-24">
           {comboSelecionado ? (
             <>
-              <div className="bg-orange-500/5 border border-orange-500/20 p-5 rounded-2xl flex justify-between items-center">
+              <div className="bg-orange-500/5 border border-orange-500/20 p-5 rounded-2xl flex justify-between items-center shadow-lg">
                 <div>
-                  <h2 className="text-lg font-black text-white">{comboSelecionado.nome}</h2>
-                  <p className="text-xs text-zinc-400 mt-1">{comboSelecionado.descricao || 'Sem descrição.'}</p>
+                  <h2 className="text-lg font-black text-white">Montagem: {comboSelecionado.nome}</h2>
+                  <p className="text-xs text-zinc-400 mt-1">{comboSelecionado.descricao || 'Adicione abaixo os grupos de escolha (Batatas, Bebidas, Sobremesas).'}</p>
                 </div>
                 <button onClick={() => setComboSelecionado(null)} className="text-xs bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 rounded-xl border border-zinc-700">Fechar</button>
               </div>
 
-              <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl">
-                <h3 className="text-xs font-bold uppercase text-zinc-400 tracking-wider mb-4">➕ Adicionar Grupo de Escolha</h3>
-                <form onSubmit={lidarCriarGrupo} className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end text-xs">
-                  <div className="md:col-span-2">
-                    <label className="block text-zinc-500 mb-1">Categoria do Grupo</label>
-                    <select required value={novoGrupo.nome} onChange={e => setNovoGrupo({ ...novoGrupo, nome: e.target.value })} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-white outline-none focus:border-orange-500">
+              {/* FORMULÁRIO PARA ADICIONAR GRUPO (BATATA, BEBIDA, SOBRESTRUTURA) */}
+              <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl shadow-xl">
+                <h3 className="text-xs font-bold uppercase text-orange-400 tracking-wider mb-4">➕ Adicionar Categoria / Grupo de Escolha ao Combo</h3>
+                <form onSubmit={adicionarGrupoAoCombo} className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end text-xs">
+                  <div className="md:col-span-4">
+                    <label className="block text-zinc-400 mb-1 font-bold">Categoria</label>
+                    <select required value={novoGrupoNome} onChange={e => setNovoGrupoNome(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-white outline-none focus:border-orange-500">
                       <option value="batata">🥔 Batatas</option>
                       <option value="bebida">🥤 Bebidas</option>
                       <option value="sobremesa">🍫 Sobremesas / Brownies</option>
                       <option value="adicional">🥓 Adicionais / Extras</option>
-                      <option value="todos">✨ Todos os Produtos</option>
                     </select>
                   </div>
-                  <div>
-                    <label className="block text-zinc-500 mb-1">Mínimo</label>
-                    <input required type="number" min="0" value={novoGrupo.quantidade_minima} onChange={e => setNovoGrupo({ ...novoGrupo, quantidade_minima: parseInt(e.target.value) })} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-center text-white" />
+                  <div className="md:col-span-2">
+                    <label className="block text-zinc-400 mb-1 font-bold">Qtd. Mínima</label>
+                    <input required type="number" min="0" value={novoQtdMin} onChange={e => setNovoQtdMin(parseInt(e.target.value))} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-center text-white" />
                   </div>
-                  <div>
-                    <label className="block text-zinc-500 mb-1">Máximo</label>
-                    <input required type="number" min="1" value={novoGrupo.quantidade_maxima} onChange={e => setNovoGrupo({ ...novoGrupo, quantidade_maxima: parseInt(e.target.value) })} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-center text-white" />
+                  <div className="md:col-span-2">
+                    <label className="block text-zinc-400 mb-1 font-bold">Qtd. Máxima</label>
+                    <input required type="number" min="1" value={novoQtdMax} onChange={e => setNovoQtdMax(parseInt(e.target.value))} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-center text-white" />
                   </div>
-                  <button type="submit" className="bg-orange-600 hover:bg-orange-700 text-white py-2.5 rounded-lg font-bold">Criar Grupo</button>
+                  <div className="md:col-span-4 flex gap-2">
+                    <button type="submit" className="flex-1 bg-orange-600 hover:bg-orange-700 text-white py-2.5 rounded-lg font-bold shadow transition-all">+ Adicionar Grupo</button>
+                  </div>
                 </form>
               </div>
 
+              {/* LISTA DOS GRUPOS E SELEÇÃO DE PRODUTOS */}
               <div className="space-y-4">
-                {grupos.map(grp => {
-                  const produtosDaCategoria = todosProdutos.filter(p => {
-                    const catProd = p.categoria;
-                    const catGrupo = grp.nome;
-                    if (catGrupo === 'todos') return true;
-                    if (catGrupo === 'batata') return catProd.includes('batata');
-                    if (catGrupo === 'bebida') return catProd.includes('bebida');
-                    if (catGrupo === 'sobremesa') return catProd.includes('sobremesa') || catProd.includes('brownie');
-                    if (catGrupo === 'adicional') return catProd.includes('adicional') || catProd.includes('extra');
-                    return true;
-                  });
+                {grupos.length === 0 ? (
+                  <div className="bg-zinc-900 border border-zinc-800 p-8 rounded-2xl text-center text-zinc-500 text-xs">
+                    Nenhum grupo adicionado a este combo ainda. Adicione uma categoria acima (ex: Batatas ou Bebidas).
+                  </div>
+                ) : (
+                  grupos.map(grp => {
+                    // Filtrar produtos correspondentes à categoria do grupo
+                    const produtosDaCategoria = todosProdutos.filter(p => {
+                      const catProd = p.categoria;
+                      const catGrupo = grp.nome;
+                      if (catGrupo === 'batata') return catProd.includes('batata');
+                      if (catGrupo === 'bebida') return catProd.includes('bebida');
+                      if (catGrupo === 'sobremesa') return catProd.includes('sobremesa') || catProd.includes('brownie');
+                      if (catGrupo === 'adicional') return catProd.includes('adicional') || catProd.includes('extra');
+                      return true;
+                    });
 
-                  const selecoesDesteGrupo = selecoesLocais[grp.id] || [];
-                  const taxasDesteGrupo = taxasLocais[grp.id] || {};
+                    const selecoesDesteGrupo = selecoesLocais[grp.id] || [];
+                    const taxasDesteGrupo = taxasLocais[grp.id] || {};
 
-                  return (
-                    <div key={grp.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden flex flex-col">
-                      <div className="bg-zinc-950 px-5 py-3 border-b border-zinc-800/80 flex justify-between items-center text-xs">
-                        <div>
-                          <span className="font-black text-orange-400 uppercase tracking-wide">{getNomeApresentacao(grp.nome)}</span>
-                          <span className="ml-3 bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded text-[10px]">Escolher de {grp.quantidade_minima} a {grp.quantidade_maxima}</span>
-                        </div>
-                        <button onClick={() => removerGrupo(grp.id)} className="text-[10px] text-red-400 hover:text-red-300">Eliminar Grupo</button>
-                      </div>
-
-                      <div className="p-4 bg-zinc-950/30 flex-1">
-                        {produtosDaCategoria.length === 0 ? (
-                          <p className="text-[11px] text-zinc-500 italic">Nenhum produto cadastrado.</p>
-                        ) : (
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                            {produtosDaCategoria.map(prod => {
-                              const isLinked = selecoesDesteGrupo.includes(prod.id);
-                              const valorTaxa = taxasDesteGrupo[prod.id] || '0';
-
-                              return (
-                                <div key={prod.id} className={`flex items-center justify-between p-3 rounded-xl border transition-all ${isLinked ? 'bg-orange-600/10 border-orange-500/50 shadow-sm' : 'bg-zinc-950 border-zinc-800 hover:border-zinc-700'}`}>
-                                  <label className="flex items-center gap-3 cursor-pointer flex-1">
-                                    <input 
-                                      type="checkbox" 
-                                      checked={isLinked} 
-                                      onChange={() => handleCheckboxChange(grp.id, prod.id)}
-                                      className="w-4 h-4 accent-orange-500 cursor-pointer"
-                                    />
-                                    <span className={`text-xs font-bold ${isLinked ? 'text-orange-400' : 'text-zinc-400'}`}>{prod.nome}</span>
-                                  </label>
-
-                                  {isLinked && (
-                                    <div className="flex items-center gap-1.5 ml-2">
-                                      <span className="text-[9px] font-bold text-zinc-500 uppercase">Taxa:</span>
-                                      <input 
-                                        type="number" 
-                                        step="0.10"
-                                        min="0"
-                                        value={valorTaxa}
-                                        onChange={(e) => handleTaxaChange(grp.id, prod.id, e.target.value)}
-                                        className="w-16 bg-zinc-900 border border-zinc-700 rounded px-1.5 py-1 text-xs text-right text-orange-400 font-mono outline-none focus:border-orange-500" 
-                                      />
-                                      <span className="text-xs text-zinc-500 font-bold">€</span>
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
+                    return (
+                      <div key={grp.id} className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden flex flex-col shadow-xl">
+                        <div className="bg-zinc-950 px-5 py-3 border-b border-zinc-800/80 flex justify-between items-center text-xs">
+                          <div>
+                            <span className="font-black text-orange-400 uppercase tracking-wide text-sm">{getNomeApresentacao(grp.nome)}</span>
+                            <span className="ml-3 bg-orange-500/10 text-orange-400 border border-orange-500/20 px-2.5 py-0.5 rounded-full text-[10px] font-bold">
+                              Obrigatório (Mín: {grp.quantidade_minima} | Máx: {grp.quantidade_maxima})
+                            </span>
                           </div>
-                        )}
+                          <button onClick={() => removerGrupo(grp.id)} className="text-xs text-red-400 hover:text-red-300 font-bold">Eliminar Grupo</button>
+                        </div>
+
+                        <div className="p-4 bg-zinc-950/30 flex-1">
+                          <p className="text-[11px] text-zinc-400 mb-3">Selecione os sabores/produtos que farão parte desta categoria no combo:</p>
+                          {produtosDaCategoria.length === 0 ? (
+                            <p className="text-[11px] text-zinc-500 italic">Nenhum produto encontrado no stock para esta categoria.</p>
+                          ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                              {produtosDaCategoria.map(prod => {
+                                const isLinked = selecoesDesteGrupo.includes(prod.id);
+                                const valorTaxa = taxasDesteGrupo[prod.id] || '0';
+
+                                return (
+                                  <div key={prod.id} className={`flex items-center justify-between p-3 rounded-xl border transition-all ${isLinked ? 'bg-orange-600/10 border-orange-500/50 shadow-sm' : 'bg-zinc-950 border-zinc-800 hover:border-zinc-700'}`}>
+                                    <label className="flex items-center gap-3 cursor-pointer flex-1">
+                                      <input 
+                                        type="checkbox" 
+                                        checked={isLinked} 
+                                        onChange={() => handleCheckboxChange(grp.id, prod.id)}
+                                        className="w-4 h-4 accent-orange-500 cursor-pointer"
+                                      />
+                                      <span className={`text-xs font-bold ${isLinked ? 'text-orange-400' : 'text-zinc-300'}`}>{prod.nome}</span>
+                                    </label>
+
+                                    {isLinked && (
+                                      <div className="flex items-center gap-1.5 ml-2">
+                                        <span className="text-[9px] font-bold text-zinc-500 uppercase">Taxa Extra:</span>
+                                        <input 
+                                          type="number" 
+                                          step="0.10"
+                                          min="0"
+                                          value={valorTaxa}
+                                          onChange={(e) => handleTaxaChange(grp.id, prod.id, e.target.value)}
+                                          className="w-16 bg-zinc-900 border border-zinc-700 rounded px-1.5 py-1 text-xs text-right text-orange-400 font-mono outline-none focus:border-orange-500" 
+                                        />
+                                        <span className="text-xs text-zinc-500 font-bold">€</span>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })
+                )}
               </div>
 
+              {/* BOTÃO GLOBAL DE GRAVAÇÃO DA MONTAGEM */}
               {grupos.length > 0 && (
-                <div className="mt-6 p-5 bg-zinc-900 border border-orange-500/30 rounded-2xl flex justify-between items-center shadow-[0_0_20px_rgba(249,115,22,0.1)] sticky bottom-0 z-20 backdrop-blur-xl bg-opacity-90">
+                <div className="mt-6 p-5 bg-zinc-900 border border-orange-500/30 rounded-2xl flex justify-between items-center shadow-[0_0_20px_rgba(249,115,22,0.1)] sticky bottom-0 z-20 backdrop-blur-xl bg-opacity-95">
                   <div>
-                    <h4 className="font-bold text-white">Pronto para guardar?</h4>
-                    <p className="text-xs text-zinc-400 mt-0.5">Isto vai salvar todos os produtos marcados acima em todos os grupos de uma vez.</p>
+                    <h4 className="font-bold text-white text-sm">Tudo configurado?</h4>
+                    <p className="text-xs text-zinc-400 mt-0.5">Clique no botão para guardar todas as escolhas e produtos deste combo.</p>
                   </div>
                   <button
                     type="button"
                     disabled={salvandoTudo}
                     onClick={salvarTodasOpcoes}
-                    className="bg-green-600 hover:bg-green-700 text-white font-bold py-3.5 px-8 rounded-xl text-sm flex items-center gap-2 transition-all shadow-lg disabled:opacity-50"
+                    className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-8 rounded-xl text-sm flex items-center gap-2 transition-all shadow-lg disabled:opacity-50"
                   >
-                    {salvandoTudo ? 'A gravar opções...' : '💾 Salvar Todas as Opções'}
+                    {salvandoTudo ? 'A guardar...' : '💾 Salvar Composição do Combo'}
                   </button>
                 </div>
               )}
             </>
           ) : (
-            <div className="h-full bg-zinc-900 border border-zinc-800 rounded-2xl p-12 flex flex-col justify-center items-center text-center">
-              <span className="text-3xl mb-3">👈</span>
-              <h3 className="font-bold text-zinc-300">Selecione um combo ao lado para configurar os produtos</h3>
+            <div className="h-full bg-zinc-900 border border-zinc-800 rounded-2xl p-12 flex flex-col justify-center items-center text-center shadow-xl">
+              <span className="text-4xl mb-3">👈</span>
+              <h3 className="font-bold text-zinc-200 text-base">Selecione um combo na lista à esquerda</h3>
+              <p className="text-xs text-zinc-400 mt-1 max-w-sm">Poderá configurar os sabores de batatas, bebidas e sobremesas, além das regras de obrigatoriedade e quantidades.</p>
             </div>
           )}
         </div>
       </div>
 
+      {/* MODAL CRIAR / EDITAR COMBO */}
       {modalAberto && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4 overflow-y-auto">
           <div className="bg-zinc-900 border border-zinc-800 w-full max-w-xl rounded-2xl shadow-2xl relative my-8">
@@ -430,9 +468,9 @@ export default function GestaoCombos() {
             <form onSubmit={lidarSalvarCombo} className="p-6 space-y-5">
               <div className="grid grid-cols-2 gap-4">
                 <div><label className="block text-xs font-bold text-zinc-400 mb-1">CÓDIGO ÚNICO</label><input type="text" value={codigo} onChange={e => setCodigo(e.target.value.toUpperCase().replace(/\s/g, '_'))} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-orange-500 outline-none font-mono" /></div>
-                <div><label className="block text-xs font-bold text-zinc-400 mb-1">NOME DO COMBO</label><input required type="text" value={nome} onChange={e => setNome(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-orange-500 outline-none" /></div>
+                <div><label className="block text-xs font-bold text-zinc-400 mb-1">NOME DO COMBO</label><input required type="text" value={nome} onChange={e => setNome(e.target.value)} placeholder="Ex: Menu Chef Batatô" className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-orange-500 outline-none" /></div>
               </div>
-              <div><label className="block text-xs font-bold text-zinc-400 mb-1">DESCRIÇÃO COMERCIAL</label><textarea rows={2} value={descricao} onChange={e => setDescricao(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-orange-500 outline-none resize-none" /></div>
+              <div><label className="block text-xs font-bold text-zinc-400 mb-1">DESCRIÇÃO COMERCIAL</label><textarea rows={2} value={descricao} onChange={e => setDescricao(e.target.value)} placeholder="Ex: 1 Batata Grande + 1 Bebida + 1 Brownie" className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-orange-500 outline-none resize-none" /></div>
               <div className="p-4 bg-zinc-950 rounded-xl border border-zinc-800 space-y-4">
                 <div>
                   <label className="block text-[10px] font-bold text-orange-500 mb-2 uppercase tracking-wider">Lógica de Faturamento do Combo</label>
@@ -450,7 +488,7 @@ export default function GestaoCombos() {
               </div>
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => setModalAberto(false)} className="flex-1 bg-zinc-800 hover:bg-zinc-700 py-3 rounded-xl text-sm font-bold text-zinc-300">Cancelar</button>
-                <button type="submit" className="flex-1 bg-orange-600 hover:bg-orange-700 py-3 rounded-xl text-sm font-bold shadow-lg">Guardar Combo</button>
+                <button type="submit" className="flex-1 bg-orange-600 hover:bg-orange-700 py-3 rounded-xl text-sm font-bold shadow-lg">Guardar e Configurar</button>
               </div>
             </form>
           </div>
