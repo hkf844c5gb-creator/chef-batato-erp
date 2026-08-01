@@ -23,6 +23,7 @@ interface Pedido {
   total_geral: number;
   pago: boolean;
   criado_em: string;
+  data_pedido?: string;
   itens_pedido?: ItemPedido[];
 }
 
@@ -100,6 +101,11 @@ export default function RelatoriosFaturacao() {
     return { dia, mes: meses[parseInt(mes) - 1] };
   };
 
+  // Garante fallback para data_pedido se criado_em for null
+  const obterDataEfetiva = (p: Pedido) => {
+    return p.criado_em || p.data_pedido || new Date().toISOString();
+  };
+
   const validarIntervaloData = (dataStr: string | null) => {
     if (!dataStr) return false;
     const itemDate = dataStr.substring(0, 10); 
@@ -132,7 +138,7 @@ export default function RelatoriosFaturacao() {
 
       const itensComData = (itensData || []).map((item: any) => {
         const pedidoPai = (pedidosData || []).find((p: any) => p.id === item.pedido_id);
-        return { ...item, criado_em: pedidoPai ? pedidoPai.criado_em : null };
+        return { ...item, criado_em: pedidoPai ? (pedidoPai.criado_em || pedidoPai.data_pedido) : null };
       });
       setItensBrutosBrownies(itensComData);
 
@@ -178,7 +184,7 @@ export default function RelatoriosFaturacao() {
 
   useEffect(() => {
     let resultado = [...pedidos];
-    resultado = resultado.filter(p => validarIntervaloData(p.criado_em));
+    resultado = resultado.filter(p => validarIntervaloData(obterDataEfetiva(p)));
 
     if (filtroCanal !== 'todos') resultado = resultado.filter(p => p.canal === filtroCanal);
     if (filtroPagamento !== 'todos') resultado = resultado.filter(p => p.forma_pagamento === filtroPagamento);
@@ -188,13 +194,14 @@ export default function RelatoriosFaturacao() {
       resultado = resultado.filter(p => {
         const nomeLimpo = limparNomePedido(p.cliente).toLowerCase();
         const nomeOriginal = p.cliente ? p.cliente.toLowerCase() : '';
-        return nomeLimpo.includes(termo) || nomeOriginal.includes(termo);
+        const numPedido = p.numero_pedido ? String(p.numero_pedido) : '';
+        return nomeLimpo.includes(termo) || nomeOriginal.includes(termo) || numPedido.includes(termo);
       });
     }
 
     resultado.sort((a, b) => {
-      if (ordenacao === 'recente') return new Date(b.criado_em).getTime() - new Date(a.criado_em).getTime();
-      if (ordenacao === 'antigo') return new Date(a.criado_em).getTime() - new Date(b.criado_em).getTime();
+      if (ordenacao === 'recente') return new Date(obterDataEfetiva(b)).getTime() - new Date(obterDataEfetiva(a)).getTime();
+      if (ordenacao === 'antigo') return new Date(obterDataEfetiva(a)).getTime() - new Date(obterDataEfetiva(b)).getTime();
       if (ordenacao === 'az') return limparNomePedido(a.cliente).localeCompare(limparNomePedido(b.cliente), undefined, { numeric: true });
       if (ordenacao === 'za') return limparNomePedido(b.cliente).localeCompare(limparNomePedido(a.cliente), undefined, { numeric: true });
       return 0;
@@ -465,7 +472,7 @@ export default function RelatoriosFaturacao() {
                   <span className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Pesquisa</span>
                   <input 
                     type="text" 
-                    placeholder="Número do pedido..." 
+                    placeholder="Número do pedido ou cliente..." 
                     value={termoBusca}
                     onChange={e => setTermoBusca(e.target.value)}
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-2.5 text-xs font-bold text-zinc-200 outline-none focus:border-blue-500 font-mono"
@@ -504,8 +511,9 @@ export default function RelatoriosFaturacao() {
                 ) : (
                   pedidosFiltrados.map(p => {
                     const isExpanded = pedidoExpandidoId === p.id;
-                    const badge = formatarDataBadge(p.criado_em);
-                    const horaFormatada = new Date(p.criado_em).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
+                    const dataEfetiva = obterDataEfetiva(p);
+                    const badge = formatarDataBadge(dataEfetiva);
+                    const horaFormatada = new Date(dataEfetiva).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
                     
                     return (
                       <div key={p.id} className="bg-zinc-900/60 border border-zinc-800 rounded-[24px] overflow-hidden">
@@ -516,7 +524,9 @@ export default function RelatoriosFaturacao() {
                               <span className="text-lg font-black text-zinc-200">{badge.dia}</span>
                             </div>
                             <div>
-                              <p className="font-mono font-black text-white text-lg">{limparNomePedido(p.cliente)}</p>
+                              <p className="font-mono font-black text-white text-lg">
+                                {p.numero_pedido ? `#${p.numero_pedido} - ` : ''}{limparNomePedido(p.cliente)}
+                              </p>
                               <p className="text-[10px] text-zinc-400 font-mono mt-1 flex gap-2">
                                 <span>{horaFormatada}</span> • <span className="text-blue-400 uppercase font-bold">{p.canal}</span>
                               </p>
