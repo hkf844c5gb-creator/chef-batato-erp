@@ -48,38 +48,33 @@ export default function RelatoriosFaturacao() {
   const [loading, setLoading] = useState(true);
   const [erroDB, setErroDB] = useState<string | null>(null);
 
-  // Aba Ativa
   const [abaAtiva, setAbaAtiva] = useState<'geral' | 'brownies'>('geral');
 
-  // Filtros Gerais
   const [filtroCanal, setFiltroCanal] = useState<string>('todos');
   const [filtroPagamento, setFiltroPagamento] = useState<string>('todos');
   const [termoBusca, setTermoBusca] = useState('');
   const [ordenacao, setOrdenacao] = useState<'recente' | 'antigo' | 'az' | 'za'>('za');
   const [pedidoExpandidoId, setPedidoExpandidoId] = useState<string | null>(null);
 
-  // Filtros por Período (Totalmente ligados aos inputs visuais)
+  // Período padrão: Julho de 2026
   const [tipoIntervalo, setTipoIntervalo] = useState<'dia' | 'mes' | 'ano' | 'personalizado'>('personalizado');
-  const [dataUnica, setDataUnica] = useState(() => new Date().toISOString().split('T')[0]);
+  const [dataUnica, setDataUnica] = useState('2026-07-01');
   const [dataInicio, setDataInicio] = useState('2026-07-01');
   const [dataFim, setDataFim] = useState('2026-07-31');
-  const [mesSelecionado, setMesSelecionado] = useState(() => new Date().toISOString().substring(0, 7));
-  const [anoSelecionado, setAnoSelecionado] = useState(() => String(new Date().getFullYear()));
+  const [mesSelecionado, setMesSelecionado] = useState('2026-07');
+  const [anoSelecionado, setAnoSelecionado] = useState('2026');
 
-  // Estados para dados cruzados de Brownies
   const [custosEditaveis, setCustosEditaveis] = useState<Record<string, number>>({});
   const [itensBrutosBrownies, setItensBrutosBrownies] = useState<any[]>([]);
   const [producaoBrutaBrownies, setProducaoBrutaBrownies] = useState<any[]>([]);
   const [revendaBrutaBrownies, setRevendaBrutaBrownies] = useState<any[]>([]);
   const [descarteBrutoBrownies, setDescarteBrutoBrownies] = useState<any[]>([]);
 
-  // Estados para Modal de Registo de Descarte/Perda
   const [modalDescarteAberto, setModalDescarteAberto] = useState(false);
   const [saborDescarte, setSaborDescarte] = useState('');
   const [qtdDescarteInput, setQtdDescarteInput] = useState(1);
   const [motivoDescarte, setMotivoDescarte] = useState('Queima / Validade');
 
-  // Estados para Modal de Edição Geral de Pedidos
   const [modalEdicaoAberto, setModalEdicaoAberto] = useState(false);
   const [pedidoSendoEditado, setPedidoSendoEditado] = useState<Pedido | null>(null);
   const [editCliente, setEditCliente] = useState('');
@@ -96,6 +91,26 @@ export default function RelatoriosFaturacao() {
     const match = nome.match(/Pedido\s*#?(\d+)/i);
     if (match) return match[1]; 
     return nome;
+  };
+
+  const formatarDataBadge = (dataStr: string) => {
+    if (!dataStr) return { dia: '--', mes: '---' };
+    const [ano, mes, dia] = dataStr.substring(0, 10).split('-');
+    const meses = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
+    return { dia, mes: meses[parseInt(mes) - 1] };
+  };
+
+  const validarIntervaloData = (dataStr: string | null) => {
+    if (!dataStr) return false;
+    const itemDate = dataStr.substring(0, 10); 
+    const itemMes = itemDate.substring(0, 7); 
+    const itemAno = itemDate.substring(0, 4); 
+
+    if (tipoIntervalo === 'dia') return itemDate === dataUnica;
+    if (tipoIntervalo === 'mes') return itemMes === mesSelecionado;
+    if (tipoIntervalo === 'ano') return itemAno === anoSelecionado;
+    if (tipoIntervalo === 'personalizado') return itemDate >= dataInicio && itemDate <= dataFim;
+    return true;
   };
 
   async function carregarRelatorios() {
@@ -161,29 +176,6 @@ export default function RelatoriosFaturacao() {
     }
   };
 
-  // Validador exato por intervalo de datas baseado na string do Supabase
-  const validarIntervaloData = (dataStr: string | null) => {
-    if (!dataStr) return false;
-    const itemDate = dataStr.split('T')[0]; // Formato YYYY-MM-DD
-    const itemMes = itemDate.substring(0, 7); // Formato YYYY-MM
-    const itemAno = itemDate.substring(0, 4); // Formato YYYY
-
-    if (tipoIntervalo === 'dia') {
-      return itemDate === dataUnica;
-    }
-    if (tipoIntervalo === 'mes') {
-      return itemMes === mesSelecionado;
-    }
-    if (tipoIntervalo === 'ano') {
-      return itemAno === anoSelecionado;
-    }
-    if (tipoIntervalo === 'personalizado') {
-      return itemDate >= dataInicio && itemDate <= dataFim;
-    }
-    return true;
-  };
-
-  // Filtros Faturação Geral
   useEffect(() => {
     let resultado = [...pedidos];
     resultado = resultado.filter(p => validarIntervaloData(p.criado_em));
@@ -211,7 +203,6 @@ export default function RelatoriosFaturacao() {
     setPedidosFiltrados(resultado);
   }, [pedidos, tipoIntervalo, dataUnica, dataInicio, dataFim, mesSelecionado, anoSelecionado, filtroCanal, filtroPagamento, termoBusca, ordenacao]);
 
-  // Top de Vendas cruzado com os pedidos filtrados no período exato
   const topProdutosVendas = useMemo(() => {
     const mapa: Record<string, { nome: string; quantidade: number; faturacao: number }> = {};
     
@@ -233,7 +224,6 @@ export default function RelatoriosFaturacao() {
     return Object.values(mapa).sort((a, b) => b.quantidade - a.quantidade);
   }, [pedidosFiltrados]);
 
-  // Cruzamento Brownies
   const mapaConsolidadoBrownies: Record<string, { nome: string, quantidadeVendida: number, faturacao: number, qtdRevenda: number, qtdProduzida: number, qtdDescarte: number }> = {};
 
   itensBrutosBrownies.filter(i => (i.nome_produto || '').toLowerCase().includes('brownie') && validarIntervaloData(i.criado_em)).forEach(item => {
@@ -241,10 +231,7 @@ export default function RelatoriosFaturacao() {
     const chave = nomeLimpo.toLowerCase().trim();
     const qtd = Number(item.quantidade || 0);
     const fat = qtd * Number(item.preco_unitario || 0);
-
-    if (!mapaConsolidadoBrownies[chave]) {
-      mapaConsolidadoBrownies[chave] = { nome: nomeLimpo, quantidadeVendida: 0, faturacao: 0, qtdRevenda: 0, qtdProduzida: 0, qtdDescarte: 0 };
-    }
+    if (!mapaConsolidadoBrownies[chave]) mapaConsolidadoBrownies[chave] = { nome: nomeLimpo, quantidadeVendida: 0, faturacao: 0, qtdRevenda: 0, qtdProduzida: 0, qtdDescarte: 0 };
     mapaConsolidadoBrownies[chave].quantidadeVendida += qtd;
     mapaConsolidadoBrownies[chave].faturacao += fat;
   });
@@ -346,7 +333,6 @@ export default function RelatoriosFaturacao() {
   return (
     <div className="min-h-screen bg-zinc-950 text-white font-sans flex flex-col pb-24">
       
-      {/* HEADER & ABAS */}
       <header className="sticky top-0 z-20 bg-zinc-950/80 backdrop-blur-xl border-b border-zinc-800/60 px-5 py-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-700 flex items-center justify-center shadow-lg shadow-blue-900/40">
@@ -383,7 +369,7 @@ export default function RelatoriosFaturacao() {
 
       <main className="flex-1 p-5 space-y-6 max-w-7xl mx-auto w-full">
         
-        {/* BARRA DE FILTROS SUPERIOR (LIGADA AOS ESTADOS CORRETOS) */}
+        {/* BARRA DE FILTROS SUPERIOR */}
         <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-3xl flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex bg-zinc-950 p-1 rounded-2xl border border-zinc-800 w-full md:w-auto">
             <button
@@ -431,6 +417,7 @@ export default function RelatoriosFaturacao() {
                 <select value={anoSelecionado} onChange={e => setAnoSelecionado(e.target.value)} className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-bold text-white outline-none">
                   <option value="2025">2025</option>
                   <option value="2026">2026</option>
+                  <option value="2027">2027</option>
                 </select>
               </div>
             )}
@@ -517,15 +504,16 @@ export default function RelatoriosFaturacao() {
                 ) : (
                   pedidosFiltrados.map(p => {
                     const isExpanded = pedidoExpandidoId === p.id;
-                    const dataFormatada = new Date(p.criado_em).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short' });
+                    const badge = formatarDataBadge(p.criado_em);
                     const horaFormatada = new Date(p.criado_em).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
+                    
                     return (
                       <div key={p.id} className="bg-zinc-900/60 border border-zinc-800 rounded-[24px] overflow-hidden">
                         <div onClick={() => setPedidoExpandidoId(isExpanded ? null : p.id)} className="p-4 cursor-pointer hover:bg-zinc-800/40 flex items-center justify-between">
                           <div className="flex gap-4 items-center">
                             <div className="flex flex-col items-center justify-center bg-zinc-950 border border-zinc-800 rounded-xl w-14 h-14">
-                              <span className="text-[10px] font-black text-zinc-500 uppercase">{dataFormatada.split(' ')[1]}</span>
-                              <span className="text-lg font-black text-zinc-200">{dataFormatada.split(' ')[0]}</span>
+                              <span className="text-[10px] font-black text-zinc-500 uppercase">{badge.mes}</span>
+                              <span className="text-lg font-black text-zinc-200">{badge.dia}</span>
                             </div>
                             <div>
                               <p className="font-mono font-black text-white text-lg">{limparNomePedido(p.cliente)}</p>
