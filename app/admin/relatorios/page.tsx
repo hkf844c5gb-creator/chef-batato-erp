@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
 interface ItemPedido {
@@ -52,18 +52,20 @@ export default function RelatoriosFaturacao() {
   const [abaAtiva, setAbaAtiva] = useState<'geral' | 'brownies'>('geral');
 
   // Filtros Gerais
-  const [filtroData, setFiltroData] = useState<'hoje' | '7dias' | 'mes' | 'todos'>('hoje');
   const [filtroCanal, setFiltroCanal] = useState<string>('todos');
   const [filtroPagamento, setFiltroPagamento] = useState<string>('todos');
   const [termoBusca, setTermoBusca] = useState('');
   const [ordenacao, setOrdenacao] = useState<'recente' | 'antigo' | 'az' | 'za'>('za');
   const [pedidoExpandidoId, setPedidoExpandidoId] = useState<string | null>(null);
 
-  // Filtros Específicos para Brownies
-  const [tipoFiltroBrownie, setTipoFiltroBrownie] = useState<'dia' | 'mes' | 'ano' | 'todos'>('mes');
-  const [dataSelecionadaBrownie, setDataSelecionadaBrownie] = useState(() => new Date().toISOString().split('T')[0]);
-  const [mesSelecionadoBrownie, setMesSelecionadoBrownie] = useState(() => new Date().toISOString().substring(0, 7));
-  const [anoSelecionadoBrownie, setAnoSelecionadoBrownie] = useState(() => String(new Date().getFullYear()));
+  // Filtros por Intervalo de Datas/Mês/Ano
+  const [tipoIntervalo, setTipoIntervalo] = useState<'dia' | 'mes' | 'ano' | 'personalizado'>('mes');
+  const [dataInicio, setDataInicio] = useState(() => new Date().toISOString().split('T')[0]);
+  const [dataFim, setDataFim] = useState(() => new Date().toISOString().split('T')[0]);
+  const [mesInicio, setMesInicio] = useState(() => new Date().toISOString().substring(0, 7));
+  const [mesFim, setMesFim] = useState(() => new Date().toISOString().substring(0, 7));
+  const [anoInicio, setAnoInicio] = useState(() => String(new Date().getFullYear()));
+  const [anoFim, setAnoFim] = useState(() => String(new Date().getFullYear()));
 
   // Estados para dados cruzados de Brownies
   const [custosEditaveis, setCustosEditaveis] = useState<Record<string, number>>({});
@@ -82,10 +84,7 @@ export default function RelatoriosFaturacao() {
   const [modalEdicaoAberto, setModalEdicaoAberto] = useState(false);
   const [pedidoSendoEditado, setPedidoSendoEditado] = useState<Pedido | null>(null);
   const [editCliente, setEditCliente] = useState('');
-  const [editCanal, setEditCanal] = useState<'Balcão' | 'WhatsApp' | 'Glovo' | 'Palmbites'>('Balcão');
-  const [editPagamento, setEditPagamento] = useState('');
   const [editTotal, setEditTotal] = useState(0);
-  const [editPago, setEditPago] = useState(false);
 
   const limparNomeProduto = (nome: string | null | undefined) => {
     if (!nome) return "Produto S/ Nome";
@@ -105,7 +104,6 @@ export default function RelatoriosFaturacao() {
     setErroDB(null);
 
     try {
-      // 1. Pedidos e Itens
       const { data: pedidosData, error: errPed } = await supabase.from('pedidos').select('*').order('criado_em', { ascending: false });
       if (errPed) throw new Error(`Falha na tabela 'pedidos': ${errPed.message}`);
 
@@ -124,15 +122,12 @@ export default function RelatoriosFaturacao() {
       });
       setItensBrutosBrownies(itensComData);
 
-      // 2. Produção
       const { data: prodData } = await supabase.from('producao_brownie').select('*');
       setProducaoBrutaBrownies(prodData || []);
 
-      // 3. Revenda
       const { data: revData } = await supabase.from('revenda').select('*');
       setRevendaBrutaBrownies(revData || []);
 
-      // 4. Descarte / Perdas (tabela perdas ou descarte_brownies se existir, ou criamos fallback)
       const { data: descData } = await supabase.from('perdas').select('*');
       setDescarteBrutoBrownies(descData || []);
 
@@ -147,7 +142,6 @@ export default function RelatoriosFaturacao() {
     carregarRelatorios();
   }, []);
 
-  // Registar Descarte no Supabase
   const registarDescarte = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -168,22 +162,23 @@ export default function RelatoriosFaturacao() {
     }
   };
 
+  const validarIntervaloData = (dataStr: string | null) => {
+    if (!dataStr) return true;
+    const itemDate = dataStr.split('T')[0];
+    const itemMes = itemDate.substring(0, 7);
+    const itemAno = itemDate.substring(0, 4);
+
+    if (tipoIntervalo === 'dia') return itemDate >= dataInicio && itemDate <= dataFim;
+    if (tipoIntervalo === 'mes') return itemMes >= mesInicio && itemMes <= mesFim;
+    if (tipoIntervalo === 'ano') return itemAno >= anoInicio && itemAno <= anoFim;
+    if (tipoIntervalo === 'personalizado') return itemDate >= dataInicio && itemDate <= dataFim;
+    return true;
+  };
+
   // Filtros Faturação Geral
   useEffect(() => {
     let resultado = [...pedidos];
-    const agora = new Date();
-    
-    resultado = resultado.filter(p => {
-      const dataPedido = new Date(p.criado_em);
-      if (filtroData === 'hoje') return dataPedido.toDateString() === agora.toDateString();
-      if (filtroData === '7dias') {
-        const seteDiasAtras = new Date();
-        seteDiasAtras.setDate(agora.getDate() - 7);
-        return dataPedido >= seteDiasAtras;
-      }
-      if (filtroData === 'mes') return dataPedido.getMonth() === agora.getMonth() && dataPedido.getFullYear() === agora.getFullYear();
-      return true;
-    });
+    resultado = resultado.filter(p => validarIntervaloData(p.criado_em));
 
     if (filtroCanal !== 'todos') resultado = resultado.filter(p => p.canal === filtroCanal);
     if (filtroPagamento !== 'todos') resultado = resultado.filter(p => p.forma_pagamento === filtroPagamento);
@@ -206,25 +201,34 @@ export default function RelatoriosFaturacao() {
     });
 
     setPedidosFiltrados(resultado);
-  }, [pedidos, filtroData, filtroCanal, filtroPagamento, termoBusca, ordenacao]);
+  }, [pedidos, tipoIntervalo, dataInicio, dataFim, mesInicio, mesFim, anoInicio, anoFim, filtroCanal, filtroPagamento, termoBusca, ordenacao]);
 
-  // Cruzamento de dados de Brownies
-  const filtrarPorDataGenerica = (dataStr: string | null) => {
-    if (!dataStr) return true;
-    const itemDate = dataStr.split('T')[0];
-    const anoStr = itemDate.substring(0, 4);
-    const mesStr = itemDate.substring(0, 7);
+  // Cruzamento do Top de Vendas com base nos pedidos filtrados
+  const topProdutosVendas = useMemo(() => {
+    const mapa: Record<string, { nome: string; quantidade: number; faturacao: number }> = {};
+    
+    pedidosFiltrados.forEach(p => {
+      (p.itens_pedido || []).forEach(item => {
+        const nomeLimpo = limparNomeProduto(item.nome_produto);
+        const chave = nomeLimpo.toLowerCase().trim();
+        const qtd = Number(item.quantidade || 0);
+        const fat = qtd * Number(item.preco_unitario || 0);
 
-    if (tipoFiltroBrownie === 'dia') return itemDate === dataSelecionadaBrownie;
-    if (tipoFiltroBrownie === 'mes') return mesStr === mesSelecionadoBrownie;
-    if (tipoFiltroBrownie === 'ano') return anoStr === anoSelecionadoBrownie;
-    return true;
-  };
+        if (!mapa[chave]) {
+          mapa[chave] = { nome: nomeLimpo, quantidade: 0, faturacao: 0 };
+        }
+        mapa[chave].quantidade += qtd;
+        mapa[chave].faturacao += fat;
+      });
+    });
 
+    return Object.values(mapa).sort((a, b) => b.quantidade - a.quantidade);
+  }, [pedidosFiltrados]);
+
+  // Cruzamento Brownies
   const mapaConsolidadoBrownies: Record<string, { nome: string, quantidadeVendida: number, faturacao: number, qtdRevenda: number, qtdProduzida: number, qtdDescarte: number }> = {};
 
-  // 1. Vendas
-  itensBrutosBrownies.filter(i => (i.nome_produto || '').toLowerCase().includes('brownie') && filtrarPorDataGenerica(i.criado_em)).forEach(item => {
+  itensBrutosBrownies.filter(i => (i.nome_produto || '').toLowerCase().includes('brownie') && validarIntervaloData(i.criado_em)).forEach(item => {
     const nomeLimpo = limparNomeProduto(item.nome_produto);
     const chave = nomeLimpo.toLowerCase().trim();
     const qtd = Number(item.quantidade || 0);
@@ -237,53 +241,35 @@ export default function RelatoriosFaturacao() {
     mapaConsolidadoBrownies[chave].faturacao += fat;
   });
 
-  // 2. Revenda
-  revendaBrutaBrownies.filter(r => filtrarPorDataGenerica(r.criado_em || r.data)).forEach(rev => {
+  revendaBrutaBrownies.filter(r => validarIntervaloData(r.criado_em || r.data)).forEach(rev => {
     const nomeLimpo = limparNomeProduto(rev.nome_produto || rev.sabor || 'Brownie Revenda');
     const chave = nomeLimpo.toLowerCase().trim();
     const qtd = Number(rev.quantidade || rev.qtd || 0);
-
-    if (!mapaConsolidadoBrownies[chave]) {
-      mapaConsolidadoBrownies[chave] = { nome: nomeLimpo, quantidadeVendida: 0, faturacao: 0, qtdRevenda: 0, qtdProduzida: 0, qtdDescarte: 0 };
-    }
+    if (!mapaConsolidadoBrownies[chave]) mapaConsolidadoBrownies[chave] = { nome: nomeLimpo, quantidadeVendida: 0, faturacao: 0, qtdRevenda: 0, qtdProduzida: 0, qtdDescarte: 0 };
     mapaConsolidadoBrownies[chave].qtdRevenda += qtd;
   });
 
-  // 3. Produção
-  producaoBrutaBrownies.filter(prod => filtrarPorDataGenerica(prod.criado_em || prod.data)).forEach(prod => {
+  producaoBrutaBrownies.filter(prod => validarIntervaloData(prod.criado_em || prod.data)).forEach(prod => {
     const nomeLimpo = limparNomeProduto(prod.nome_produto || prod.sabor || 'Brownie Produzido');
     const chave = nomeLimpo.toLowerCase().trim();
     const qtd = Number(prod.quantidade || prod.qtd || 0);
-
-    if (!mapaConsolidadoBrownies[chave]) {
-      mapaConsolidadoBrownies[chave] = { nome: nomeLimpo, quantidadeVendida: 0, faturacao: 0, qtdRevenda: 0, qtdProduzida: 0, qtdDescarte: 0 };
-    }
+    if (!mapaConsolidadoBrownies[chave]) mapaConsolidadoBrownies[chave] = { nome: nomeLimpo, quantidadeVendida: 0, faturacao: 0, qtdRevenda: 0, qtdProduzida: 0, qtdDescarte: 0 };
     mapaConsolidadoBrownies[chave].qtdProduzida += qtd;
   });
 
-  // 4. Descarte / Perdas
-  descarteBrutoBrownies.filter(desc => filtrarPorDataGenerica(desc.criado_em || desc.data)).forEach(desc => {
+  descarteBrutoBrownies.filter(desc => validarIntervaloData(desc.criado_em || desc.data)).forEach(desc => {
     const nomeLimpo = limparNomeProduto(desc.nome_produto || desc.sabor || 'Brownie Descartado');
     const chave = nomeLimpo.toLowerCase().trim();
     const qtd = Number(desc.quantidade || desc.qtd || 0);
-
-    if (!mapaConsolidadoBrownies[chave]) {
-      mapaConsolidadoBrownies[chave] = { nome: nomeLimpo, quantidadeVendida: 0, faturacao: 0, qtdRevenda: 0, qtdProduzida: 0, qtdDescarte: 0 };
-    }
+    if (!mapaConsolidadoBrownies[chave]) mapaConsolidadoBrownies[chave] = { nome: nomeLimpo, quantidadeVendida: 0, faturacao: 0, qtdRevenda: 0, qtdProduzida: 0, qtdDescarte: 0 };
     mapaConsolidadoBrownies[chave].qtdDescarte += qtd;
   });
 
   const rankingBrownies: RelatorioBrownieConsolidado[] = Object.entries(mapaConsolidadoBrownies).map(([chave, v]) => {
     const custoUnit = custosEditaveis[chave] !== undefined ? custosEditaveis[chave] : 0.50;
     return {
-      chave,
-      nome: v.nome,
-      qtdProduzida: v.qtdProduzida,
-      quantidadeVendida: v.quantidadeVendida,
-      qtdRevenda: v.qtdRevenda,
-      qtdDescarte: v.qtdDescarte,
-      faturacaoTotal: v.faturacao,
-      custoInsumosUnitario: custoUnit
+      chave, nome: v.nome, qtdProduzida: v.qtdProduzida, quantidadeVendida: v.quantidadeVendida,
+      qtdRevenda: v.qtdRevenda, qtdDescarte: v.qtdDescarte, faturacaoTotal: v.faturacao, custoInsumosUnitario: custoUnit
     };
   }).sort((a, b) => b.quantidadeVendida - a.quantidadeVendida);
 
@@ -293,38 +279,27 @@ export default function RelatoriosFaturacao() {
     const custoDescarteItem = b.qtdDescarte * b.custoInsumosUnitario;
     const ganhoLiquidoItem = b.faturacaoTotal - custoTotalItem;
     return {
-      totalProduzido: acc.totalProduzido + b.qtdProduzida,
-      totalVendido: acc.totalVendido + b.quantidadeVendida,
-      totalRevenda: acc.totalRevenda + b.qtdRevenda,
-      totalDescarte: acc.totalDescarte + b.qtdDescarte,
-      faturacaoBruta: acc.faturacaoBruta + b.faturacaoTotal,
-      custoInsumosTotal: acc.custoInsumosTotal + custoTotalItem,
-      custoDescarteTotal: acc.custoDescarteTotal + custoDescarteItem,
-      ganhoLiquidoReal: acc.ganhoLiquidoReal + ganhoLiquidoItem
+      totalProduzido: acc.totalProduzido + b.qtdProduzida, totalVendido: acc.totalVendido + b.quantidadeVendida,
+      totalRevenda: acc.totalRevenda + b.qtdRevenda, totalDescarte: acc.totalDescarte + b.qtdDescarte,
+      faturacaoBruta: acc.faturacaoBruta + b.faturacaoTotal, custoInsumosTotal: acc.custoInsumosTotal + custoTotalItem,
+      custoDescarteTotal: acc.custoDescarteTotal + custoDescarteItem, ganhoLiquidoReal: acc.ganhoLiquidoReal + ganhoLiquidoItem
     };
   }, { totalProduzido: 0, totalVendido: 0, totalRevenda: 0, totalDescarte: 0, faturacaoBruta: 0, custoInsumosTotal: 0, custoDescarteTotal: 0, ganhoLiquidoReal: 0 });
 
   const abrirModalEdicao = (pedido: Pedido) => {
     setPedidoSendoEditado(pedido);
     setEditCliente(pedido.cliente || ''); 
-    setEditCanal(pedido.canal);
-    setEditPagamento(pedido.forma_pagamento);
     setEditTotal(pedido.total_geral);
-    setEditPago(pedido.pago);
     setModalEdicaoAberto(true);
   };
 
   const salvarAlteracoesFinanceiras = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!pedidoSendoEditado) return;
-
     try {
       const { error } = await supabase.from('pedidos').update({
         cliente: editCliente,
-        canal: editCanal,
-        forma_pagamento: editPagamento,
-        total_geral: Number(editTotal),
-        pago: editPago
+        total_geral: Number(editTotal)
       }).eq('id', pedidoSendoEditado.id);
 
       if (error) throw error;
@@ -348,7 +323,8 @@ export default function RelatoriosFaturacao() {
     }
   };
 
-  const totalFaturado = pedidosFiltrados.reduce((acc, p) => acc + Number(p.total_geral || 0), 0);
+  const totalPedidosCount = pedidosFiltrados.length;
+  const totalFaturadoBruto = pedidosFiltrados.reduce((acc, p) => acc + Number(p.total_geral || 0), 0);
   const totalRecebido = pedidosFiltrados.filter(p => p.pago).reduce((acc, p) => acc + Number(p.total_geral || 0), 0);
   const totalPendente = pedidosFiltrados.filter(p => !p.pago).reduce((acc, p) => acc + Number(p.total_geral || 0), 0);
   const totalTaxasEntrega = pedidosFiltrados.reduce((acc, p) => acc + Number(p.taxa_entrega || 0), 0);
@@ -399,23 +375,76 @@ export default function RelatoriosFaturacao() {
 
       <main className="flex-1 p-5 space-y-6 max-w-7xl mx-auto w-full">
         
+        {/* BARRA DE FILTRO DE INTERVALO */}
+        <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-3xl flex flex-col md:flex-row justify-between items-center gap-4">
+          <div className="flex bg-zinc-950 p-1 rounded-2xl border border-zinc-800 w-full md:w-auto">
+            {(['dia', 'mes', 'ano', 'personalizado'] as const).map(tipo => (
+              <button
+                key={tipo}
+                onClick={() => setTipoIntervalo(tipo)}
+                className={`flex-1 md:flex-initial px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${tipoIntervalo === tipo ? 'bg-blue-600 text-white shadow' : 'text-zinc-400 hover:text-white'}`}
+              >
+                {tipo === 'personalizado' ? 'De - Até' : `Por ${tipo}`}
+              </button>
+            ))}
+          </div>
+
+          <div className="w-full md:w-auto flex flex-wrap items-center gap-2 justify-end">
+            {(tipoIntervalo === 'dia' || tipoIntervalo === 'personalizado') && (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] uppercase font-bold text-zinc-500">De:</span>
+                <input type="date" value={dataInicio} onChange={e => setDataInicio(e.target.value)} className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-bold text-white outline-none [color-scheme:dark]" />
+                <span className="text-[10px] uppercase font-bold text-zinc-500">Até:</span>
+                <input type="date" value={dataFim} onChange={e => setDataFim(e.target.value)} className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-bold text-white outline-none [color-scheme:dark]" />
+              </div>
+            )}
+            {tipoIntervalo === 'mes' && (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] uppercase font-bold text-zinc-500">De:</span>
+                <input type="month" value={mesInicio} onChange={e => setMesInicio(e.target.value)} className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-bold text-white outline-none [color-scheme:dark]" />
+                <span className="text-[10px] uppercase font-bold text-zinc-500">Até:</span>
+                <input type="month" value={mesFim} onChange={e => setMesFim(e.target.value)} className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-bold text-white outline-none [color-scheme:dark]" />
+              </div>
+            )}
+            {tipoIntervalo === 'ano' && (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] uppercase font-bold text-zinc-500">De:</span>
+                <select value={anoInicio} onChange={e => setAnoInicio(e.target.value)} className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-bold text-white outline-none">
+                  <option value="2025">2025</option>
+                  <option value="2026">2026</option>
+                </select>
+                <span className="text-[10px] uppercase font-bold text-zinc-500">Até:</span>
+                <select value={anoFim} onChange={e => setAnoFim(e.target.value)} className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-bold text-white outline-none">
+                  <option value="2025">2025</option>
+                  <option value="2026">2026</option>
+                </select>
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* ABA 1: FATURAÇÃO GERAL */}
         {abaAtiva === 'geral' && (
           <>
-            <div className="flex gap-4 overflow-x-auto snap-x no-scrollbar pb-2 -mx-5 px-5">
-              <div className="snap-center min-w-[160px] flex-1 bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between">
-                <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Faturado Total</span>
-                <span className="text-2xl font-black text-white font-mono mt-2">{totalFaturado.toFixed(2)}€</span>
+            {/* CARDS DE RESUMO (Nº DE PEDIDOS E FATURAMENTO BRUTO) */}
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+              <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between">
+                <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">Nº de Pedidos</span>
+                <span className="text-3xl font-black text-white font-mono mt-2">{totalPedidosCount}</span>
               </div>
-              <div className="snap-center min-w-[160px] flex-1 bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between">
+              <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between">
+                <span className="text-[10px] font-bold text-amber-400 uppercase tracking-widest">Faturamento Bruto</span>
+                <span className="text-3xl font-black text-amber-400 font-mono mt-2">{totalFaturadoBruto.toFixed(2)}€</span>
+              </div>
+              <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between">
                 <span className="text-[10px] font-bold text-green-400 uppercase tracking-widest">Caixa Realizado</span>
                 <span className="text-2xl font-black text-green-400 font-mono mt-2">{totalRecebido.toFixed(2)}€</span>
               </div>
-              <div className="snap-center min-w-[160px] flex-1 bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between">
+              <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between">
                 <span className="text-[10px] font-bold text-red-400 uppercase tracking-widest">Fiado Pendente</span>
                 <span className="text-2xl font-black text-red-400 font-mono mt-2">{totalPendente.toFixed(2)}€</span>
               </div>
-              <div className="snap-center min-w-[160px] flex-1 bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between">
+              <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between col-span-2 md:col-span-1">
                 <span className="text-[10px] font-bold text-orange-400 uppercase tracking-widest">Custos Entrega</span>
                 <span className="text-2xl font-black text-orange-400 font-mono mt-2">{totalTaxasEntrega.toFixed(2)}€</span>
               </div>
@@ -423,20 +452,6 @@ export default function RelatoriosFaturacao() {
 
             <div className="bg-zinc-900/40 p-5 rounded-3xl border border-zinc-800/60 space-y-4">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <span className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Período</span>
-                  <div className="flex bg-zinc-950 p-1.5 rounded-2xl border border-zinc-800">
-                    {(['hoje', '7dias', 'mes', 'todos'] as const).map(periodo => (
-                      <button 
-                        key={periodo} 
-                        onClick={() => setFiltroData(periodo)} 
-                        className={`flex-1 py-2 px-3 rounded-xl text-[11px] font-bold uppercase tracking-wider transition-all ${filtroData === periodo ? 'bg-blue-600 text-white shadow-md' : 'text-zinc-500 hover:text-zinc-300'}`}
-                      >
-                        {periodo === '7dias' ? '7 Dias' : periodo}
-                      </button>
-                    ))}
-                  </div>
-                </div>
                 <div>
                   <span className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Pesquisa</span>
                   <input 
@@ -447,29 +462,28 @@ export default function RelatoriosFaturacao() {
                     className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-2.5 text-xs font-bold text-zinc-200 outline-none focus:border-blue-500 font-mono"
                   />
                 </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2 border-t border-zinc-800/50">
-                <select value={filtroCanal} onChange={e => setFiltroCanal(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-3 py-2.5 text-xs font-bold text-zinc-300 outline-none">
-                  <option value="todos">Todos os Canais</option>
-                  <option value="Balcão">Balcão</option>
-                  <option value="WhatsApp">WhatsApp</option>
-                  <option value="Glovo">Glovo</option>
-                  <option value="Palmbites">Palmbites</option>
-                </select>
-                <select value={filtroPagamento} onChange={e => setFiltroPagamento(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-3 py-2.5 text-xs font-bold text-zinc-300 outline-none">
-                  <option value="todos">Todas as Formas de Pagamento</option>
-                  <option value="Dinheiro">Dinheiro</option>
-                  <option value="MBWay">MBWay</option>
-                  <option value="Multibanco">Multibanco</option>
-                  <option value="Caderninho">Caderninho</option>
-                </select>
-                <select value={ordenacao} onChange={e => setOrdenacao(e.target.value as any)} className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-3 py-2.5 text-xs font-bold text-zinc-300 outline-none">
-                  <option value="za">Alfabética (Z-A)</option>
-                  <option value="az">Alfabética (A-Z)</option>
-                  <option value="recente">Mais Recentes</option>
-                  <option value="antigo">Mais Antigos</option>
-                </select>
+                <div className="grid grid-cols-3 gap-2">
+                  <select value={filtroCanal} onChange={e => setFiltroCanal(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-3 py-2.5 text-xs font-bold text-zinc-300 outline-none">
+                    <option value="todos">Todos Canais</option>
+                    <option value="Balcão">Balcão</option>
+                    <option value="WhatsApp">WhatsApp</option>
+                    <option value="Glovo">Glovo</option>
+                    <option value="Palmbites">Palmbites</option>
+                  </select>
+                  <select value={filtroPagamento} onChange={e => setFiltroPagamento(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-3 py-2.5 text-xs font-bold text-zinc-300 outline-none">
+                    <option value="todos">Pagamentos</option>
+                    <option value="Dinheiro">Dinheiro</option>
+                    <option value="MBWay">MBWay</option>
+                    <option value="Multibanco">Multibanco</option>
+                    <option value="Caderninho">Caderninho</option>
+                  </select>
+                  <select value={ordenacao} onChange={e => setOrdenacao(e.target.value as any)} className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-3 py-2.5 text-xs font-bold text-zinc-300 outline-none">
+                    <option value="za">Z-A</option>
+                    <option value="az">A-Z</option>
+                    <option value="recente">Recentes</option>
+                    <option value="antigo">Antigos</option>
+                  </select>
+                </div>
               </div>
             </div>
 
@@ -477,7 +491,7 @@ export default function RelatoriosFaturacao() {
               <div className="lg:col-span-2 space-y-3">
                 <h3 className="text-sm font-black uppercase text-zinc-300 tracking-wider">📦 Lançamentos ({pedidosFiltrados.length})</h3>
                 {pedidosFiltrados.length === 0 ? (
-                  <div className="text-center p-10 bg-zinc-900/30 rounded-3xl border border-zinc-800 text-zinc-500 text-sm">Nenhuma venda encontrada.</div>
+                  <div className="text-center p-10 bg-zinc-900/30 rounded-3xl border border-zinc-800 text-zinc-500 text-sm">Nenhuma venda encontrada para o período selecionado.</div>
                 ) : (
                   pedidosFiltrados.map(p => {
                     const isExpanded = pedidoExpandidoId === p.id;
@@ -528,63 +542,56 @@ export default function RelatoriosFaturacao() {
                 )}
               </div>
 
-              <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-6 h-fit space-y-4">
-                <h3 className="text-sm font-black uppercase tracking-wider text-zinc-200">💰 Apuramento Físico</h3>
-                <div className="divide-y divide-zinc-800">
-                  {Object.entries(faturamentoPorMetodo).map(([metodo, valor]) => (
-                    <div key={metodo} className="py-3 flex justify-between items-center text-sm">
-                      <span className="text-zinc-300 font-bold">{metodo}</span>
-                      <span className="font-black font-mono text-white text-base">{valor.toFixed(2)}€</span>
+              {/* COLUNA LATERAL: TOP DE VENDAS E APURAMENTO FÍSICO */}
+              <div className="space-y-6">
+                {/* TOP DE VENDAS CRUZADO COM PEDIDOS */}
+                <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-6 shadow-xl space-y-4">
+                  <h3 className="text-sm font-black uppercase tracking-wider text-orange-400">🔥 Top de Vendas (Produtos)</h3>
+                  {topProdutosVendas.length === 0 ? (
+                    <p className="text-xs text-zinc-500 italic">Sem vendas no período.</p>
+                  ) : (
+                    <div className="space-y-3">
+                      {topProdutosVendas.slice(0, 5).map((prod, idx) => (
+                        <div key={idx} className="flex justify-between items-center bg-zinc-950 p-3 rounded-2xl border border-zinc-800/80">
+                          <div>
+                            <p className="font-bold text-xs text-white">{prod.nome}</p>
+                            <span className="text-[10px] text-zinc-400 font-mono">{prod.quantidade} unidades vendidas</span>
+                          </div>
+                          <span className="font-mono font-black text-orange-400 text-sm">{prod.faturacao.toFixed(2)}€</span>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
+                </div>
+
+                <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-6 shadow-xl space-y-4">
+                  <h3 className="text-sm font-black uppercase tracking-wider text-zinc-200">💰 Apuramento Físico</h3>
+                  <div className="divide-y divide-zinc-800">
+                    {Object.entries(faturamentoPorMetodo).map(([metodo, valor]) => (
+                      <div key={metodo} className="py-3 flex justify-between items-center text-sm">
+                        <span className="text-zinc-300 font-bold">{metodo}</span>
+                        <span className="font-black font-mono text-white text-base">{valor.toFixed(2)}€</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
           </>
         )}
 
-        {/* ABA 2: RELATÓRIO DE BROWNIES (CRUZADO + DESCARTE) */}
+        {/* ABA 2: RELATÓRIO DE BROWNIES */}
         {abaAtiva === 'brownies' && (
           <div className="space-y-6 animate-in fade-in duration-300">
-            
-            {/* FILTROS DE DATA & BOTÃO DE REGISTAR DESCARTE */}
-            <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl flex flex-col md:flex-row justify-between items-center gap-4">
-              <div className="flex bg-zinc-950 p-1 rounded-2xl border border-zinc-800 w-full md:w-auto">
-                {(['dia', 'mes', 'ano', 'todos'] as const).map(tipo => (
-                  <button
-                    key={tipo}
-                    onClick={() => setTipoFiltroBrownie(tipo)}
-                    className={`flex-1 md:flex-initial px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${tipoFiltroBrownie === tipo ? 'bg-amber-600 text-white shadow' : 'text-zinc-400 hover:text-white'}`}
-                  >
-                    Por {tipo}
-                  </button>
-                ))}
-              </div>
-
-              <div className="w-full md:w-auto flex items-center gap-3 justify-end">
-                {tipoFiltroBrownie === 'dia' && (
-                  <input type="date" value={dataSelecionadaBrownie} onChange={e => setDataSelecionadaBrownie(e.target.value)} className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-xs font-bold text-white outline-none [color-scheme:dark]" />
-                )}
-                {tipoFiltroBrownie === 'mes' && (
-                  <input type="month" value={mesSelecionadoBrownie} onChange={e => setMesSelecionadoBrownie(e.target.value)} className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-xs font-bold text-white outline-none [color-scheme:dark]" />
-                )}
-                {tipoFiltroBrownie === 'ano' && (
-                  <select value={anoSelecionadoBrownie} onChange={e => setAnoSelecionadoBrownie(e.target.value)} className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-xs font-bold text-white outline-none">
-                    <option value="2026">2026</option>
-                    <option value="2025">2025</option>
-                  </select>
-                )}
-
-                <button 
-                  onClick={() => setModalDescarteAberto(true)}
-                  className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-lg transition-colors flex items-center gap-1.5"
-                >
-                  <span>🗑️</span> Registar Descarte
-                </button>
-              </div>
+            <div className="flex justify-end">
+              <button 
+                onClick={() => setModalDescarteAberto(true)}
+                className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-lg transition-colors flex items-center gap-1.5"
+              >
+                <span>🗑️</span> Registar Descarte
+              </button>
             </div>
 
-            {/* CARDS DE RESUMO CRUZADO COM DESCARTE */}
             <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
               <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl shadow-lg">
                 <span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Produzido</span>
@@ -616,12 +623,11 @@ export default function RelatoriosFaturacao() {
               </div>
             </div>
 
-            {/* TABELA CONSOLIDADA COM COLUNA DE DESCARTE */}
             <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-xl">
               <h2 className="text-lg font-black text-white mb-2 flex items-center gap-2">
                 <span>🍫</span> Cruzamento Completo: Produção, Vendas, Revenda e Descarte por Sabor
               </h2>
-              <p className="text-xs text-zinc-400 mb-6">Acompanhe detalhadamente o volume que foi comercializado e o que foi descartado.</p>
+              <p className="text-xs text-zinc-400 mb-6">Acompanhe detalhadamente o volume que foi comercializado e o que foi descartado no período selecionado.</p>
 
               {rankingBrownies.length === 0 ? (
                 <div className="text-center text-zinc-500 py-12 text-sm italic">Nenhum registo de brownies encontrado para este período.</div>
@@ -682,7 +688,6 @@ export default function RelatoriosFaturacao() {
                 </div>
               )}
             </div>
-
           </div>
         )}
 
