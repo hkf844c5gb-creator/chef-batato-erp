@@ -58,14 +58,13 @@ export default function RelatoriosFaturacao() {
   const [ordenacao, setOrdenacao] = useState<'recente' | 'antigo' | 'az' | 'za'>('za');
   const [pedidoExpandidoId, setPedidoExpandidoId] = useState<string | null>(null);
 
-  // Filtros por Intervalo de Datas/Mês/Ano
-  const [tipoIntervalo, setTipoIntervalo] = useState<'dia' | 'mes' | 'ano' | 'personalizado'>('mes');
+  // Filtros por Período
+  const [tipoIntervalo, setTipoIntervalo] = useState<'dia' | 'mes' | 'ano' | 'personalizado'>('personalizado');
+  const [dataUnica, setDataUnica] = useState(() => new Date().toISOString().split('T')[0]);
   const [dataInicio, setDataInicio] = useState(() => new Date().toISOString().split('T')[0]);
   const [dataFim, setDataFim] = useState(() => new Date().toISOString().split('T')[0]);
-  const [mesInicio, setMesInicio] = useState(() => new Date().toISOString().substring(0, 7));
-  const [mesFim, setMesFim] = useState(() => new Date().toISOString().substring(0, 7));
-  const [anoInicio, setAnoInicio] = useState(() => String(new Date().getFullYear()));
-  const [anoFim, setAnoFim] = useState(() => String(new Date().getFullYear()));
+  const [mesSelecionado, setMesSelecionado] = useState(() => new Date().toISOString().substring(0, 7));
+  const [anoSelecionado, setAnoSelecionado] = useState(() => String(new Date().getFullYear()));
 
   // Estados para dados cruzados de Brownies
   const [custosEditaveis, setCustosEditaveis] = useState<Record<string, number>>({});
@@ -162,16 +161,25 @@ export default function RelatoriosFaturacao() {
     }
   };
 
+  // Validador robusto de datas adaptado para o Supabase
   const validarIntervaloData = (dataStr: string | null) => {
     if (!dataStr) return true;
-    const itemDate = dataStr.split('T')[0];
-    const itemMes = itemDate.substring(0, 7);
-    const itemAno = itemDate.substring(0, 4);
+    const itemDate = dataStr.split('T')[0]; // Extrai apenas YYYY-MM-DD
+    const itemMes = itemDate.substring(0, 7); // YYYY-MM
+    const itemAno = itemDate.substring(0, 4); // YYYY
 
-    if (tipoIntervalo === 'dia') return itemDate >= dataInicio && itemDate <= dataFim;
-    if (tipoIntervalo === 'mes') return itemMes >= mesInicio && itemMes <= mesFim;
-    if (tipoIntervalo === 'ano') return itemAno >= anoInicio && itemAno <= anoFim;
-    if (tipoIntervalo === 'personalizado') return itemDate >= dataInicio && itemDate <= dataFim;
+    if (tipoIntervalo === 'dia') {
+      return itemDate === dataUnica;
+    }
+    if (tipoIntervalo === 'mes') {
+      return itemMes === mesSelecionado;
+    }
+    if (tipoIntervalo === 'ano') {
+      return itemAno === anoSelecionado;
+    }
+    if (tipoIntervalo === 'personalizado') {
+      return itemDate >= dataInicio && itemDate <= dataFim;
+    }
     return true;
   };
 
@@ -201,9 +209,9 @@ export default function RelatoriosFaturacao() {
     });
 
     setPedidosFiltrados(resultado);
-  }, [pedidos, tipoIntervalo, dataInicio, dataFim, mesInicio, mesFim, anoInicio, anoFim, filtroCanal, filtroPagamento, termoBusca, ordenacao]);
+  }, [pedidos, tipoIntervalo, dataUnica, dataInicio, dataFim, mesSelecionado, anoSelecionado, filtroCanal, filtroPagamento, termoBusca, ordenacao]);
 
-  // Cruzamento do Top de Vendas com base nos pedidos filtrados
+  // Top de Vendas cruzado com os pedidos filtrados
   const topProdutosVendas = useMemo(() => {
     const mapa: Record<string, { nome: string; quantidade: number; faturacao: number }> = {};
     
@@ -375,49 +383,63 @@ export default function RelatoriosFaturacao() {
 
       <main className="flex-1 p-5 space-y-6 max-w-7xl mx-auto w-full">
         
-        {/* BARRA DE FILTRO DE INTERVALO */}
+        {/* BARRA DE FILTROS SUPERIOR (POR DIA, POR MÊS, POR ANO, DE - ATÉ) */}
         <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-3xl flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex bg-zinc-950 p-1 rounded-2xl border border-zinc-800 w-full md:w-auto">
-            {(['dia', 'mes', 'ano', 'personalizado'] as const).map(tipo => (
-              <button
-                key={tipo}
-                onClick={() => setTipoIntervalo(tipo)}
-                className={`flex-1 md:flex-initial px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${tipoIntervalo === tipo ? 'bg-blue-600 text-white shadow' : 'text-zinc-400 hover:text-white'}`}
-              >
-                {tipo === 'personalizado' ? 'De - Até' : `Por ${tipo}`}
-              </button>
-            ))}
+            <button
+              onClick={() => setTipoIntervalo('dia')}
+              className={`flex-1 md:flex-initial px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${tipoIntervalo === 'dia' ? 'bg-blue-600 text-white shadow' : 'text-zinc-400 hover:text-white'}`}
+            >
+              Por Dia
+            </button>
+            <button
+              onClick={() => setTipoIntervalo('mes')}
+              className={`flex-1 md:flex-initial px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${tipoIntervalo === 'mes' ? 'bg-blue-600 text-white shadow' : 'text-zinc-400 hover:text-white'}`}
+            >
+              Por Mês
+            </button>
+            <button
+              onClick={() => setTipoIntervalo('ano')}
+              className={`flex-1 md:flex-initial px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${tipoIntervalo === 'ano' ? 'bg-blue-600 text-white shadow' : 'text-zinc-400 hover:text-white'}`}
+            >
+              Por Ano
+            </button>
+            <button
+              onClick={() => setTipoIntervalo('personalizado')}
+              className={`flex-1 md:flex-initial px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${tipoIntervalo === 'personalizado' ? 'bg-blue-600 text-white shadow' : 'text-zinc-400 hover:text-white'}`}
+            >
+              De - Até
+            </button>
           </div>
 
-          <div className="w-full md:w-auto flex flex-wrap items-center gap-2 justify-end">
-            {(tipoIntervalo === 'dia' || tipoIntervalo === 'personalizado') && (
+          <div className="w-full md:w-auto flex items-center gap-3 justify-end">
+            {tipoIntervalo === 'dia' && (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] uppercase font-bold text-zinc-500">Data:</span>
+                <input type="date" value={dataUnica} onChange={e => setDataUnica(e.target.value)} className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-bold text-white outline-none [color-scheme:dark]" />
+              </div>
+            )}
+            {tipoIntervalo === 'mes' && (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] uppercase font-bold text-zinc-500">Mês:</span>
+                <input type="month" value={mesSelecionado} onChange={e => setMesSelecionado(e.target.value)} className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-bold text-white outline-none [color-scheme:dark]" />
+              </div>
+            )}
+            {tipoIntervalo === 'ano' && (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] uppercase font-bold text-zinc-500">Ano:</span>
+                <select value={anoSelecionado} onChange={e => setAnoSelecionado(e.target.value)} className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-bold text-white outline-none">
+                  <option value="2025">2025</option>
+                  <option value="2026">2026</option>
+                </select>
+              </div>
+            )}
+            {tipoIntervalo === 'personalizado' && (
               <div className="flex items-center gap-2">
                 <span className="text-[10px] uppercase font-bold text-zinc-500">De:</span>
                 <input type="date" value={dataInicio} onChange={e => setDataInicio(e.target.value)} className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-bold text-white outline-none [color-scheme:dark]" />
                 <span className="text-[10px] uppercase font-bold text-zinc-500">Até:</span>
                 <input type="date" value={dataFim} onChange={e => setDataFim(e.target.value)} className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-bold text-white outline-none [color-scheme:dark]" />
-              </div>
-            )}
-            {tipoIntervalo === 'mes' && (
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] uppercase font-bold text-zinc-500">De:</span>
-                <input type="month" value={mesInicio} onChange={e => setMesInicio(e.target.value)} className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-bold text-white outline-none [color-scheme:dark]" />
-                <span className="text-[10px] uppercase font-bold text-zinc-500">Até:</span>
-                <input type="month" value={mesFim} onChange={e => setMesFim(e.target.value)} className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-bold text-white outline-none [color-scheme:dark]" />
-              </div>
-            )}
-            {tipoIntervalo === 'ano' && (
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] uppercase font-bold text-zinc-500">De:</span>
-                <select value={anoInicio} onChange={e => setAnoInicio(e.target.value)} className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-bold text-white outline-none">
-                  <option value="2025">2025</option>
-                  <option value="2026">2026</option>
-                </select>
-                <span className="text-[10px] uppercase font-bold text-zinc-500">Até:</span>
-                <select value={anoFim} onChange={e => setAnoFim(e.target.value)} className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs font-bold text-white outline-none">
-                  <option value="2025">2025</option>
-                  <option value="2026">2026</option>
-                </select>
               </div>
             )}
           </div>
@@ -426,7 +448,7 @@ export default function RelatoriosFaturacao() {
         {/* ABA 1: FATURAÇÃO GERAL */}
         {abaAtiva === 'geral' && (
           <>
-            {/* CARDS DE RESUMO (Nº DE PEDIDOS E FATURAMENTO BRUTO) */}
+            {/* CARDS DE RESUMO */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between">
                 <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">Nº de Pedidos</span>
@@ -544,7 +566,6 @@ export default function RelatoriosFaturacao() {
 
               {/* COLUNA LATERAL: TOP DE VENDAS E APURAMENTO FÍSICO */}
               <div className="space-y-6">
-                {/* TOP DE VENDAS CRUZADO COM PEDIDOS */}
                 <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-6 shadow-xl space-y-4">
                   <h3 className="text-sm font-black uppercase tracking-wider text-orange-400">🔥 Top de Vendas (Produtos)</h3>
                   {topProdutosVendas.length === 0 ? (
