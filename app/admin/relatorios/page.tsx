@@ -58,11 +58,11 @@ export default function RelatoriosFaturacao() {
   const [ordenacao, setOrdenacao] = useState<'recente' | 'antigo' | 'az' | 'za'>('za');
   const [pedidoExpandidoId, setPedidoExpandidoId] = useState<string | null>(null);
 
-  // Filtros por Período
+  // Filtros por Período (Totalmente ligados aos inputs visuais)
   const [tipoIntervalo, setTipoIntervalo] = useState<'dia' | 'mes' | 'ano' | 'personalizado'>('personalizado');
   const [dataUnica, setDataUnica] = useState(() => new Date().toISOString().split('T')[0]);
-  const [dataInicio, setDataInicio] = useState(() => new Date().toISOString().split('T')[0]);
-  const [dataFim, setDataFim] = useState(() => new Date().toISOString().split('T')[0]);
+  const [dataInicio, setDataInicio] = useState('2026-07-01');
+  const [dataFim, setDataFim] = useState('2026-07-31');
   const [mesSelecionado, setMesSelecionado] = useState(() => new Date().toISOString().substring(0, 7));
   const [anoSelecionado, setAnoSelecionado] = useState(() => String(new Date().getFullYear()));
 
@@ -161,12 +161,12 @@ export default function RelatoriosFaturacao() {
     }
   };
 
-  // Validador robusto de datas adaptado para o Supabase
+  // Validador exato por intervalo de datas baseado na string do Supabase
   const validarIntervaloData = (dataStr: string | null) => {
-    if (!dataStr) return true;
-    const itemDate = dataStr.split('T')[0]; // Extrai apenas YYYY-MM-DD
-    const itemMes = itemDate.substring(0, 7); // YYYY-MM
-    const itemAno = itemDate.substring(0, 4); // YYYY
+    if (!dataStr) return false;
+    const itemDate = dataStr.split('T')[0]; // Formato YYYY-MM-DD
+    const itemMes = itemDate.substring(0, 7); // Formato YYYY-MM
+    const itemAno = itemDate.substring(0, 4); // Formato YYYY
 
     if (tipoIntervalo === 'dia') {
       return itemDate === dataUnica;
@@ -211,7 +211,7 @@ export default function RelatoriosFaturacao() {
     setPedidosFiltrados(resultado);
   }, [pedidos, tipoIntervalo, dataUnica, dataInicio, dataFim, mesSelecionado, anoSelecionado, filtroCanal, filtroPagamento, termoBusca, ordenacao]);
 
-  // Top de Vendas cruzado com os pedidos filtrados
+  // Top de Vendas cruzado com os pedidos filtrados no período exato
   const topProdutosVendas = useMemo(() => {
     const mapa: Record<string, { nome: string; quantidade: number; faturacao: number }> = {};
     
@@ -383,7 +383,7 @@ export default function RelatoriosFaturacao() {
 
       <main className="flex-1 p-5 space-y-6 max-w-7xl mx-auto w-full">
         
-        {/* BARRA DE FILTROS SUPERIOR (POR DIA, POR MÊS, POR ANO, DE - ATÉ) */}
+        {/* BARRA DE FILTROS SUPERIOR (LIGADA AOS ESTADOS CORRETOS) */}
         <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-3xl flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex bg-zinc-950 p-1 rounded-2xl border border-zinc-800 w-full md:w-auto">
             <button
