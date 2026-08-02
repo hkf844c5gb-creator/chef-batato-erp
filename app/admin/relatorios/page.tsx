@@ -13,6 +13,7 @@ interface ItemPedido {
 
 interface Pedido {
   id: string;
+  numero_pedido?: number | string;
   cliente: string | null;
   contacto_cliente: string;
   canal: 'Balcão' | 'WhatsApp' | 'Glovo' | 'Palmbites';
@@ -98,12 +99,13 @@ export default function RelatoriosFaturacao() {
     if (!dataStr) return { dia: '--', mes: '---' };
     const [ano, mes, dia] = dataStr.substring(0, 10).split('-');
     const meses = ['JAN', 'FEV', 'MAR', 'ABR', 'MAI', 'JUN', 'JUL', 'AGO', 'SET', 'OUT', 'NOV', 'DEZ'];
-    return { dia, mes: meses[parseInt(mes) - 1] };
+    return { dia, mes: meses[parseInt(mes) - 1] || '---' };
   };
 
-  // Garante fallback para data_pedido se criado_em for null
+  // Dá prioridade a data_pedido se criado_em estiver vazio
   const obterDataEfetiva = (p: Pedido) => {
-    return p.criado_em || p.data_pedido || new Date().toISOString();
+    const raw = p.data_pedido || p.criado_em || new Date().toISOString();
+    return raw;
   };
 
   const validarIntervaloData = (dataStr: string | null) => {
@@ -124,7 +126,7 @@ export default function RelatoriosFaturacao() {
     setErroDB(null);
 
     try {
-      const { data: pedidosData, error: errPed } = await supabase.from('pedidos').select('*').order('criado_em', { ascending: false });
+      const { data: pedidosData, error: errPed } = await supabase.from('pedidos').select('*').order('data_pedido', { ascending: false });
       if (errPed) throw new Error(`Falha na tabela 'pedidos': ${errPed.message}`);
 
       const { data: itensData, error: errItens } = await supabase.from('itens_pedido').select('*');
@@ -138,7 +140,7 @@ export default function RelatoriosFaturacao() {
 
       const itensComData = (itensData || []).map((item: any) => {
         const pedidoPai = (pedidosData || []).find((p: any) => p.id === item.pedido_id);
-        return { ...item, criado_em: pedidoPai ? (pedidoPai.criado_em || pedidoPai.data_pedido) : null };
+        return { ...item, criado_em: pedidoPai ? (pedidoPai.data_pedido || pedidoPai.criado_em) : null };
       });
       setItensBrutosBrownies(itensComData);
 
