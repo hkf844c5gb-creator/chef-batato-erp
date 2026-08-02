@@ -54,6 +54,7 @@ export default function CaixaPDV() {
   const [carrinho, setCarrinho] = useState<ItemCarrinho[]>([]);
   const [listaEstafetas, setListaEstafetas] = useState<{ nome: string }[]>([]);
   const [listaRevendedores, setListaRevendedores] = useState<any[]>([]);
+  const [listaClientesCadastrados, setListaClientesCadastrados] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [erroCaixa, setErroCaixa] = useState<string | null>(null);
   const [categoriaAtiva, setCategoriaAtiva] = useState<CategoriaFiltro>('todos');
@@ -61,6 +62,9 @@ export default function CaixaPDV() {
   // CABEÇALHO DO PEDIDO NORMAL
   const [cliente, setCliente] = useState('');
   const [contactoCliente, setContactoCliente] = useState('');
+  const [moradaCliente, setMoradaCliente] = useState('');
+  const [mostrarSugestoes, setMostrarSugestoes] = useState(false);
+
   const [dataPedido, setDataPedido] = useState(() => new Date().toISOString().split('T')[0]);
   const [canal, setCanal] = useState<'Balcão' | 'WhatsApp' | 'Glovo' | 'Palmbites' | 'Revendedores'>('Balcão');
   const [formaPagamento, setFormaPagamento] = useState('Dinheiro');
@@ -68,12 +72,11 @@ export default function CaixaPDV() {
   const [taxaEntrega, setTaxaEntrega] = useState('0.00');
   const [descontoManual, setDescontoManual] = useState('0.00');
   
-  // ESTADOS ESPECÍFICOS PARA ABA DE REVENDA (LISTA DE BROWNES)
+  // ESTADOS ESPECÍFICOS PARA ABA DE REVENDA
   const [revendedorSelecionado, setRevendedorSelecionado] = useState('');
   const [formaPagamentoRev, setFormaPagamentoRev] = useState('Dinheiro');
   const [quantidadesBrowniesRev, setQuantidadesBrowniesRev] = useState<{ [produtoId: string]: number }>({});
 
-  // Controle de Botão
   const [isProcessando, setIsProcessando] = useState(false);
 
   // MONTADOR DINÂMICO DE COMBOS
@@ -147,6 +150,9 @@ export default function CaixaPDV() {
       const { data: dataRevs } = await supabase.from('revendedores').select('*').order('nome_empresa', { ascending: true });
       if (dataRevs) setListaRevendedores(dataRevs);
 
+      const { data: dataClientes } = await supabase.from('clientes').select('*').order('nome', { ascending: true });
+      if (dataClientes) setListaClientesCadastrados(dataClientes);
+
       const { data: dataCombos, error: errCombos } = await supabase
         .from('combos')
         .select(`
@@ -203,7 +209,6 @@ export default function CaixaPDV() {
     return Number(precoCardapio || 0);
   };
 
-  // Regra de preço de revenda: New York e Fudge = 1.70€, Restantes = 2.70€
   const calcularPrecoRevenda = (nomeProduto: string) => {
     const nome = (nomeProduto || '').toLowerCase();
     if (nome.includes('new york') || nome.includes('fudge')) {
@@ -212,12 +217,18 @@ export default function CaixaPDV() {
     return 2.70;
   };
 
-  // Filtrar apenas Brownies
   const produtosBrownies = produtos.filter(p => 
     (p.nome || '').toLowerCase().includes('brownie') || 
     (p.categoria || '').toLowerCase().includes('brownie') ||
     (p.categoria || '').toLowerCase().includes('sobremesa')
   );
+
+  const selecionarClienteSugerido = (c: any) => {
+    setCliente(c.nome);
+    setContactoCliente(c.contacto || '');
+    setMoradaCliente(c.morada || '');
+    setMostrarSugestoes(false);
+  };
 
   const adicionarAoCarrinho = (produto: Produto) => {
     const precoAtual = getPrecoPorCanal(produto);
@@ -296,21 +307,23 @@ export default function CaixaPDV() {
     let precoBaseCombo = 0;
     let detalheDesconto = '';
 
-    if (comboSelecionado.tipo_preco === 'fixo') {
+    // Regra específica para o Combo "BATATÔ para DOIS" por canal
+    if (comboSelecionado.nome.toLowerCase().includes('para dois')) {
+      const descontoComboForcado = canal === 'Glovo' ? 1.70 : 1.50;
+      precoBaseCombo = Math.max(0, somaPrecosOriginais - descontoComboForcado);
+      detalheDesconto = `🔻 Desconto Combo (-${descontoComboForcado.toFixed(2)}€)`;
+    } else if (comboSelecionado.tipo_preco === 'fixo') {
       precoBaseCombo = Number(comboSelecionado.preco_fixo);
       detalheDesconto = `🏷️ Preço Fixo Especial`;
-    } 
-    else if (comboSelecionado.tipo_preco === 'desconto') {
+    } else if (comboSelecionado.tipo_preco === 'desconto') {
       const percentual = Number(comboSelecionado.desconto_percentual) || 0;
       precoBaseCombo = somaPrecosOriginais * (1 - percentual / 100);
       detalheDesconto = `🔻 Desconto Combo (-${percentual}%)`;
-    } 
-    else if (comboSelecionado.tipo_preco === 'desconto_fixo') {
+    } else if (comboSelecionado.tipo_preco === 'desconto_fixo') {
       const descontoFx = Number(comboSelecionado.desconto_absoluto) || 0;
       precoBaseCombo = Math.max(0, somaPrecosOriginais - descontoFx);
       detalheDesconto = `🔻 Desconto Combo (-${descontoFx.toFixed(2)}€)`;
-    } 
-    else if (comboSelecionado.tipo_preco === 'item_gratis') {
+    } else if (comboSelecionado.tipo_preco === 'item_gratis') {
       const catGratis = (comboSelecionado.item_gratis_categoria || '').toLowerCase().trim();
       let itemParaFicarGratis = null;
 
@@ -438,7 +451,6 @@ export default function CaixaPDV() {
     return acc + (qtd * preco);
   }, 0);
 
-  // Finalizar Pedido de Revendedor com cruzamento automático e atualização na page revenda (status Fechado)
   const finalizarPedidoRevendedor = async () => {
     if (!revendedorSelecionado) return alert('Selecione um revendedor.');
     
@@ -451,7 +463,6 @@ export default function CaixaPDV() {
     const dataHoraCriacaoCompleta = `${dataPedido}T${agora.toTimeString().split(' ')[0]}`;
 
     try {
-      // 1. Número sequencial de pedido rigoroso (366, 367...)
       const { data: todosPedidos } = await supabase.from('pedidos').select('numero_pedido');
       let maior = 365;
       if (todosPedidos) {
@@ -462,7 +473,6 @@ export default function CaixaPDV() {
       }
       const proximoNumeroStr = String(maior + 1);
 
-      // 2. Gravar o pedido principal no canal 'Revendedores'
       const { data: pedidoGravado, error: erroPed } = await supabase
         .from('pedidos')
         .insert([{
@@ -473,6 +483,7 @@ export default function CaixaPDV() {
           taxa_entrega: 0,
           desconto: 0,
           total_geral: totalRevendaCalculado,
+          total_liquido: totalRevendaCalculado,
           pago: estaPago,
           criado_em: dataHoraCriacaoCompleta
         }])
@@ -498,7 +509,6 @@ export default function CaixaPDV() {
             preco_unitario: precoUnit
           });
 
-          // Registo cruzado na page revenda (revenda_consignacoes) marcado diretamente como 'Fechado' (vendido)
           consignacoesDB.push({
             data_registo: dataPedido,
             parceiro: revendedorSelecionado,
@@ -525,7 +535,7 @@ export default function CaixaPDV() {
         await descontarStockAutomaticamente(itensParaBaixaStock);
       }
 
-      alert(`✅ Pedido de Revendedor #${proximoNumeroStr} gerado com sucesso para ${revendedorSelecionado} e atualizado como vendido na page revenda!`);
+      alert(`✅ Pedido de Revendedor #${proximoNumeroStr} gerado com sucesso!`);
       setRevendedorSelecionado('');
       setQuantidadesBrowniesRev({});
     } catch (err: any) {
@@ -548,6 +558,13 @@ export default function CaixaPDV() {
     const dataHoraCriacaoCompleta = `${dataPedido}T${agora.toTimeString().split(' ')[0]}`;
 
     try {
+      // Gravar / atualizar cliente na tabela centralizada de clientes com morada
+      await supabase.from('clientes').upsert({
+        nome: cliente.trim(),
+        contacto: contactoCliente.trim(),
+        morada: moradaCliente.trim()
+      }, { onConflict: 'contacto' });
+
       const { data: todosPedidos } = await supabase.from('pedidos').select('numero_pedido');
       let maiorNumero = 365;
       if (todosPedidos) {
@@ -572,6 +589,7 @@ export default function CaixaPDV() {
           taxa_entrega: parseFloat(taxaEntrega), 
           desconto: parseFloat(descontoManual) || 0,
           total_geral: totalGeral,
+          total_liquido: totalGeral,
           pago: estaPago,
           criado_em: dataHoraCriacaoCompleta
         }])
@@ -596,8 +614,10 @@ export default function CaixaPDV() {
       setCarrinho([]); 
       setCliente(''); 
       setContactoCliente(''); 
+      setMoradaCliente('');
       setTaxaEntrega('0.00'); 
       setDescontoManual('0.00');
+      carregarMenuCompleto();
     } catch (err: any) { 
       alert(`Erro ao gravar pedido: ${err.message}`); 
     } finally {
@@ -635,12 +655,57 @@ export default function CaixaPDV() {
         </div>
       )}
 
-      {/* CABEÇALHO SÓ APARECE SE NÃO ESTIVER NA ABA DE REVENDEDOR */}
+      {/* CABEÇALHO DO PDV COM AUTOCOMPLETAR DE CLIENTE E MORADA */}
       {!erroCaixa && canal !== 'Revendedores' && (
-        <div className="bg-zinc-900 border-b border-zinc-800 p-5 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-4 shadow-xl">
-          <div><label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Cliente</label><input type="text" value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="Nome" className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none" /></div>
-          <div><label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Contacto</label><input type="text" value={contactoCliente} onChange={(e) => setContactoCliente(e.target.value)} placeholder="Telemóvel" className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none" /></div>
-          <div><label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Data do Pedido</label><input type="date" value={dataPedido} onChange={(e) => setDataPedido(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-300 focus:border-orange-500 outline-none cursor-pointer" /></div>
+        <div className="bg-zinc-900 border-b border-zinc-800 p-5 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-9 gap-4 shadow-xl relative">
+          
+          <div className="relative col-span-2">
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Cliente / Nome</label>
+            <input 
+              type="text" 
+              value={cliente} 
+              onChange={(e) => {
+                setCliente(e.target.value);
+                setMostrarSugestoes(true);
+              }} 
+              onFocus={() => setMostrarSugestoes(true)}
+              placeholder="Escreva o nome do cliente..." 
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none text-white font-bold" 
+            />
+
+            {mostrarSugestoes && cliente.trim().length > 0 && (
+              <div className="absolute left-0 right-0 top-full mt-1 bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl z-50 max-h-48 overflow-y-auto">
+                {listaClientesCadastrados
+                  .filter(c => c.nome.toLowerCase().includes(cliente.toLowerCase()) || (c.contacto && c.contacto.includes(cliente)))
+                  .map(c => (
+                    <div 
+                      key={c.id} 
+                      onClick={() => selecionarClienteSugerido(c)}
+                      className="p-2.5 hover:bg-orange-600/20 cursor-pointer border-b border-zinc-800/50 text-xs flex justify-between items-center"
+                    >
+                      <span className="font-bold text-white">{c.nome}</span>
+                      <span className="text-zinc-400 text-[10px]">📞 {c.contacto} | 📍 {c.morada}</span>
+                    </div>
+                  ))}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Contacto</label>
+            <input type="text" value={contactoCliente} onChange={(e) => setContactoCliente(e.target.value)} placeholder="Telemóvel" className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none" />
+          </div>
+
+          <div className="col-span-2">
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Morada de Entrega</label>
+            <input type="text" value={moradaCliente} onChange={(e) => setMoradaCliente(e.target.value)} placeholder="Rua, Número, Andar..." className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none text-zinc-200" />
+          </div>
+
+          <div>
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Data</label>
+            <input type="date" value={dataPedido} onChange={(e) => setDataPedido(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-300 outline-none cursor-pointer" />
+          </div>
+
           <div>
             <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Canal</label>
             <select value={canal} onChange={(e) => { const nc = e.target.value as any; setCanal(nc); setFormaPagamento(regrasPagamento[nc as keyof typeof regrasPagamento][0].value); }} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-300 outline-none">
@@ -650,6 +715,7 @@ export default function CaixaPDV() {
               <option value="Palmbites">Palmbites</option>
             </select>
           </div>
+
           <div>
             <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Pagamento</label>
             <select value={formaPagamento} onChange={(e) => setFormaPagamento(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-300 outline-none">
@@ -658,6 +724,7 @@ export default function CaixaPDV() {
               ))}
             </select>
           </div>
+
           <div>
             <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Estafeta</label>
             <select value={entregador} onChange={(e) => setEntregador(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-300 outline-none">
@@ -665,21 +732,29 @@ export default function CaixaPDV() {
               {listaEstafetas.map(est => (<option key={est.nome} value={est.nome}>{est.nome}</option>))}
             </select>
           </div>
-          <div><label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Taxa Entrega (€)</label><input type="number" step="0.10" min="0" value={taxaEntrega} onChange={(e) => setTaxaEntrega(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm font-bold text-orange-400 outline-none" /></div>
-          <div><label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Desconto (€)</label><input type="number" step="0.50" min="0" value={descontoManual} onChange={(e) => setDescontoManual(e.target.value)} className="w-full bg-zinc-950 border border-red-900/50 rounded-xl px-3 py-2 text-sm font-bold text-red-400 outline-none" /></div>
+
+          <div>
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Taxa Entr. (€)</label>
+            <input type="number" step="0.10" min="0" value={taxaEntrega} onChange={(e) => setTaxaEntrega(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm font-bold text-orange-400 outline-none" />
+          </div>
+
+          <div>
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Desconto (€)</label>
+            <input type="number" step="0.50" min="0" value={descontoManual} onChange={(e) => setDescontoManual(e.target.value)} className="w-full bg-zinc-950 border border-red-900/50 rounded-xl px-3 py-2 text-sm font-bold text-red-400 outline-none" />
+          </div>
+
         </div>
       )}
 
       {!erroCaixa && (
         <div className="flex-1 flex overflow-hidden">
           
-          {/* SE ESTIVER NO MODO REVENDA, EXIBE TODOS OS BROWNES PARA MARCAR QUANTIDADES E ATUALIZAR A PAGE REVENDA */}
           {canal === 'Revendedores' ? (
             <div className="flex-1 p-8 overflow-y-auto max-w-4xl mx-auto space-y-6">
               <div className="bg-zinc-900 border border-amber-500/30 p-6 rounded-3xl space-y-6 shadow-2xl">
                 <div>
-                  <h2 className="text-xl font-black text-amber-400">🏪 Pedido de Revendedor (Atualização Automática na Page Revenda)</h2>
-                  <p className="text-xs text-zinc-400 mt-1">Ao gerar o pedido, os itens são assumidos como vendidos na página de consignações/revenda e o stock é descontado.</p>
+                  <h2 className="text-xl font-black text-amber-400">🏪 Pedido de Revendedor</h2>
+                  <p className="text-xs text-zinc-400 mt-1">Registo de consignação e venda para parceiros.</p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -712,49 +787,43 @@ export default function CaixaPDV() {
                   </div>
                 </div>
 
-                {/* LISTA DE TODOS OS BROWNES PARA MARCAR QUANTIDADE */}
                 <div className="bg-zinc-950 p-5 rounded-2xl border border-zinc-800 space-y-4">
                   <h3 className="text-xs font-bold text-amber-400 uppercase tracking-widest">Sabores de Brownies Disponíveis</h3>
-                  
-                  {produtosBrownies.length === 0 ? (
-                    <p className="text-xs text-zinc-500 py-6 text-center">Nenhum brownie encontrado no sistema.</p>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-left text-xs">
-                        <thead className="text-[10px] text-zinc-500 uppercase border-b border-zinc-800">
-                          <tr>
-                            <th className="py-2">Sabor do Brownie</th>
-                            <th className="py-2 text-center">Preço Revenda</th>
-                            <th className="py-2 text-center">Quantidade Vendida</th>
-                            <th className="py-2 text-right">Subtotal</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-zinc-800/40">
-                          {produtosBrownies.map((prod) => {
-                            const precoUn = calcularPrecoRevenda(prod.nome);
-                            const qtd = Number(quantidadesBrowniesRev[prod.id]) || 0;
-                            return (
-                              <tr key={prod.id}>
-                                <td className="py-3 font-bold text-white">{prod.nome}</td>
-                                <td className="py-3 text-center text-green-400 font-mono">{precoUn.toFixed(2)}€</td>
-                                <td className="py-3 text-center">
-                                  <input 
-                                    type="number" 
-                                    min="0" 
-                                    value={quantidadesBrowniesRev[prod.id] !== undefined ? quantidadesBrowniesRev[prod.id] : ''}
-                                    placeholder="0"
-                                    onChange={(e) => setQuantidadesBrowniesRev({ ...quantidadesBrowniesRev, [prod.id]: parseInt(e.target.value) || 0 })}
-                                    className="w-20 bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-center font-bold text-white outline-none"
-                                  />
-                                </td>
-                                <td className="py-3 text-right font-mono font-black text-amber-400">{(qtd * precoUn).toFixed(2)}€</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead className="text-[10px] text-zinc-500 uppercase border-b border-zinc-800">
+                        <tr>
+                          <th className="py-2">Sabor do Brownie</th>
+                          <th className="py-2 text-center">Preço Revenda</th>
+                          <th className="py-2 text-center">Quantidade Vendida</th>
+                          <th className="py-2 text-right">Subtotal</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-800/40">
+                        {produtosBrownies.map((prod) => {
+                          const precoUn = calcularPrecoRevenda(prod.nome);
+                          const qtd = Number(quantidadesBrowniesRev[prod.id]) || 0;
+                          return (
+                            <tr key={prod.id}>
+                              <td className="py-3 font-bold text-white">{prod.nome}</td>
+                              <td className="py-3 text-center text-green-400 font-mono">{precoUn.toFixed(2)}€</td>
+                              <td className="py-3 text-center">
+                                <input 
+                                  type="number" 
+                                  min="0" 
+                                  value={quantidadesBrowniesRev[prod.id] !== undefined ? quantidadesBrowniesRev[prod.id] : ''}
+                                  placeholder="0"
+                                  onChange={(e) => setQuantidadesBrowniesRev({ ...quantidadesBrowniesRev, [prod.id]: parseInt(e.target.value) || 0 })}
+                                  className="w-20 bg-zinc-900 border border-zinc-700 rounded-lg px-2 py-1.5 text-center font-bold text-white outline-none"
+                                />
+                              </td>
+                              <td className="py-3 text-right font-mono font-black text-amber-400">{(qtd * precoUn).toFixed(2)}€</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
 
                 <div className="flex justify-between items-center bg-zinc-950 p-5 rounded-2xl border border-zinc-800">
@@ -774,7 +843,6 @@ export default function CaixaPDV() {
               </div>
             </div>
           ) : (
-            /* PDV NORMAL */
             <main className="flex-1 p-6 overflow-y-auto flex flex-col gap-6">
               <div className="flex flex-wrap gap-2 bg-zinc-900/60 p-2 rounded-2xl border border-zinc-800/80">
                 {[
@@ -816,7 +884,6 @@ export default function CaixaPDV() {
             </main>
           )}
 
-          {/* CARRINHO LATERAL (SÓ APARECE NO PDV NORMAL) */}
           {canal !== 'Revendedores' && (
             <aside className="w-96 bg-zinc-900 border-l border-zinc-800 flex flex-col">
               <div className="p-4 border-b border-zinc-800 font-semibold text-zinc-300 flex justify-between items-center">
@@ -866,7 +933,6 @@ export default function CaixaPDV() {
         </div>
       )}
 
-      {/* MODAL DE COMBOS */}
       {mostrarModalCombo && comboSelecionado && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-2xl p-6 flex flex-col max-h-[90vh]">
