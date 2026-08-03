@@ -64,8 +64,9 @@ export default function DashboardPage() {
 
       const { data: todasDespesas } = await supabase
         .from('despesas')
-        .select('valor, criado_em');
+        .select('valor, criado_em, data_despesa');
 
+      // Filtrar pedidos estritamente pelo período selecionado
       const pedidosValidos = (todosPedidos || []).filter(p => {
         if (!p.criado_em) return true;
         const dataPedidoStr = p.criado_em.split('T')[0];
@@ -73,9 +74,11 @@ export default function DashboardPage() {
         return dataPedidoStr >= dataInicio && dataPedidoStr <= dataFim && pagoOk;
       });
 
+      // Filtrar despesas estritamente pelo período selecionado
       const despesasValidas = (todasDespesas || []).filter(d => {
-        if (!d.criado_em) return true;
-        const dataDespesaStr = d.criado_em.split('T')[0];
+        const campoData = d.data_despesa || d.criado_em;
+        if (!campoData) return false;
+        const dataDespesaStr = campoData.split('T')[0];
         return dataDespesaStr >= dataInicio && dataDespesaStr <= dataFim;
       });
 
@@ -107,12 +110,12 @@ export default function DashboardPage() {
           takeaway++;
         }
 
-        // UNIFICAÇÃO RIGOROSA: Soma Balcão e Balcã exatamente sob o nome "Balcão"
+        // --- NORMALIZAÇÃO DE CANAIS (Unifica Balcão e Balcã num só) ---
         let canalBruto = (p.canal || 'Outros').trim();
         let canalNormalizado = canalBruto;
         const canalLower = canalBruto.toLowerCase();
 
-        if (canalLower.startsWith('balc')) {
+        if (canalLower.startsWith('balc') || canalLower.includes('balca')) {
           canalNormalizado = 'Balcão';
         } else if (canalLower.includes('glovo')) {
           canalNormalizado = 'Glovo';
@@ -173,6 +176,11 @@ export default function DashboardPage() {
             categoriaItem = mapaProdutos[item.produto_id].categoria;
             custoItem = mapaProdutos[item.produto_id].custo;
           } else {
+            const matchProd = Object.values(mapaProdutos).find(p => p.nome.toLowerCase() === nomeFinal.toLowerCase());
+            if (matchProd) {
+              custoItem = matchProd.custo;
+            }
+
             const nomeLower = nomeFinal.toLowerCase();
             if (nomeLower.includes('calabresa') || nomeLower.includes('costela') || nomeLower.includes('frango') || nomeLower.includes('gratinado') || nomeLower.includes('strogonoff') || nomeLower.includes('misto') || nomeLower.includes('batata')) {
               categoriaItem = 'batata';
@@ -206,7 +214,7 @@ export default function DashboardPage() {
       const custosOps = despesasValidas.reduce((acc, d) => acc + Number(d.valor || 0), 0);
       const faturacaoLiquida = faturacaoBruta - totalTaxasEntrega;
       const lucro = faturacaoLiquida - custoTotalItens - custosOps - repasse;
-      const margem = faturacaoBruta > 0 ? (lucro / faturacaoBruta) * 100 : 0;
+      const margem = faturacaoLiquida > 0 ? (lucro / faturacaoLiquida) * 100 : 0;
       const ticket = pedidosValidos.length > 0 ? faturacaoBruta / pedidosValidos.length : 0;
 
       const arrayCanais = Object.entries(canaisAgrupados)
@@ -250,15 +258,9 @@ export default function DashboardPage() {
 
     const channel = supabase
       .channel('dashboard-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'pedidos' }, () => {
-        carregarDados();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'itens_pedido' }, () => {
-        carregarDados();
-      })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'despesas' }, () => {
-        carregarDados();
-      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pedidos' }, () => { carregarDados(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'itens_pedido' }, () => { carregarDados(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'despesas' }, () => { carregarDados(); })
       .subscribe();
 
     return () => {
@@ -308,7 +310,7 @@ export default function DashboardPage() {
             Dashboard Financeiro 
             <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-ping inline-block" title="Tempo Real Ativo"></span>
           </h1>
-          <p className="text-zinc-400 text-sm mt-1">Cruzamento de resultados em tempo real com canais unificados e total de descontos</p>
+          <p className="text-zinc-400 text-sm mt-1">Cruzamento de resultados em tempo real com canais unificados e despesas filtradas</p>
         </div>
         
         <div className="flex items-center gap-2">
