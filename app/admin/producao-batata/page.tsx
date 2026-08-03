@@ -50,7 +50,116 @@ export default function ControloProducaoBatata() {
   
   const hoje = new Date().toISOString().split('T')[0];
 
-  // Estado para Criar/Editar Ficha Técnica
+  // Receitas Fixas Padrão para inicializar automaticamente se necessário
+  const receitasPadraoFixas = [
+    {
+      nome_receita: 'Base Batata',
+      rendimento: 10,
+      unidade_rendimento: 'potes',
+      ingredientes: [
+        { nome: 'Batata', quantidade: 3, unidade: 'kg' },
+        { nome: 'Alho em pó', quantidade: 15, unidade: 'g' },
+        { nome: 'Margarina', quantidade: 125, unidade: 'g' },
+        { nome: 'Sal', quantidade: 30, unidade: 'g' }
+      ]
+    },
+    {
+      nome_receita: 'Molho Branco',
+      rendimento: 10,
+      unidade_rendimento: 'potes',
+      ingredientes: [
+        { nome: 'Queijo Mussarela', quantidade: 200, unidade: 'g' },
+        { nome: 'Alho', quantidade: 15, unidade: 'g' },
+        { nome: 'Cebola', quantidade: 15, unidade: 'g' },
+        { nome: 'Margarina', quantidade: 17, unidade: 'g' },
+        { nome: 'Nata', quantidade: 600, unidade: 'ml' },
+        { nome: 'Cream Cheese', quantidade: 90, unidade: 'g' },
+        { nome: 'Leite', quantidade: 600, unidade: 'ml' },
+        { nome: 'Sal', quantidade: 30, unidade: 'g' }
+      ]
+    },
+    {
+      nome_receita: 'Strogonoff',
+      rendimento: 10,
+      unidade_rendimento: 'potes',
+      ingredientes: [
+        { nome: 'Carne (Rabadilha)', quantidade: 1, unidade: 'kg' },
+        { nome: 'Alho', quantidade: 15, unidade: 'g' },
+        { nome: 'Cebola', quantidade: 15, unidade: 'g' },
+        { nome: 'Shoyo', quantidade: 45, unidade: 'ml' },
+        { nome: 'Nata', quantidade: 600, unidade: 'ml' },
+        { nome: 'Molho de Tomate', quantidade: 150, unidade: 'ml' },
+        { nome: 'Sal', quantidade: 15, unidade: 'g' }
+      ]
+    },
+    {
+      nome_receita: 'Frango Cremoso',
+      rendimento: 10,
+      unidade_rendimento: 'potes',
+      ingredientes: [
+        { nome: 'Frango (Peito)', quantidade: 1.275, unidade: 'kg' },
+        { nome: 'Alho', quantidade: 15, unidade: 'g' },
+        { nome: 'Cebola', quantidade: 15, unidade: 'g' },
+        { nome: 'Shoyo', quantidade: 45, unidade: 'ml' },
+        { nome: 'Milho', quantidade: 300, unidade: 'g' },
+        { nome: 'Sal', quantidade: 15, unidade: 'g' }
+      ]
+    },
+    {
+      nome_receita: 'Calabresa',
+      rendimento: 10,
+      unidade_rendimento: 'potes',
+      ingredientes: [
+        { nome: 'Linguiça Calabresa', quantidade: 253, unidade: 'g' },
+        { nome: 'Cebola', quantidade: 309, unidade: 'g' },
+        { nome: 'Tomate', quantidade: 470, unidade: 'g' },
+        { nome: 'Molho de Tomate', quantidade: 120, unidade: 'ml' },
+        { nome: 'Sal', quantidade: 7, unidade: 'g' }
+      ]
+    },
+    {
+      nome_receita: 'Brócolos com bacon',
+      rendimento: 10,
+      unidade_rendimento: 'potes',
+      ingredientes: [
+        { nome: 'Brócolos', quantidade: 590, unidade: 'g' },
+        { nome: 'Alho', quantidade: 15, unidade: 'g' },
+        { nome: 'Cebola', quantidade: 15, unidade: 'g' },
+        { nome: 'Margarina', quantidade: 20, unidade: 'g' },
+        { nome: 'Sal', quantidade: 15, unidade: 'g' },
+        { nome: 'Bacon', quantidade: 20, unidade: 'g' }
+      ]
+    },
+    {
+      nome_receita: 'Queijo e Fiambre',
+      rendimento: 10,
+      unidade_rendimento: 'potes',
+      ingredientes: [
+        { nome: 'Queijo Mussarela', quantidade: 60, unidade: 'g' },
+        { nome: 'Fiambre', quantidade: 30, unidade: 'g' }
+      ]
+    },
+    {
+      nome_receita: 'Costela',
+      rendimento: 10,
+      unidade_rendimento: 'potes',
+      ingredientes: [
+        { nome: 'Costela sem osso', quantidade: 1.850, unidade: 'kg' },
+        { nome: 'Bacon', quantidade: 100, unidade: 'g' },
+        { nome: 'Linguiça', quantidade: 125, unidade: 'g' },
+        { nome: 'Alho', quantidade: 15, unidade: 'g' },
+        { nome: 'Cebola', quantidade: 500, unidade: 'g' },
+        { nome: 'Páprica', quantidade: 4, unidade: 'g' },
+        { nome: 'Cominho', quantidade: 4, unidade: 'g' },
+        { nome: 'Pimenta', quantidade: 4, unidade: 'g' },
+        { nome: 'Folha de Louro', quantidade: 0.5, unidade: 'unidade' },
+        { nome: 'Azeite', quantidade: 15, unidade: 'ml' },
+        { nome: 'Barbecue', quantidade: 150, unidade: 'g' },
+        { nome: 'Margarina', quantidade: 15, unidade: 'g' }
+      ]
+    }
+  ];
+
   const [fichaEditandoId, setFichaEditandoId] = useState<string | null>(null);
   const [formFicha, setFormFicha] = useState({
     nome_receita: '',
@@ -59,11 +168,10 @@ export default function ControloProducaoBatata() {
     ingredientes: [] as IngredienteFicha[]
   });
 
-  // Estado para o Formulário de Produção
   const [formProd, setFormProd] = useState({
     data_fabricacao: hoje,
     ficha_id: '',
-    nome_receita: '',
+    nome_receita: 'Base Batata',
     quantidade_produzida: 10,
     unidade_produzida: 'potes',
     data_validade: '',
@@ -81,7 +189,15 @@ export default function ControloProducaoBatata() {
       const { data: dadosInsumos } = await supabase.from('insumos').select('id, nome, unidade_medida, quantidade_atual').order('nome', { ascending: true });
       setInsumos(dadosInsumos || []);
 
-      const { data: dadosFichas } = await supabase.from('fichas_tecnicas').select('*').order('nome_receita', { ascending: true });
+      let { data: dadosFichas } = await supabase.from('fichas_tecnicas').select('*').order('nome_receita', { ascending: true });
+      
+      // Se não existir nenhuma ficha na base de dados, insere as receitas fixas padrão automaticamente
+      if (!dadosFichas || dadosFichas.length === 0) {
+        await supabase.from('fichas_tecnicas').insert(receitasPadraoFixas);
+        const { data: novasFichas } = await supabase.from('fichas_tecnicas').select('*').order('nome_receita', { ascending: true });
+        dadosFichas = novasFichas;
+      }
+
       setFichasTecnicas(dadosFichas || []);
     } catch (err: any) {
       alert("Erro ao carregar dados: " + err.message);
@@ -94,7 +210,6 @@ export default function ControloProducaoBatata() {
     carregarDados();
   }, []);
 
-  // Selecionar Ficha para Produção
   const selecionarFichaParaProducao = (ficha: FichaTecnicaDB) => {
     setFormProd({
       ...formProd,
@@ -104,7 +219,7 @@ export default function ControloProducaoBatata() {
       unidade_produzida: ficha.unidade_rendimento
     });
 
-    const gastos = ficha.ingredientes.map(item => {
+    const gastos = (ficha.ingredientes || []).map(item => {
       const insumoEncontrado = insumos.find(i => i.nome.toLowerCase().includes(item.nome.toLowerCase()));
       return {
         insumo_id: insumoEncontrado ? insumoEncontrado.id : '',
@@ -116,7 +231,6 @@ export default function ControloProducaoBatata() {
     setAbaAtiva('producao');
   };
 
-  // Guardar Ficha Técnica (Criar ou Atualizar)
   const guardarFichaTecnica = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formFicha.nome_receita || formFicha.ingredientes.length === 0) {
@@ -213,11 +327,11 @@ export default function ControloProducaoBatata() {
   return (
     <div className="min-h-screen bg-zinc-950 text-white font-sans flex flex-col pb-12 p-8">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
-        <h1 className="text-2xl font-black text-orange-500">🥔 Produção, Rendimento & Fichas Técnicas Dinâmicas</h1>
+        <h1 className="text-2xl font-black text-orange-500">🥔 Produção, Rendimento & Fichas Técnicas Fixas</h1>
         
         <div className="flex gap-2 bg-zinc-900 border border-zinc-800 p-1.5 rounded-2xl">
           <button onClick={() => setAbaAtiva('producao')} className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${abaAtiva === 'producao' ? 'bg-orange-600 text-white' : 'text-zinc-400 hover:text-white'}`}>🔥 Registar Produção</button>
-          <button onClick={() => setAbaAtiva('fichas')} className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${abaAtiva === 'fichas' ? 'bg-orange-600 text-white' : 'text-zinc-400 hover:text-white'}`}>📖 Gerir Fichas Técnicas</button>
+          <button onClick={() => setAbaAtiva('fichas')} className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${abaAtiva === 'fichas' || abaAtiva === 'editar-fichas' ? 'bg-orange-600 text-white' : 'text-zinc-400 hover:text-white'}`}>📖 Gerir Fichas Técnicas</button>
         </div>
       </div>
 
@@ -225,15 +339,15 @@ export default function ControloProducaoBatata() {
         <div className="space-y-6">
           <div className="flex justify-between items-center bg-zinc-900 border border-zinc-800 p-6 rounded-3xl">
             <div>
-              <h2 className="text-lg font-black text-white">Lista de Fichas Técnicas</h2>
-              <p className="text-xs text-zinc-400">Pode criar, editar ingredientes, alterar rendimentos ou excluir receitas.</p>
+              <h2 className="text-lg font-black text-white">Receitas Fixas Registadas</h2>
+              <p className="text-xs text-zinc-400">Estas receitas vêm fixadas por padrão, mas pode editá-las, adicionar novos ingredientes ou criar novas.</p>
             </div>
             <button onClick={() => {
               setFichaEditandoId(null);
               setFormFicha({ nome_receita: '', rendimento: 10, unidade_rendimento: 'potes', ingredientes: [{ nome: '', quantidade: 0, unidade: 'g' }] });
               setAbaAtiva('editar-fichas');
             }} className="bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all">
-              + Nova Ficha Técnica
+              + Nova Receita
             </button>
           </div>
 
@@ -338,7 +452,7 @@ export default function ControloProducaoBatata() {
       {abaAtiva === 'producao' && (
         <>
           <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-3xl mb-8 shadow-xl">
-            <h2 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-4">Selecione uma Ficha Técnica para carregar na produção:</h2>
+            <h2 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-4">Selecione uma Ficha Técnica Fixa para carregar na produção:</h2>
             <div className="flex flex-wrap gap-2 mb-6">
               {fichasTecnicas.map(ficha => (
                 <button
