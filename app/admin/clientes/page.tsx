@@ -27,18 +27,21 @@ interface PedidoDetalhado {
 
 interface ClienteGestao {
   idClienteBD?: string;
-  codigoId: string; // ID 01, 02, 03...
+  codigoIdNum: number; // Número para ordenação
+  codigoIdStr: string; // ID formatado (#01, #02...)
   nomePrincipal: string;
   contacto: string;
   morada: string;
   pedidos: PedidoDetalhado[];
 }
 
+type CriterioOrdenacao = 'id_asc' | 'id_desc' | 'alfabetica_asc' | 'alfabetica_desc' | 'pedidos_desc' | 'pedidos_asc';
+
 export default function GestaoClientesCompleta() {
   const [clientes, setClientes] = useState<ClienteGestao[]>([]);
   const [loading, setLoading] = useState(true);
   const [filtroPesquisa, setFiltroPesquisa] = useState('');
-  const [ordemAlfabetica, setOrdemAlfabetica] = useState<'asc' | 'desc'>('asc');
+  const [ordenacao, setOrdenacao] = useState<CriterioOrdenacao>('id_asc');
 
   // Modais e seleções
   const [clienteSelecionado, setClienteSelecionado] = useState<ClienteGestao | null>(null);
@@ -62,11 +65,8 @@ export default function GestaoClientesCompleta() {
   async function carregarDadosCompletos() {
     setLoading(true);
     try {
-      // 1. Buscar todos os pedidos
       const { data: pedidosData } = await supabase.from('pedidos').select('*').order('criado_em', { ascending: false });
-      // 2. Buscar itens dos pedidos
       const { data: itensData } = await supabase.from('itens_pedido').select('*');
-      // 3. Buscar tabela central de clientes (para moradas e contactos oficiais)
       const { data: clientesCadastrados } = await supabase.from('clientes').select('*');
 
       const itensMap: { [key: string]: ItemPedido[] } = {};
@@ -95,7 +95,6 @@ export default function GestaoClientesCompleta() {
         itens: itensMap[ped.id] || []
       }));
 
-      // Agrupar por nome de cliente
       const mapaAgrupado: { [key: string]: PedidoDetalhado[] } = {};
       pedidosCompletos.forEach(ped => {
         const chave = ped.cliente.toLowerCase();
@@ -108,16 +107,17 @@ export default function GestaoClientesCompleta() {
         const pList = mapaAgrupado[chave];
         const nomeReal = pList[0].cliente;
         
-        // Procurar na tabela de clientes oficial se existe morada ou contacto guardado
         const infoCadastrada = (clientesCadastrados || []).find((c: any) => c.nome.toLowerCase() === chave);
         const contactoEncontrado = infoCadastrada?.contacto || pList.find(p => p.contacto_cliente)?.contacto_cliente || '';
         const moradaEncontrada = infoCadastrada?.morada || '';
 
-        const idFormatado = String(contador++).padStart(2, '0');
+        const numId = contador++;
+        const idFormatado = String(numId).padStart(2, '0');
 
         return {
           idClienteBD: infoCadastrada?.id,
-          codigoId: idFormatado,
+          codigoIdNum: numId,
+          codigoIdStr: idFormatado,
           nomePrincipal: nomeReal,
           contacto: contactoEncontrado,
           morada: moradaEncontrada,
@@ -137,7 +137,6 @@ export default function GestaoClientesCompleta() {
     carregarDadosCompletos();
   }, []);
 
-  // Abrir detalhes do cliente
   const abrirFichaCliente = (cli: ClienteGestao) => {
     setClienteSelecionado(cli);
     setEditNome(cli.nomePrincipal);
@@ -146,19 +145,16 @@ export default function GestaoClientesCompleta() {
     setEditando(false);
   };
 
-  // Guardar Edição / Morada do Cliente
   const guardarEdicaoCliente = async () => {
     if (!clienteSelecionado) return;
     try {
       const nomeAntigo = clienteSelecionado.nomePrincipal;
 
-      // 1. Atualizar nome e contacto na tabela de pedidos
       await supabase
         .from('pedidos')
         .update({ cliente: editNome.trim(), contacto_cliente: editContacto.trim() })
         .eq('cliente', nomeAntigo);
 
-      // 2. Atualizar ou inserir na tabela central de clientes (com morada)
       await supabase.from('clientes').upsert({
         nome: editNome.trim(),
         contacto: editContacto.trim(),
@@ -168,7 +164,6 @@ export default function GestaoClientesCompleta() {
       alert('✅ Ficha de cliente e morada atualizadas com sucesso!');
       setEditando(false);
       carregarDadosCompletos();
-      // Atualizar objeto local
       setClienteSelecionado({
         ...clienteSelecionado,
         nomePrincipal: editNome.trim(),
@@ -180,7 +175,6 @@ export default function GestaoClientesCompleta() {
     }
   };
 
-  // Unir clientes selecionados
   const unirClientes = async () => {
     if (selecionadosParaUnir.length < 2) return alert('Selecione pelo menos 2 clientes para unir.');
     if (!nomeUnificadoModal.trim()) return alert('Insira o nome principal unificado.');
@@ -198,17 +192,19 @@ export default function GestaoClientesCompleta() {
     }
   };
 
-  // Filtrar e Ordenar Clientes
+  // Filtrar e Ordenar Clientes Dinamicamente
   const clientesFiltrados = clientes.filter(c => 
     c.nomePrincipal.toLowerCase().includes(filtroPesquisa.toLowerCase()) ||
     c.contacto.includes(filtroPesquisa) ||
     c.morada.toLowerCase().includes(filtroPesquisa.toLowerCase())
   ).sort((a, b) => {
-    if (ordemAlfabetica === 'asc') {
-      return a.nomePrincipal.localeCompare(b.nomePrincipal);
-    } else {
-      return b.nomePrincipal.localeCompare(a.nomePrincipal);
-    }
+    if (ordenacao === 'id_asc') return a.codigoIdNum - b.codigoIdNum;
+    if (ordenacao === 'id_desc') return b.codigoIdNum - a.codigoIdNum;
+    if (ordenacao === 'alfabetica_asc') return a.nomePrincipal.localeCompare(b.nomePrincipal);
+    if (ordenacao === 'alfabetica_desc') return b.nomePrincipal.localeCompare(a.nomePrincipal);
+    if (ordenacao === 'pedidos_desc') return b.pedidos.length - a.pedidos.length; // Mais pedidos primeiro
+    if (ordenacao === 'pedidos_asc') return a.pedidos.length - b.pedidos.length;   // Menos pedidos primeiro
+    return 0;
   });
 
   return (
@@ -221,20 +217,31 @@ export default function GestaoClientesCompleta() {
           <p className="text-xs text-zinc-400 mt-1">Cruzamento automático com histórico, moradas, IDs sequenciais e detalhes de encomendas.</p>
         </div>
         
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <input 
             type="text" 
             placeholder="Pesquisar por nome, telemóvel ou morada..." 
             value={filtroPesquisa}
             onChange={e => setFiltroPesquisa(e.target.value)}
-            className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-xs text-white outline-none focus:border-orange-500 w-80"
+            className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-xs text-white outline-none focus:border-orange-500 w-72"
           />
-          <button 
-            onClick={() => setOrdemAlfabetica(ordemAlfabetica === 'asc' ? 'desc' : 'asc')}
-            className="bg-zinc-950 border border-zinc-800 px-4 py-2.5 rounded-xl text-xs font-bold text-zinc-300 hover:text-white"
-          >
-            Ordem: {ordemAlfabetica === 'asc' ? 'A-Z ▲' : 'Z-A ▼'}
-          </button>
+
+          {/* SELETOR DE ORDENAÇÃO */}
+          <div className="flex items-center gap-2 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5">
+            <span className="text-[10px] font-bold text-zinc-400 uppercase">Ordenar por:</span>
+            <select 
+              value={ordenacao} 
+              onChange={(e) => setOrdenacao(e.target.value as CriterioOrdenacao)}
+              className="bg-transparent text-xs font-bold text-orange-400 outline-none cursor-pointer"
+            >
+              <option value="id_asc" className="bg-zinc-900 text-white">ID (Crescente 01...)</option>
+              <option value="id_desc" className="bg-zinc-900 text-white">ID (Decrescente ...01)</option>
+              <option value="alfabetica_asc" className="bg-zinc-900 text-white">Alfabética (A-Z)</option>
+              <option value="alfabetica_desc" className="bg-zinc-900 text-white">Alfabética (Z-A)</option>
+              <option value="pedidos_desc" className="bg-zinc-900 text-white">Qtd. Pedidos (Maior para Menor)</option>
+              <option value="pedidos_asc" className="bg-zinc-900 text-white">Qtd. Pedidos (Menor para Maior)</option>
+            </select>
+          </div>
         </div>
       </div>
 
@@ -289,7 +296,7 @@ export default function GestaoClientesCompleta() {
                   const totalGasto = cli.pedidos.reduce((acc, p) => acc + p.total_geral, 0);
 
                   return (
-                    <tr key={cli.codigoId} className="hover:bg-zinc-950/60 transition-all">
+                    <tr key={cli.codigoIdStr} className="hover:bg-zinc-950/60 transition-all">
                       <td className="py-3 text-center">
                         <input 
                           type="checkbox" 
@@ -304,7 +311,7 @@ export default function GestaoClientesCompleta() {
                           className="w-4 h-4 accent-orange-600 cursor-pointer"
                         />
                       </td>
-                      <td className="py-3 font-mono font-bold text-orange-400">#{cli.codigoId}</td>
+                      <td className="py-3 font-mono font-bold text-orange-400">#{cli.codigoIdStr}</td>
                       <td className="py-3 font-bold text-white cursor-pointer hover:underline" onClick={() => abrirFichaCliente(cli)}>
                         {cli.nomePrincipal}
                       </td>
@@ -338,7 +345,7 @@ export default function GestaoClientesCompleta() {
 
             <div className="flex justify-between items-start border-b border-zinc-800 pb-4">
               <div>
-                <span className="text-[10px] font-bold text-orange-400 bg-orange-500/10 px-2.5 py-1 rounded uppercase">Ficha ID #{clienteSelecionado.codigoId}</span>
+                <span className="text-[10px] font-bold text-orange-400 bg-orange-500/10 px-2.5 py-1 rounded uppercase">Ficha ID #{clienteSelecionado.codigoIdStr}</span>
                 <h2 className="text-2xl font-black text-white mt-2">{clienteSelecionado.nomePrincipal}</h2>
               </div>
               <button 
@@ -349,7 +356,6 @@ export default function GestaoClientesCompleta() {
               </button>
             </div>
 
-            {/* SE ESTIVER A EDITAR */}
             {editando ? (
               <div className="bg-zinc-950 p-5 rounded-2xl border border-zinc-800 my-4 space-y-4">
                 <h3 className="text-xs font-bold text-orange-400 uppercase tracking-widest">Atualizar Dados do Cliente</h3>
@@ -378,7 +384,6 @@ export default function GestaoClientesCompleta() {
               </div>
             )}
 
-            {/* HISTÓRICO DE PEDIDOS DO CLIENTE */}
             <div className="flex-1 overflow-y-auto space-y-3 mt-2 pr-1">
               <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Histórico de Pedidos ({clienteSelecionado.pedidos.length})</h3>
 
@@ -386,7 +391,6 @@ export default function GestaoClientesCompleta() {
                 <div key={ped.id} className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 flex flex-col gap-2">
                   <div className="flex justify-between items-center text-xs border-b border-zinc-800/80 pb-2">
                     <div>
-                      {/* LINK DIRETO NO NÚMERO DO PEDIDO PARA ABRIR DETALHES */}
                       <button 
                         onClick={() => setPedidoModalDetalhe(ped)}
                         className="font-black text-orange-400 hover:underline text-sm"
@@ -401,7 +405,6 @@ export default function GestaoClientesCompleta() {
                     </div>
                   </div>
 
-                  {/* ITENS COMPRADOS */}
                   <div className="text-xs text-zinc-300">
                     <span className="text-[10px] font-bold text-zinc-500 uppercase block mb-1">Itens Encomendados:</span>
                     <div className="flex flex-wrap gap-2">
