@@ -9,7 +9,7 @@ interface IngredienteFicha {
   unidade: string;
 }
 
-interface FichaTecnicaDB {
+interface FichaTecnica {
   id: string;
   nome_receita: string;
   rendimento: number;
@@ -44,15 +44,14 @@ export default function ControloProducaoBatata() {
 
   const [lotes, setLotes] = useState<LoteProducao[]>([]);
   const [insumos, setInsumos] = useState<Insumo[]>([]);
-  const [fichasTecnicas, setFichasTecnicas] = useState<FichaTecnicaDB[]>([]);
-  const [loading, setLoading] = useState(true);
   const [abaAtiva, setAbaAtiva] = useState<'producao' | 'fichas' | 'editar-fichas'>('producao');
   
   const hoje = new Date().toISOString().split('T')[0];
 
-  // Receitas Fixas Padrão para inicializar automaticamente se necessário
-  const receitasPadraoFixas = [
+  // RECEITAS FIXAS OFICIAIS (Sempre disponíveis, com opção de edição local)
+  const [fichasTecnicas, setFichasTecnicas] = useState<FichaTecnica[]>([
     {
+      id: '1',
       nome_receita: 'Base Batata',
       rendimento: 10,
       unidade_rendimento: 'potes',
@@ -64,6 +63,7 @@ export default function ControloProducaoBatata() {
       ]
     },
     {
+      id: '2',
       nome_receita: 'Molho Branco',
       rendimento: 10,
       unidade_rendimento: 'potes',
@@ -79,6 +79,7 @@ export default function ControloProducaoBatata() {
       ]
     },
     {
+      id: '3',
       nome_receita: 'Strogonoff',
       rendimento: 10,
       unidade_rendimento: 'potes',
@@ -93,6 +94,7 @@ export default function ControloProducaoBatata() {
       ]
     },
     {
+      id: '4',
       nome_receita: 'Frango Cremoso',
       rendimento: 10,
       unidade_rendimento: 'potes',
@@ -106,6 +108,7 @@ export default function ControloProducaoBatata() {
       ]
     },
     {
+      id: '5',
       nome_receita: 'Calabresa',
       rendimento: 10,
       unidade_rendimento: 'potes',
@@ -118,6 +121,7 @@ export default function ControloProducaoBatata() {
       ]
     },
     {
+      id: '6',
       nome_receita: 'Brócolos com bacon',
       rendimento: 10,
       unidade_rendimento: 'potes',
@@ -131,6 +135,7 @@ export default function ControloProducaoBatata() {
       ]
     },
     {
+      id: '7',
       nome_receita: 'Queijo e Fiambre',
       rendimento: 10,
       unidade_rendimento: 'potes',
@@ -140,6 +145,7 @@ export default function ControloProducaoBatata() {
       ]
     },
     {
+      id: '8',
       nome_receita: 'Costela',
       rendimento: 10,
       unidade_rendimento: 'potes',
@@ -158,14 +164,15 @@ export default function ControloProducaoBatata() {
         { nome: 'Margarina', quantidade: 15, unidade: 'g' }
       ]
     }
-  ];
+  ]);
 
   const [fichaEditandoId, setFichaEditandoId] = useState<string | null>(null);
-  const [formFicha, setFormFicha] = useState({
+  const [formFicha, setFormFicha] = useState<FichaTecnica>({
+    id: '',
     nome_receita: '',
     rendimento: 10,
     unidade_rendimento: 'potes',
-    ingredientes: [] as IngredienteFicha[]
+    ingredientes: []
   });
 
   const [formProd, setFormProd] = useState({
@@ -181,28 +188,14 @@ export default function ControloProducaoBatata() {
   const [processando, setProcessando] = useState(false);
 
   async function carregarDados() {
-    setLoading(true);
     try {
       const { data: dadosLotes } = await supabase.from('producao').select('*').eq('lote_ativo', true).order('data_validade', { ascending: true });
       setLotes(dadosLotes || []);
 
       const { data: dadosInsumos } = await supabase.from('insumos').select('id, nome, unidade_medida, quantidade_atual').order('nome', { ascending: true });
       setInsumos(dadosInsumos || []);
-
-      let { data: dadosFichas } = await supabase.from('fichas_tecnicas').select('*').order('nome_receita', { ascending: true });
-      
-      // Se não existir nenhuma ficha na base de dados, insere as receitas fixas padrão automaticamente
-      if (!dadosFichas || dadosFichas.length === 0) {
-        await supabase.from('fichas_tecnicas').insert(receitasPadraoFixas);
-        const { data: novasFichas } = await supabase.from('fichas_tecnicas').select('*').order('nome_receita', { ascending: true });
-        dadosFichas = novasFichas;
-      }
-
-      setFichasTecnicas(dadosFichas || []);
     } catch (err: any) {
-      alert("Erro ao carregar dados: " + err.message);
-    } finally {
-      setLoading(false);
+      console.error("Erro ao carregar dados:", err.message);
     }
   }
 
@@ -210,7 +203,7 @@ export default function ControloProducaoBatata() {
     carregarDados();
   }, []);
 
-  const selecionarFichaParaProducao = (ficha: FichaTecnicaDB) => {
+  const selecionarFichaParaProducao = (ficha: FichaTecnica) => {
     setFormProd({
       ...formProd,
       ficha_id: ficha.id,
@@ -231,41 +224,28 @@ export default function ControloProducaoBatata() {
     setAbaAtiva('producao');
   };
 
-  const guardarFichaTecnica = async (e: React.FormEvent) => {
+  const guardarFichaTecnica = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formFicha.nome_receita || formFicha.ingredientes.length === 0) {
       return alert('Preencha o nome da receita e adicione pelo menos um ingrediente.');
     }
 
-    try {
-      if (fichaEditandoId) {
-        const { error } = await supabase.from('fichas_tecnicas').update(formFicha).eq('id', fichaEditandoId);
-        if (error) throw error;
-        alert('✅ Ficha técnica atualizada com sucesso!');
-      } else {
-        const { error } = await supabase.from('fichas_tecnicas').insert([formFicha]);
-        if (error) throw error;
-        alert('✅ Nova ficha técnica criada com sucesso!');
-      }
-
-      setFichaEditandoId(null);
-      setFormFicha({ nome_receita: '', rendimento: 10, unidade_rendimento: 'potes', ingredientes: [] });
-      carregarDados();
-      setAbaAtiva('fichas');
-    } catch (err: any) {
-      alert('Erro ao guardar ficha técnica: ' + err.message);
+    if (fichaEditandoId) {
+      setFichasTecnicas(fichasTecnicas.map(f => f.id === fichaEditandoId ? formFicha : f));
+      alert('✅ Ficha técnica atualizada com sucesso!');
+    } else {
+      const novaFicha = { ...formFicha, id: String(Date.now()) };
+      setFichasTecnicas([...fichasTecnicas, novaFicha]);
+      alert('✅ Nova ficha técnica criada com sucesso!');
     }
+
+    setFichaEditandoId(null);
+    setAbaAtiva('fichas');
   };
 
-  const excluirFichaTecnica = async (id: string) => {
+  const excluirFichaTecnica = (id: string) => {
     if (!confirm('Tem a certeza que deseja excluir esta ficha técnica?')) return;
-    try {
-      const { error } = await supabase.from('fichas_tecnicas').delete().eq('id', id);
-      if (error) throw error;
-      carregarDados();
-    } catch (err: any) {
-      alert('Erro ao excluir: ' + err.message);
-    }
+    setFichasTecnicas(fichasTecnicas.filter(f => f.id !== id));
   };
 
   const registarProducao = async (e: React.FormEvent) => {
@@ -285,9 +265,9 @@ export default function ControloProducaoBatata() {
         if (insumoAtual) {
           let qtdParaDescontar = Number(ing.quantidade);
           if (ing.unidade === 'g' && insumoAtual.unidade_medida.toLowerCase() === 'kg') {
-            qtdParaDescontar = qtdParaDescontar / 1000;
+            qtdParaDescontar = qtdParaDesconatar / 1000;
           } else if (ing.unidade === 'ml' && insumoAtual.unidade_medida.toLowerCase() === 'l') {
-            qtdParaDescontar = qtdParaDescontar / 1000;
+            qtdParaDesconatar = qtdParaDesconatar / 1000;
           }
 
           const novaQtd = Number(insumoAtual.quantidade_atual) - qtdParaDescontar;
@@ -322,8 +302,6 @@ export default function ControloProducaoBatata() {
     setLotes(lotes.filter(l => l.id !== id));
   };
 
-  if (loading) return <div className="min-h-screen bg-zinc-950 flex items-center justify-center text-zinc-500 font-bold uppercase tracking-widest text-xs">A carregar sistema...</div>;
-
   return (
     <div className="min-h-screen bg-zinc-950 text-white font-sans flex flex-col pb-12 p-8">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
@@ -340,11 +318,11 @@ export default function ControloProducaoBatata() {
           <div className="flex justify-between items-center bg-zinc-900 border border-zinc-800 p-6 rounded-3xl">
             <div>
               <h2 className="text-lg font-black text-white">Receitas Fixas Registadas</h2>
-              <p className="text-xs text-zinc-400">Estas receitas vêm fixadas por padrão, mas pode editá-las, adicionar novos ingredientes ou criar novas.</p>
+              <p className="text-xs text-zinc-400">Pode editar proporções, alterar rendimentos ou adicionar novas receitas.</p>
             </div>
             <button onClick={() => {
               setFichaEditandoId(null);
-              setFormFicha({ nome_receita: '', rendimento: 10, unidade_rendimento: 'potes', ingredientes: [{ nome: '', quantidade: 0, unidade: 'g' }] });
+              setFormFicha({ id: '', nome_receita: '', rendimento: 10, unidade_rendimento: 'potes', ingredientes: [{ nome: '', quantidade: 0, unidade: 'g' }] });
               setAbaAtiva('editar-fichas');
             }} className="bg-orange-600 hover:bg-orange-700 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all">
               + Nova Receita
