@@ -48,7 +48,6 @@ export default function ControloProducaoBatata() {
   
   const hoje = new Date().toISOString().split('T')[0];
 
-  // RECEITAS FIXAS OFICIAIS (Sempre disponíveis, com opção de edição local)
   const [fichasTecnicas, setFichasTecnicas] = useState<FichaTecnica[]>([
     {
       id: '1',
@@ -265,9 +264,9 @@ export default function ControloProducaoBatata() {
         if (insumoAtual) {
           let qtdParaDescontar = Number(ing.quantidade);
           if (ing.unidade === 'g' && insumoAtual.unidade_medida.toLowerCase() === 'kg') {
-            qtdParaDescontar = qtdParaDesconatar / 1000;
+            qtdParaDescontar = qtdParaDescontar / 1000;
           } else if (ing.unidade === 'ml' && insumoAtual.unidade_medida.toLowerCase() === 'l') {
-            qtdParaDesconatar = qtdParaDesconatar / 1000;
+            qtdParaDescontar = qtdParaDescontar / 1000;
           }
 
           const novaQtd = Number(insumoAtual.quantidade_atual) - qtdParaDescontar;
