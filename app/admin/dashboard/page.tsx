@@ -33,6 +33,7 @@ export default function DashboardPage() {
     repasseEstafetas: 0,
     custoTotalItens: 0,
     totalTaxasEntrega: 0,
+    totalDescontos: 0, // Novo: Total de Descontos
     lucroLiquido: 0,
     margemLucro: 0,
     totalPedidos: 0,
@@ -80,6 +81,7 @@ export default function DashboardPage() {
 
       let faturacaoBruta = 0;
       let totalTaxasEntrega = 0;
+      let totalDescontos = 0;
       let repasse = 0;
       let entregas = 0;
       let takeaway = 0;
@@ -92,9 +94,11 @@ export default function DashboardPage() {
         idsPedidosPeriodo.push(p.id);
         const valorPedido = Number(p.total_geral || 0);
         const taxaEnt = Number(p.taxa_entrega || 0);
+        const desc = Number(p.desconto || 0);
 
         faturacaoBruta += valorPedido;
         totalTaxasEntrega += taxaEnt;
+        totalDescontos += desc;
         repasse += taxaEnt;
         
         if (taxaEnt > 0 || (p.canal || '').toLowerCase() === 'glovo') {
@@ -103,10 +107,26 @@ export default function DashboardPage() {
           takeaway++;
         }
 
-        const canal = p.canal || 'Outros';
+        // Normalização rigorosa do nome do canal para unificar variantes (Balcão, Balcã, etc.)
+        let canalBruto = (p.canal || 'Outros').trim();
+        let canalNormalizado = canalBruto;
+        const canalLower = canalBruto.toLowerCase();
+
+        if (canalLower.includes('balc') || canalLower.includes('balca')) {
+          canalNormalizado = 'Balcão';
+        } else if (canalLower.includes('glovo')) {
+          canalNormalizado = 'Glovo';
+        } else if (canalLower.includes('whats')) {
+          canalNormalizado = 'WhatsApp';
+        } else if (canalLower.includes('palm')) {
+          canalNormalizado = 'Palmbites';
+        } else if (canalLower.includes('revend')) {
+          canalNormalizado = 'Revendedores';
+        }
+
         const pagamento = p.forma_pagamento || 'Não Informado'; 
 
-        canaisAgrupados[canal] = (canaisAgrupados[canal] || 0) + valorPedido;
+        canaisAgrupados[canalNormalizado] = (canaisAgrupados[canalNormalizado] || 0) + valorPedido;
         pagamentosAgrupados[pagamento] = (pagamentosAgrupados[pagamento] || 0) + valorPedido;
       });
 
@@ -204,6 +224,7 @@ export default function DashboardPage() {
         repasseEstafetas: repasse,
         custoTotalItens,
         totalTaxasEntrega,
+        totalDescontos,
         lucroLiquido: lucro,
         margemLucro: margem,
         totalPedidos: pedidosValidos.length,
@@ -227,7 +248,6 @@ export default function DashboardPage() {
       carregarDados();
     }
 
-    // SUBSRIÇÃO EM TEMPO REAL (REALTIME) COM SUPABASE
     const channel = supabase
       .channel('dashboard-realtime')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'pedidos' }, () => {
@@ -288,7 +308,7 @@ export default function DashboardPage() {
             Dashboard Financeiro 
             <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-ping inline-block" title="Tempo Real Ativo"></span>
           </h1>
-          <p className="text-zinc-400 text-sm mt-1">Cruzamento de resultados em tempo real com custos de itens e taxas separadas</p>
+          <p className="text-zinc-400 text-sm mt-1">Cruzamento de resultados em tempo real com canais unificados e total de descontos</p>
         </div>
         
         <div className="flex items-center gap-2">
@@ -351,7 +371,7 @@ export default function DashboardPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
             <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl flex items-center justify-between shadow-md">
               <div>
                 <p className="text-zinc-400 text-xs font-bold uppercase tracking-wider">Custos Operacionais</p>
@@ -374,6 +394,14 @@ export default function DashboardPage() {
                 <p className="text-xl font-bold text-white font-mono mt-1">{metricas.totalTaxasEntrega.toFixed(2)}€</p>
               </div>
               <span className="text-3xl">📦</span>
+            </div>
+
+            <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-2xl flex items-center justify-between shadow-md">
+              <div>
+                <p className="text-zinc-400 text-xs font-bold uppercase tracking-wider">Total de Descontos</p>
+                <p className="text-xl font-bold text-red-400 font-mono mt-1">-{metricas.totalDescontos.toFixed(2)}€</p>
+              </div>
+              <span className="text-3xl">🏷️</span>
             </div>
           </div>
 
