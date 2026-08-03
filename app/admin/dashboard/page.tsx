@@ -33,7 +33,7 @@ export default function DashboardPage() {
     repasseEstafetas: 0,
     custoTotalItens: 0,
     totalTaxasEntrega: 0,
-    totalDescontos: 0, // Novo: Total de Descontos
+    totalDescontos: 0,
     lucroLiquido: 0,
     margemLucro: 0,
     totalPedidos: 0,
@@ -107,12 +107,12 @@ export default function DashboardPage() {
           takeaway++;
         }
 
-        // Normalização rigorosa do nome do canal para unificar variantes (Balcão, Balcã, etc.)
+        // UNIFICAÇÃO RIGOROSA: Soma Balcão e Balcã exatamente sob o nome "Balcão"
         let canalBruto = (p.canal || 'Outros').trim();
         let canalNormalizado = canalBruto;
         const canalLower = canalBruto.toLowerCase();
 
-        if (canalLower.includes('balc') || canalLower.includes('balca')) {
+        if (canalLower.startsWith('balc')) {
           canalNormalizado = 'Balcão';
         } else if (canalLower.includes('glovo')) {
           canalNormalizado = 'Glovo';
