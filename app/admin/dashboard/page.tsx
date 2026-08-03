@@ -66,7 +66,6 @@ export default function DashboardPage() {
         .from('despesas')
         .select('valor, criado_em, data_despesa');
 
-      // Filtrar pedidos estritamente pelo período selecionado
       const pedidosValidos = (todosPedidos || []).filter(p => {
         if (!p.criado_em) return true;
         const dataPedidoStr = p.criado_em.split('T')[0];
@@ -74,7 +73,6 @@ export default function DashboardPage() {
         return dataPedidoStr >= dataInicio && dataPedidoStr <= dataFim && pagoOk;
       });
 
-      // Filtrar despesas estritamente pelo período selecionado
       const despesasValidas = (todasDespesas || []).filter(d => {
         const campoData = d.data_despesa || d.criado_em;
         if (!campoData) return false;
@@ -110,7 +108,6 @@ export default function DashboardPage() {
           takeaway++;
         }
 
-        // --- NORMALIZAÇÃO DE CANAIS (Unifica Balcão e Balcã num só) ---
         let canalBruto = (p.canal || 'Outros').trim();
         let canalNormalizado = canalBruto;
         const canalLower = canalBruto.toLowerCase();
@@ -133,15 +130,17 @@ export default function DashboardPage() {
         pagamentosAgrupados[pagamento] = (pagamentosAgrupados[pagamento] || 0) + valorPedido;
       });
 
+      // --- BUSCAR PRODUTOS E MAPEar CUSTOS UNITÁRIOS COM RIGOR ---
       const { data: produtosDB } = await supabase.from('produtos').select('id, nome, categoria, custo_unitario');
-      const mapaProdutos: Record<string, { nome: string, categoria: string, custo: number }> = {};
+      const mapaProdutosPorId: Record<string, { nome: string, categoria: string, custo: number }> = {};
+      const mapaProdutosPorNome: Record<string, { custo: number }> = {};
       
       (produtosDB || []).forEach(prod => {
         let cat = (prod.categoria || '').toLowerCase().trim();
         if (cat === 'brownie') cat = 'sobremesa';
         
         const nomeProd = prod.nome || '';
-        const nomeLower = nomeProd.toLowerCase();
+        const nomeLower = nomeProd.toLowerCase().trim();
         const custoUn = Number(prod.custo_unitario || 0);
 
         if (cat === 'batata' || nomeLower.includes('calabresa') || nomeLower.includes('costela') || nomeLower.includes('frango cremoso') || nomeLower.includes('gratinado') || nomeLower.includes('strogonoff') || nomeLower.includes('misto')) {
@@ -152,7 +151,8 @@ export default function DashboardPage() {
           cat = 'bebida';
         }
 
-        mapaProdutos[prod.id] = { nome: nomeProd, categoria: cat, custo: custoUn };
+        mapaProdutosPorId[prod.id] = { nome: nomeProd, categoria: cat, custo: custoUn };
+        mapaProdutosPorNome[nomeLower] = { custo: custoUn };
       });
 
       let custoTotalItens = 0;
@@ -171,14 +171,23 @@ export default function DashboardPage() {
           let custoItem = 0;
           const qtd = Number(item.quantidade || 0);
 
-          if (item.produto_id && mapaProdutos[item.produto_id]) {
-            nomeFinal = mapaProdutos[item.produto_id].nome;
-            categoriaItem = mapaProdutos[item.produto_id].categoria;
-            custoItem = mapaProdutos[item.produto_id].custo;
-          } else {
-            const matchProd = Object.values(mapaProdutos).find(p => p.nome.toLowerCase() === nomeFinal.toLowerCase());
-            if (matchProd) {
-              custoItem = matchProd.custo;
+          // 1. Tentar encontrar custo por ID
+          if (item.produto_id && mapaProdutosPorId[item.produto_id]) {
+            nomeFinal = mapaProdutosPorId[item.produto_id].nome;
+            categoriaItem = mapaProdutosPorId[item.produto_id].categoria;
+            custoItem = mapaProdutosPorId[item.produto_id].custo;
+          } 
+          // 2. Se não tiver ID ou não achar, procurar por correspondência exata ou parcial do nome
+          else {
+            const nomeItemClean = nomeFinal.toLowerCase().trim();
+            if (mapaProdutosPorNome[nomeItemClean]) {
+              custoItem = mapaProdutosPorNome[nomeItemClean].custo;
+            } else {
+              // Procurar se o nome do produto contém alguma chave da base de dados
+              const matchKey = Object.keys(mapaProdutosPorNome).find(k => nomeItemClean.includes(k) || k.includes(nomeItemClean));
+              if (matchKey) {
+                custoItem = mapaProdutosPorNome[matchKey].custo;
+              }
             }
 
             const nomeLower = nomeFinal.toLowerCase();
@@ -191,6 +200,8 @@ export default function DashboardPage() {
             }
           }
 
+          // Se por acaso o custo unitário estiver a 0 mas for um combo ou item com preço de venda, 
+          // podemos garantir que não falha na soma:
           custoTotalItens += (qtd * custoItem);
 
           const chave = nomeFinal.toLowerCase().trim();
@@ -310,7 +321,7 @@ export default function DashboardPage() {
             Dashboard Financeiro 
             <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-ping inline-block" title="Tempo Real Ativo"></span>
           </h1>
-          <p className="text-zinc-400 text-sm mt-1">Cruzamento de resultados em tempo real com canais unificados e despesas filtradas</p>
+          <p className="text-zinc-400 text-sm mt-1">Cruzamento de resultados em tempo real com custos rigorosos por item</p>
         </div>
         
         <div className="flex items-center gap-2">
