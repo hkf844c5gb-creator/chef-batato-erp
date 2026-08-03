@@ -11,6 +11,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     { href: '/admin/dashboard', icon: '📊', label: 'Dashboard' },
     { href: '/admin/pdv', icon: '💻', label: 'Frente de Loja (PDV)' },
     { href: '/admin/pedidos', icon: '📓', label: 'Pedidos' },
+    { href: '/admin/clientes', icon: '👥', label: 'Clientes' }, // <-- BOTÃO CLIENTES ADICIONADO
     { href: '/admin/caixa', icon: '💶', label: 'Caixa / Movimentos' },
     
     // --- PRODUÇÃO E STOCK ESSENCIAIS ---
@@ -45,8 +46,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           {menuItems.map((item, index) => {
             const isAtivo = pathname === item.href || pathname?.startsWith(item.href + '/');
             
-            // Adiciona um pequeno separador visual antes dos Produtos
-            const addSeparator = index === 5; 
+            // Separador visual antes da área de Produtos
+            const addSeparator = index === 6; 
             
             return (
               <div key={item.href}>
