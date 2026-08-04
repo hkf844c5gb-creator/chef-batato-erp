@@ -79,7 +79,7 @@ export default function CaixaPDV() {
 
   const [isProcessando, setIsProcessando] = useState(false);
 
-  // MONTADOR DINÂMICO DE COMBOS
+  // MONTADOR DINÂMICO DE COMBOS (Agora armazena uma lista de produtos selecionados permitindo repetição)
   const [mostrarModalCombo, setMostrarModalCombo] = useState(false);
   const [comboSelecionado, setComboSelecionado] = useState<Combo | null>(null);
   const [selecoesCombo, setSelecoesCombo] = useState<{ [grupoId: string]: ProdutoVinculado[] }>({});
@@ -253,21 +253,28 @@ export default function CaixaPDV() {
     setMostrarModalCombo(true);
   };
 
-  const toggleSelecaoCombo = (grupo: GrupoCombo, item: ProdutoVinculado) => {
+  // ADICIONAR ITEM AO GRUPO DO COMBO (Permite repetir o mesmo sabor se não ultrapassar o limite)
+  const adicionarItemCombo = (grupo: GrupoCombo, item: ProdutoVinculado) => {
     setSelecoesCombo(prev => {
       const selecoesDoGrupo = prev[grupo.id] || [];
-      const jaSelecionado = selecoesDoGrupo.some(s => s.produto_id === item.produto_id);
-      
-      if (jaSelecionado) {
-        return { ...prev, [grupo.id]: selecoesDoGrupo.filter(s => s.produto_id !== item.produto_id) };
-      } else {
-        if (selecoesDoGrupo.length < grupo.quantidade_maxima) {
-          return { ...prev, [grupo.id]: [...selecoesDoGrupo, item] };
-        } else if (grupo.quantidade_maxima === 1) {
-          return { ...prev, [grupo.id]: [item] };
-        }
-        return prev;
+      if (selecoesDoGrupo.length < grupo.quantidade_maxima) {
+        return { ...prev, [grupo.id]: [...selecoesDoGrupo, item] };
       }
+      return prev;
+    });
+  };
+
+  // REMOVER ITEM ESPECÍFICO DO GRUPO DO COMBO
+  const removerItemCombo = (grupo: GrupoCombo, produtoId: string) => {
+    setSelecoesCombo(prev => {
+      const selecoesDoGrupo = prev[grupo.id] || [];
+      const indexParaRemover = selecoesDoGrupo.findIndex(s => s.produto_id === produtoId);
+      if (indexParaRemover > -1) {
+        const novasSelecoes = [...selecoesDoGrupo];
+        novasSelecoes.splice(indexParaRemover, 1);
+        return { ...prev, [grupo.id]: novasSelecoes };
+      }
+      return prev;
     });
   };
 
@@ -558,7 +565,6 @@ export default function CaixaPDV() {
     const dataHoraCriacaoCompleta = `${dataPedido}T${agora.toTimeString().split(' ')[0]}`;
 
     try {
-      // Gravar / atualizar cliente na tabela centralizada de clientes com morada
       await supabase.from('clientes').upsert({
         nome: cliente.trim(),
         contacto: contactoCliente.trim(),
@@ -935,7 +941,7 @@ export default function CaixaPDV() {
 
       {mostrarModalCombo && comboSelecionado && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-2xl p-6 flex flex-col max-h-[90vh]">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-2xl p-6 flex flex-col max-h-[90vh] relative">
             <button onClick={() => setMostrarModalCombo(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-white">✕</button>
             <h2 className="text-xl font-bold text-orange-500">{comboSelecionado.nome}</h2>
             
@@ -947,11 +953,36 @@ export default function CaixaPDV() {
                     <h3 className="text-xs font-bold text-zinc-300 uppercase mb-3">{grupo.nome} ({selecoesDesteGrupo.length}/{grupo.quantidade_maxima})</h3>
                     <div className="grid grid-cols-2 gap-2">
                       {grupo.combo_grupo_produtos.filter(i => i.ativo).map((item) => {
-                        const estaSelecionado = selecoesDesteGrupo.some(s => s.produto_id === item.produto_id);
+                        const qtdSelecionadaDesteItem = selecoesDesteGrupo.filter(s => s.produto_id === item.produto_id).length;
+                        const atingiuMaximoGrupo = selecoesDesteGrupo.length >= grupo.quantidade_maxima;
+
                         return (
-                          <button key={item.produto_id} type="button" onClick={() => toggleSelecaoCombo(grupo, item)} className={`p-3 text-left rounded-xl text-xs border ${estaSelecionado ? 'bg-orange-600/20 border-orange-500 text-white' : 'bg-zinc-950 border-zinc-800 text-zinc-400'}`}>
-                            <span className="block font-medium">{item.produto.nome}</span>
-                          </button>
+                          <div key={item.produto_id} className={`p-3 rounded-xl text-xs border flex flex-col justify-between gap-2 ${qtdSelecionadaDesteItem > 0 ? 'bg-orange-600/20 border-orange-500 text-white' : 'bg-zinc-950 border-zinc-800 text-zinc-400'}`}>
+                            <span className="font-medium">{item.produto.nome}</span>
+                            
+                            <div className="flex items-center justify-between mt-1">
+                              <span className="text-[11px] font-bold text-orange-400">Selecionados: {qtdSelecionadaDesteItem}</span>
+                              <div className="flex items-center gap-1.5">
+                                <button 
+                                  type="button" 
+                                  onClick={() => removerItemCombo(grupo, item.produto_id)}
+                                  disabled={qtdSelecionadaDesteItem === 0}
+                                  className="w-7 h-7 bg-zinc-900 border border-zinc-700 rounded-lg flex items-center justify-center text-white disabled:opacity-30 hover:bg-zinc-800"
+                                >
+                                  -
+                                </button>
+                                <span className="text-xs font-mono font-bold w-4 text-center">{qtdSelecionadaDesteItem}</span>
+                                <button 
+                                  type="button" 
+                                  onClick={() => adicionarItemCombo(grupo, item)}
+                                  disabled={atingiuMaximoGrupo}
+                                  className="w-7 h-7 bg-orange-600 rounded-lg flex items-center justify-center text-white disabled:opacity-30 hover:bg-orange-500"
+                                >
+                                  +
+                                </button>
+                              </div>
+                            </div>
+                          </div>
                         );
                       })}
                     </div>
