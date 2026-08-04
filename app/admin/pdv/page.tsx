@@ -79,7 +79,7 @@ export default function CaixaPDV() {
 
   const [isProcessando, setIsProcessando] = useState(false);
 
-  // MONTADOR DINÂMICO DE COMBOS (Agora armazena uma lista de produtos selecionados permitindo repetição)
+  // MONTADOR DINÂMICO DE COMBOS
   const [mostrarModalCombo, setMostrarModalCombo] = useState(false);
   const [comboSelecionado, setComboSelecionado] = useState<Combo | null>(null);
   const [selecoesCombo, setSelecoesCombo] = useState<{ [grupoId: string]: ProdutoVinculado[] }>({});
@@ -253,28 +253,43 @@ export default function CaixaPDV() {
     setMostrarModalCombo(true);
   };
 
-  // ADICIONAR ITEM AO GRUPO DO COMBO (Permite repetir o mesmo sabor se não ultrapassar o limite)
-  const adicionarItemCombo = (grupo: GrupoCombo, item: ProdutoVinculado) => {
+  // Lógica de Toggle do Combo corrigida para permitir repetições pelo clique no mesmo botão
+  const toggleSelecaoCombo = (grupo: GrupoCombo, item: ProdutoVinculado) => {
     setSelecoesCombo(prev => {
       const selecoesDoGrupo = prev[grupo.id] || [];
-      if (selecoesDoGrupo.length < grupo.quantidade_maxima) {
-        return { ...prev, [grupo.id]: [...selecoesDoGrupo, item] };
+      
+      // Se for apenas 1 opção (ex: escolha 1 bebida), substitui ou remove
+      if (grupo.quantidade_maxima === 1) {
+        const jaSelecionado = selecoesDoGrupo.some(s => s.produto_id === item.produto_id);
+        if (jaSelecionado) {
+          return { ...prev, [grupo.id]: [] };
+        } else {
+          return { ...prev, [grupo.id]: [item] };
+        }
       }
-      return prev;
-    });
-  };
 
-  // REMOVER ITEM ESPECÍFICO DO GRUPO DO COMBO
-  const removerItemCombo = (grupo: GrupoCombo, produtoId: string) => {
-    setSelecoesCombo(prev => {
-      const selecoesDoGrupo = prev[grupo.id] || [];
-      const indexParaRemover = selecoesDoGrupo.findIndex(s => s.produto_id === produtoId);
-      if (indexParaRemover > -1) {
-        const novasSelecoes = [...selecoesDoGrupo];
-        novasSelecoes.splice(indexParaRemover, 1);
-        return { ...prev, [grupo.id]: novasSelecoes };
+      // Se for > 1 (ex: Batato para Dois), aplicamos a lógica de ciclo: 0 -> 1 -> 2 -> 0
+      const currentCount = selecoesDoGrupo.filter(s => s.produto_id === item.produto_id).length;
+      const totalSelected = selecoesDoGrupo.length;
+      const remainingSpace = grupo.quantidade_maxima - totalSelected;
+
+      // O máximo que podemos ter deste item é o limite do grupo OU o que já temos + o espaço livre
+      const maxAllowedForThisItem = Math.min(grupo.quantidade_maxima, currentCount + remainingSpace);
+
+      let newCount = currentCount + 1;
+      
+      // Se ao adicionar passamos do limite permitido para este clique, então resetamos a escolha a 0 (Remove)
+      if (newCount > maxAllowedForThisItem) {
+          newCount = 0; 
       }
-      return prev;
+
+      // Remove todas as instâncias atuais deste item para colocar as novas
+      const otherItems = selecoesDoGrupo.filter(s => s.produto_id !== item.produto_id);
+      
+      // Adiciona o item repetido X vezes
+      const newItemsToAdd = Array(newCount).fill(item);
+
+      return { ...prev, [grupo.id]: [...otherItems, ...newItemsToAdd] };
     });
   };
 
@@ -565,6 +580,7 @@ export default function CaixaPDV() {
     const dataHoraCriacaoCompleta = `${dataPedido}T${agora.toTimeString().split(' ')[0]}`;
 
     try {
+      // Gravar / atualizar cliente na tabela centralizada de clientes com morada
       await supabase.from('clientes').upsert({
         nome: cliente.trim(),
         contacto: contactoCliente.trim(),
@@ -954,35 +970,24 @@ export default function CaixaPDV() {
                     <div className="grid grid-cols-2 gap-2">
                       {grupo.combo_grupo_produtos.filter(i => i.ativo).map((item) => {
                         const qtdSelecionadaDesteItem = selecoesDesteGrupo.filter(s => s.produto_id === item.produto_id).length;
-                        const atingiuMaximoGrupo = selecoesDesteGrupo.length >= grupo.quantidade_maxima;
-
+                        const estaSelecionado = qtdSelecionadaDesteItem > 0;
+                        
                         return (
-                          <div key={item.produto_id} className={`p-3 rounded-xl text-xs border flex flex-col justify-between gap-2 ${qtdSelecionadaDesteItem > 0 ? 'bg-orange-600/20 border-orange-500 text-white' : 'bg-zinc-950 border-zinc-800 text-zinc-400'}`}>
-                            <span className="font-medium">{item.produto.nome}</span>
-                            
-                            <div className="flex items-center justify-between mt-1">
-                              <span className="text-[11px] font-bold text-orange-400">Selecionados: {qtdSelecionadaDesteItem}</span>
-                              <div className="flex items-center gap-1.5">
-                                <button 
-                                  type="button" 
-                                  onClick={() => removerItemCombo(grupo, item.produto_id)}
-                                  disabled={qtdSelecionadaDesteItem === 0}
-                                  className="w-7 h-7 bg-zinc-900 border border-zinc-700 rounded-lg flex items-center justify-center text-white disabled:opacity-30 hover:bg-zinc-800"
-                                >
-                                  -
-                                </button>
-                                <span className="text-xs font-mono font-bold w-4 text-center">{qtdSelecionadaDesteItem}</span>
-                                <button 
-                                  type="button" 
-                                  onClick={() => adicionarItemCombo(grupo, item)}
-                                  disabled={atingiuMaximoGrupo}
-                                  className="w-7 h-7 bg-orange-600 rounded-lg flex items-center justify-center text-white disabled:opacity-30 hover:bg-orange-500"
-                                >
-                                  +
-                                </button>
-                              </div>
+                          <button 
+                            key={item.produto_id} 
+                            type="button" 
+                            onClick={() => toggleSelecaoCombo(grupo, item)} 
+                            className={`p-3 text-left rounded-xl text-xs border ${estaSelecionado ? 'bg-orange-600/20 border-orange-500 text-white' : 'bg-zinc-950 border-zinc-800 text-zinc-400'}`}
+                          >
+                            <div className="flex justify-between items-center">
+                              <span className="block font-medium">{item.produto.nome}</span>
+                              {qtdSelecionadaDesteItem > 1 && (
+                                <span className="bg-orange-500 text-white px-1.5 py-0.5 rounded text-[10px] font-black">
+                                  x{qtdSelecionadaDesteItem}
+                                </span>
+                              )}
                             </div>
-                          </div>
+                          </button>
                         );
                       })}
                     </div>
