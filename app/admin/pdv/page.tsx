@@ -150,6 +150,7 @@ export default function CaixaPDV() {
       const { data: dataRevs } = await supabase.from('revendedores').select('*').order('nome_empresa', { ascending: true });
       if (dataRevs) setListaRevendedores(dataRevs);
 
+      // Carrega os clientes cruzando a informação diretamente
       const { data: dataClientes } = await supabase.from('clientes').select('*').order('nome', { ascending: true });
       if (dataClientes) setListaClientesCadastrados(dataClientes);
 
@@ -223,11 +224,16 @@ export default function CaixaPDV() {
     (p.categoria || '').toLowerCase().includes('sobremesa')
   );
 
+  // Seleciona o cliente e mapeia de forma flexível as colunas da base de dados
   const selecionarClienteSugerido = (c: any) => {
-    setCliente(c.nome);
-    setContactoCliente(c.contacto || '');
-    setMoradaCliente(c.morada || '');
-    setMostrarSugestoes(false); // Fecha a lista após selecionar
+    const nomeCliente = c.nome || '';
+    const contactoDb = c.contacto || c.telefone || c.telemovel || '';
+    const moradaDb = c.morada || c.endereco || '';
+
+    setCliente(nomeCliente);
+    setContactoCliente(contactoDb);
+    setMoradaCliente(moradaDb);
+    setMostrarSugestoes(false);
   };
 
   const adicionarAoCarrinho = (produto: Produto) => {
@@ -571,12 +577,34 @@ export default function CaixaPDV() {
     const dataHoraCriacaoCompleta = `${dataPedido}T${agora.toTimeString().split(' ')[0]}`;
 
     try {
-      await supabase.from('clientes').upsert({
-        nome: cliente.trim(),
-        contacto: contactoCliente.trim(),
-        morada: moradaCliente.trim()
-      }, { onConflict: 'contacto' });
+      // 1. Atualizar ou Inserir Cliente de forma 100% segura (sem depender do comando Upsert que quebra se as regras na BD não existirem)
+      const nomeDoCliente = cliente.trim();
+      
+      const { data: clienteExistente } = await supabase
+        .from('clientes')
+        .select('id')
+        .eq('nome', nomeDoCliente)
+        .single();
+        
+      if (clienteExistente) {
+        // Se já existe atualizamos morada e contacto
+        await supabase.from('clientes')
+          .update({
+             contacto: contactoCliente.trim(),
+             morada: moradaCliente.trim()
+          })
+          .eq('id', clienteExistente.id);
+      } else {
+        // Se é um cliente novo, cria-o
+        await supabase.from('clientes')
+          .insert([{
+             nome: nomeDoCliente,
+             contacto: contactoCliente.trim(),
+             morada: moradaCliente.trim()
+          }]);
+      }
 
+      // 2. Gerar Número e Lançar Pedido
       const { data: todosPedidos } = await supabase.from('pedidos').select('numero_pedido');
       let maiorNumero = 365;
       if (todosPedidos) {
@@ -593,7 +621,7 @@ export default function CaixaPDV() {
         .from('pedidos')
         .insert([{ 
           numero_pedido: novoNumeroStr, 
-          cliente: cliente.trim(), 
+          cliente: nomeDoCliente, 
           contacto_cliente: contactoCliente.trim(),
           canal: canal, 
           forma_pagamento: formaPagamento, 
@@ -681,7 +709,7 @@ export default function CaixaPDV() {
                 setMostrarSugestoes(true);
               }} 
               onFocus={() => setMostrarSugestoes(true)}
-              onBlur={() => setMostrarSugestoes(false)}
+              onBlur={() => setTimeout(() => setMostrarSugestoes(false), 200)} // Adicionado o timeout padrão para não colidir com o clique na listagem
               placeholder="Nome ou Telemóvel..." 
               className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none text-white font-bold transition-all"
               autoComplete="off" 
@@ -691,32 +719,41 @@ export default function CaixaPDV() {
             {mostrarSugestoes && cliente.trim().length > 0 && (
               <div className="absolute left-0 right-0 top-full mt-2 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-[100] max-h-60 overflow-y-auto custom-scrollbar">
                 {listaClientesCadastrados
-                  .filter(c => 
-                    (c.nome && c.nome.toLowerCase().includes(cliente.toLowerCase())) || 
-                    (c.contacto && c.contacto.includes(cliente))
-                  )
-                  .map(c => (
-                    <div 
-                      key={c.id} 
-                      // O onMouseDown executa ANTES do onBlur, garantindo que o clique é registado instantaneamente!
-                      onMouseDown={(e) => {
-                        e.preventDefault(); 
-                        selecionarClienteSugerido(c);
-                      }}
-                      className="p-3 hover:bg-orange-600/20 cursor-pointer border-b border-zinc-800/50 text-xs flex justify-between items-center transition-all"
-                    >
-                      <span className="font-bold text-white">{c.nome}</span>
-                      <span className="text-zinc-400 text-[10px] truncate max-w-[150px] text-right">
-                        📞 {c.contacto || 'S/N'} {c.morada ? `| 📍 ${c.morada}` : ''}
-                      </span>
-                    </div>
-                  ))}
+                  .filter(c => {
+                    const termo = cliente.toLowerCase();
+                    const nomeStr = (c.nome || '').toLowerCase();
+                    const telStr = (c.contacto || c.telefone || c.telemovel || '').toLowerCase();
+                    return nomeStr.includes(termo) || telStr.includes(termo);
+                  })
+                  .map(c => {
+                    // Extração de variáveis dinâmicas caso o nome da coluna da BD varie
+                    const telExibicao = c.contacto || c.telefone || c.telemovel || 'S/N';
+                    const moradaExibicao = c.morada || c.endereco || '';
+
+                    return (
+                      <div 
+                        key={c.id} 
+                        onMouseDown={(e) => {
+                          e.preventDefault(); 
+                          selecionarClienteSugerido(c);
+                        }}
+                        className="p-3 hover:bg-orange-600/20 cursor-pointer border-b border-zinc-800/50 text-xs flex justify-between items-center transition-all"
+                      >
+                        <span className="font-bold text-white">{c.nome}</span>
+                        <span className="text-zinc-400 text-[10px] truncate max-w-[150px] text-right">
+                          📞 {telExibicao} {moradaExibicao ? `| 📍 ${moradaExibicao}` : ''}
+                        </span>
+                      </div>
+                    );
+                  })}
                   
                 {/* Mensagem se não encontrar nada */}
-                {listaClientesCadastrados.filter(c => 
-                  (c.nome && c.nome.toLowerCase().includes(cliente.toLowerCase())) || 
-                  (c.contacto && c.contacto.includes(cliente))
-                ).length === 0 && (
+                {listaClientesCadastrados.filter(c => {
+                    const termo = cliente.toLowerCase();
+                    const nomeStr = (c.nome || '').toLowerCase();
+                    const telStr = (c.contacto || c.telefone || c.telemovel || '').toLowerCase();
+                    return nomeStr.includes(termo) || telStr.includes(termo);
+                }).length === 0 && (
                   <div className="p-4 text-xs text-zinc-500 text-center italic">
                     Nenhum cliente encontrado com "{cliente}"
                   </div>
