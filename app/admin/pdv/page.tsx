@@ -227,7 +227,7 @@ export default function CaixaPDV() {
     setCliente(c.nome);
     setContactoCliente(c.contacto || '');
     setMoradaCliente(c.morada || '');
-    setMostrarSugestoes(false);
+    setMostrarSugestoes(false); // Fecha a lista após selecionar
   };
 
   const adicionarAoCarrinho = (produto: Produto) => {
@@ -253,12 +253,10 @@ export default function CaixaPDV() {
     setMostrarModalCombo(true);
   };
 
-  // Lógica de Toggle do Combo corrigida para permitir repetições pelo clique no mesmo botão
   const toggleSelecaoCombo = (grupo: GrupoCombo, item: ProdutoVinculado) => {
     setSelecoesCombo(prev => {
       const selecoesDoGrupo = prev[grupo.id] || [];
       
-      // Se for apenas 1 opção (ex: escolha 1 bebida), substitui ou remove
       if (grupo.quantidade_maxima === 1) {
         const jaSelecionado = selecoesDoGrupo.some(s => s.produto_id === item.produto_id);
         if (jaSelecionado) {
@@ -268,25 +266,19 @@ export default function CaixaPDV() {
         }
       }
 
-      // Se for > 1 (ex: Batato para Dois), aplicamos a lógica de ciclo: 0 -> 1 -> 2 -> 0
       const currentCount = selecoesDoGrupo.filter(s => s.produto_id === item.produto_id).length;
       const totalSelected = selecoesDoGrupo.length;
       const remainingSpace = grupo.quantidade_maxima - totalSelected;
 
-      // O máximo que podemos ter deste item é o limite do grupo OU o que já temos + o espaço livre
       const maxAllowedForThisItem = Math.min(grupo.quantidade_maxima, currentCount + remainingSpace);
 
       let newCount = currentCount + 1;
       
-      // Se ao adicionar passamos do limite permitido para este clique, então resetamos a escolha a 0 (Remove)
       if (newCount > maxAllowedForThisItem) {
           newCount = 0; 
       }
 
-      // Remove todas as instâncias atuais deste item para colocar as novas
       const otherItems = selecoesDoGrupo.filter(s => s.produto_id !== item.produto_id);
-      
-      // Adiciona o item repetido X vezes
       const newItemsToAdd = Array(newCount).fill(item);
 
       return { ...prev, [grupo.id]: [...otherItems, ...newItemsToAdd] };
@@ -329,7 +321,6 @@ export default function CaixaPDV() {
     let precoBaseCombo = 0;
     let detalheDesconto = '';
 
-    // Regra específica para o Combo "BATATÔ para DOIS" por canal
     if (comboSelecionado.nome.toLowerCase().includes('para dois')) {
       const descontoComboForcado = canal === 'Glovo' ? 1.70 : 1.50;
       precoBaseCombo = Math.max(0, somaPrecosOriginais - descontoComboForcado);
@@ -580,7 +571,6 @@ export default function CaixaPDV() {
     const dataHoraCriacaoCompleta = `${dataPedido}T${agora.toTimeString().split(' ')[0]}`;
 
     try {
-      // Gravar / atualizar cliente na tabela centralizada de clientes com morada
       await supabase.from('clientes').upsert({
         nome: cliente.trim(),
         contacto: contactoCliente.trim(),
@@ -648,7 +638,7 @@ export default function CaixaPDV() {
   };
 
   const renderBotaoCombo = (combo: Combo) => (
-    <button key={combo.id} onClick={() => iniciarMontagemCombo(combo)} className="bg-zinc-900 hover:bg-zinc-800 border border-orange-500/20 p-5 rounded-2xl text-left h-40 flex flex-col justify-between">
+    <button key={combo.id} onClick={() => iniciarMontagemCombo(combo)} className="bg-zinc-900 hover:bg-zinc-800 border border-orange-500/20 p-5 rounded-2xl text-left h-40 flex flex-col justify-between transition-all">
       <div><span className="text-[9px] font-bold text-orange-400 bg-orange-500/10 px-2 py-0.5 rounded">COMBO DINÂMICO</span><h3 className="font-bold mt-2 text-zinc-100">{combo.nome}</h3><p className="text-xs text-zinc-400 mt-1 line-clamp-2">{combo.descricao}</p></div>
       <div className="text-xs font-semibold text-orange-500">Montar Opções ➜</div>
     </button>
@@ -659,8 +649,8 @@ export default function CaixaPDV() {
       
       <div className="bg-zinc-900 border-b border-zinc-800 px-5 py-3 flex justify-between items-center">
         <div className="flex gap-2">
-          <button onClick={() => setCanal('Balcão')} className={`px-4 py-1.5 rounded-lg text-xs font-bold ${canal !== 'Revendedores' ? 'bg-orange-600 text-white' : 'bg-zinc-800 text-zinc-400'}`}>PDV Normal</button>
-          <button onClick={() => setCanal('Revendedores')} className={`px-4 py-1.5 rounded-lg text-xs font-bold ${canal === 'Revendedores' ? 'bg-amber-500 text-zinc-950' : 'bg-zinc-800 text-zinc-400'}`}>🏪 Fecho / Pedido Revendedor</button>
+          <button onClick={() => setCanal('Balcão')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${canal !== 'Revendedores' ? 'bg-orange-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-white'}`}>PDV Normal</button>
+          <button onClick={() => setCanal('Revendedores')} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${canal === 'Revendedores' ? 'bg-amber-500 text-zinc-950' : 'bg-zinc-800 text-zinc-400 hover:text-white'}`}>🏪 Fecho / Pedido Revendedor</button>
         </div>
         <div className="flex items-center gap-3">
           <span className="text-xl">🥔</span>
@@ -691,24 +681,46 @@ export default function CaixaPDV() {
                 setMostrarSugestoes(true);
               }} 
               onFocus={() => setMostrarSugestoes(true)}
-              placeholder="Escreva o nome do cliente..." 
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none text-white font-bold" 
+              onBlur={() => setMostrarSugestoes(false)}
+              placeholder="Nome ou Telemóvel..." 
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none text-white font-bold transition-all"
+              autoComplete="off" 
             />
 
+            {/* CAIXA DE SUGESTÕES DE AUTOCOMPLETE */}
             {mostrarSugestoes && cliente.trim().length > 0 && (
-              <div className="absolute left-0 right-0 top-full mt-1 bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl z-50 max-h-48 overflow-y-auto">
+              <div className="absolute left-0 right-0 top-full mt-2 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-[100] max-h-60 overflow-y-auto custom-scrollbar">
                 {listaClientesCadastrados
-                  .filter(c => c.nome.toLowerCase().includes(cliente.toLowerCase()) || (c.contacto && c.contacto.includes(cliente)))
+                  .filter(c => 
+                    (c.nome && c.nome.toLowerCase().includes(cliente.toLowerCase())) || 
+                    (c.contacto && c.contacto.includes(cliente))
+                  )
                   .map(c => (
                     <div 
                       key={c.id} 
-                      onClick={() => selecionarClienteSugerido(c)}
-                      className="p-2.5 hover:bg-orange-600/20 cursor-pointer border-b border-zinc-800/50 text-xs flex justify-between items-center"
+                      // O onMouseDown executa ANTES do onBlur, garantindo que o clique é registado instantaneamente!
+                      onMouseDown={(e) => {
+                        e.preventDefault(); 
+                        selecionarClienteSugerido(c);
+                      }}
+                      className="p-3 hover:bg-orange-600/20 cursor-pointer border-b border-zinc-800/50 text-xs flex justify-between items-center transition-all"
                     >
                       <span className="font-bold text-white">{c.nome}</span>
-                      <span className="text-zinc-400 text-[10px]">📞 {c.contacto} | 📍 {c.morada}</span>
+                      <span className="text-zinc-400 text-[10px] truncate max-w-[150px] text-right">
+                        📞 {c.contacto || 'S/N'} {c.morada ? `| 📍 ${c.morada}` : ''}
+                      </span>
                     </div>
                   ))}
+                  
+                {/* Mensagem se não encontrar nada */}
+                {listaClientesCadastrados.filter(c => 
+                  (c.nome && c.nome.toLowerCase().includes(cliente.toLowerCase())) || 
+                  (c.contacto && c.contacto.includes(cliente))
+                ).length === 0 && (
+                  <div className="p-4 text-xs text-zinc-500 text-center italic">
+                    Nenhum cliente encontrado com "{cliente}"
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -894,7 +906,7 @@ export default function CaixaPDV() {
                       if (categoriaAtiva === 'bebidas') return prod.categoria === 'bebida';
                       return false;
                     }).map((prod) => (
-                      <button key={prod.id} onClick={() => adicionarAoCarrinho(prod)} className="bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 p-4 rounded-xl text-left flex flex-col justify-between h-32">
+                      <button key={prod.id} onClick={() => adicionarAoCarrinho(prod)} className="bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 p-4 rounded-xl text-left flex flex-col justify-between h-32 transition-all">
                         <div><span className="text-[9px] font-bold uppercase text-orange-400 bg-orange-500/10 px-2 py-0.5 rounded">{prod.categoria}</span><h3 className="font-semibold mt-2 text-zinc-200 text-sm">{prod.nome}</h3></div>
                         <span className="text-base font-bold text-white mt-1">{getPrecoPorCanal(prod).toFixed(2)}€</span>
                       </button>
@@ -907,7 +919,7 @@ export default function CaixaPDV() {
           )}
 
           {canal !== 'Revendedores' && (
-            <aside className="w-96 bg-zinc-900 border-l border-zinc-800 flex flex-col">
+            <aside className="w-96 bg-zinc-900 border-l border-zinc-800 flex flex-col shadow-2xl z-10">
               <div className="p-4 border-b border-zinc-800 font-semibold text-zinc-300 flex justify-between items-center">
                 <div className="flex flex-col">
                   <span className="text-xs text-zinc-500">Pedido de:</span>
@@ -916,7 +928,7 @@ export default function CaixaPDV() {
                 <span className="text-xs text-zinc-400 bg-zinc-950 px-2 py-1 rounded border border-zinc-800">{canal}</span>
               </div>
 
-              <div className="flex-1 p-4 overflow-y-auto space-y-3">
+              <div className="flex-1 p-4 overflow-y-auto space-y-3 custom-scrollbar">
                 {carrinho.map((item, idx) => (
                   <div key={idx} className="bg-zinc-950 p-3 rounded-xl border border-zinc-800 flex flex-col gap-1">
                     <div className="flex justify-between items-start">
@@ -930,7 +942,7 @@ export default function CaixaPDV() {
                         )}
                         <div className="text-xs text-zinc-400 mt-1">{item.precoAplicado.toFixed(2)}€ × {item.quantidade}</div>
                       </div>
-                      <button onClick={() => removerDoCarrinho(idx)} className="text-zinc-400 text-xs hover:text-red-400">✕</button>
+                      <button onClick={() => removerDoCarrinho(idx)} className="text-zinc-500 text-lg hover:text-red-400 px-2">✕</button>
                     </div>
                   </div>
                 ))}
@@ -944,9 +956,9 @@ export default function CaixaPDV() {
                 <button 
                   onClick={finalizarVenda} 
                   disabled={isProcessando}
-                  className="w-full font-bold py-3 rounded-xl text-center text-sm shadow-lg bg-orange-600 hover:bg-orange-700 text-white transition-all disabled:opacity-50"
+                  className="w-full font-bold py-3.5 rounded-xl text-center text-sm shadow-lg bg-orange-600 hover:bg-orange-700 text-white transition-all disabled:opacity-50 uppercase tracking-widest mt-2"
                 >
-                  {isProcessando ? 'A Processar...' : 'Confirmar & Lançar Pedido'}
+                  {isProcessando ? 'A Processar...' : 'Confirmar Pedido'}
                 </button>
               </div>
             </aside>
@@ -957,17 +969,23 @@ export default function CaixaPDV() {
 
       {mostrarModalCombo && comboSelecionado && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-2xl p-6 flex flex-col max-h-[90vh] relative">
-            <button onClick={() => setMostrarModalCombo(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-white">✕</button>
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-2xl p-6 flex flex-col max-h-[90vh] relative shadow-2xl">
+            <button onClick={() => setMostrarModalCombo(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-white bg-zinc-800 w-8 h-8 rounded-full flex items-center justify-center">✕</button>
             <h2 className="text-xl font-bold text-orange-500">{comboSelecionado.nome}</h2>
+            <p className="text-xs text-zinc-400 mt-1">Selecione os sabores clicando nas caixas abaixo.</p>
             
-            <div className="flex-1 overflow-y-auto space-y-6 mt-4 pr-1">
+            <div className="flex-1 overflow-y-auto space-y-6 mt-6 pr-1 custom-scrollbar">
               {comboSelecionado.combo_grupos.map((grupo) => {
                 const selecoesDesteGrupo = selecoesCombo[grupo.id] || [];
                 return (
                   <div key={grupo.id}>
-                    <h3 className="text-xs font-bold text-zinc-300 uppercase mb-3">{grupo.nome} ({selecoesDesteGrupo.length}/{grupo.quantidade_maxima})</h3>
-                    <div className="grid grid-cols-2 gap-2">
+                    <h3 className="text-xs font-bold text-zinc-300 uppercase mb-3 flex items-center justify-between border-b border-zinc-800 pb-2">
+                      <span>{grupo.nome}</span>
+                      <span className={`px-2 py-0.5 rounded text-[10px] ${selecoesDesteGrupo.length >= grupo.quantidade_maxima ? 'bg-green-500/20 text-green-400' : 'bg-orange-500/20 text-orange-400'}`}>
+                        ({selecoesDesteGrupo.length}/{grupo.quantidade_maxima})
+                      </span>
+                    </h3>
+                    <div className="grid grid-cols-2 gap-3">
                       {grupo.combo_grupo_produtos.filter(i => i.ativo).map((item) => {
                         const qtdSelecionadaDesteItem = selecoesDesteGrupo.filter(s => s.produto_id === item.produto_id).length;
                         const estaSelecionado = qtdSelecionadaDesteItem > 0;
@@ -977,12 +995,12 @@ export default function CaixaPDV() {
                             key={item.produto_id} 
                             type="button" 
                             onClick={() => toggleSelecaoCombo(grupo, item)} 
-                            className={`p-3 text-left rounded-xl text-xs border ${estaSelecionado ? 'bg-orange-600/20 border-orange-500 text-white' : 'bg-zinc-950 border-zinc-800 text-zinc-400'}`}
+                            className={`p-4 text-left rounded-xl text-xs border transition-all ${estaSelecionado ? 'bg-orange-600/20 border-orange-500 text-white shadow-[0_0_15px_rgba(249,115,22,0.15)]' : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
                           >
-                            <div className="flex justify-between items-center">
+                            <div className="flex justify-between items-center gap-2">
                               <span className="block font-medium">{item.produto.nome}</span>
                               {qtdSelecionadaDesteItem > 1 && (
-                                <span className="bg-orange-500 text-white px-1.5 py-0.5 rounded text-[10px] font-black">
+                                <span className="bg-orange-500 text-white px-2 py-0.5 rounded text-[10px] font-black shadow-md">
                                   x{qtdSelecionadaDesteItem}
                                 </span>
                               )}
@@ -997,7 +1015,7 @@ export default function CaixaPDV() {
             </div>
 
             <div className="pt-4 border-t border-zinc-800 mt-6">
-              <button type="button" onClick={confirmarMontagemCombo} className="w-full bg-orange-600 hover:bg-orange-700 py-3 rounded-xl text-sm font-bold text-white">Adicionar Combo ao Carrinho</button>
+              <button type="button" onClick={confirmarMontagemCombo} className="w-full bg-orange-600 hover:bg-orange-700 py-3.5 rounded-xl text-sm font-bold text-white uppercase tracking-widest shadow-lg">Adicionar Combo ao Carrinho</button>
             </div>
           </div>
         </div>
