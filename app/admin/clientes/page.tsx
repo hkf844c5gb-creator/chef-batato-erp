@@ -149,26 +149,50 @@ export default function GestaoClientesCompleta() {
     if (!clienteSelecionado) return;
     try {
       const nomeAntigo = clienteSelecionado.nomePrincipal;
+      const nomeNovo = editNome.trim();
+      const contactoNovo = editContacto.trim();
+      const moradaNova = editMorada.trim();
 
+      // 1. Atualizar histórico de pedidos para refletir os novos dados
       await supabase
         .from('pedidos')
-        .update({ cliente: editNome.trim(), contacto_cliente: editContacto.trim() })
+        .update({ cliente: nomeNovo, contacto_cliente: contactoNovo })
         .eq('cliente', nomeAntigo);
 
-      await supabase.from('clientes').upsert({
-        nome: editNome.trim(),
-        contacto: editContacto.trim(),
-        morada: editMorada.trim()
-      }, { onConflict: 'contacto' });
+      // 2. Verificar se o cliente já existe fisicamente na tabela "clientes" ou se é fantasma
+      if (clienteSelecionado.idClienteBD) {
+        // Já existe, vamos apenas fazer Update
+        const { error } = await supabase
+          .from('clientes')
+          .update({
+            nome: nomeNovo,
+            contacto: contactoNovo,
+            morada: moradaNova
+          })
+          .eq('id', clienteSelecionado.idClienteBD);
+        
+        if (error) throw error;
+      } else {
+        // É um Fantasma (só existia no histórico). Vamos criar o registo oficial.
+        const { error } = await supabase
+          .from('clientes')
+          .insert([{
+            nome: nomeNovo,
+            contacto: contactoNovo,
+            morada: moradaNova
+          }]);
+
+        if (error) throw error;
+      }
 
       alert('✅ Ficha de cliente e morada atualizadas com sucesso!');
       setEditando(false);
-      carregarDadosCompletos();
+      carregarDadosCompletos(); // Recarrega tudo para apanhar o novo ID
       setClienteSelecionado({
         ...clienteSelecionado,
-        nomePrincipal: editNome.trim(),
-        contacto: editContacto.trim(),
-        morada: editMorada.trim()
+        nomePrincipal: nomeNovo,
+        contacto: contactoNovo,
+        morada: moradaNova
       });
     } catch (err: any) {
       alert(`Erro ao atualizar: ${err.message}`);
