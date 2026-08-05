@@ -150,8 +150,9 @@ export default function CaixaPDV() {
       const { data: dataRevs } = await supabase.from('revendedores').select('*').order('nome_empresa', { ascending: true });
       if (dataRevs) setListaRevendedores(dataRevs);
 
-      // Carrega os clientes cruzando a informação diretamente
-      const { data: dataClientes } = await supabase.from('clientes').select('*').order('nome', { ascending: true });
+      // CORREÇÃO: Remoção do order estrito para evitar falha silenciosa caso a coluna tenha outro nome na BD
+      const { data: dataClientes, error: errClientes } = await supabase.from('clientes').select('*');
+      if (errClientes) console.error("Aviso ao carregar clientes:", errClientes.message);
       if (dataClientes) setListaClientesCadastrados(dataClientes);
 
       const { data: dataCombos, error: errCombos } = await supabase
@@ -224,16 +225,16 @@ export default function CaixaPDV() {
     (p.categoria || '').toLowerCase().includes('sobremesa')
   );
 
-  // Seleciona o cliente e mapeia de forma flexível as colunas da base de dados
+  // CORREÇÃO: Mapeamento flexível das colunas da base de dados
   const selecionarClienteSugerido = (c: any) => {
-    const nomeCliente = c.nome || '';
+    const nomeCliente = c.nome || c.nome_cliente || c.cliente || '';
     const contactoDb = c.contacto || c.telefone || c.telemovel || '';
     const moradaDb = c.morada || c.endereco || '';
 
     setCliente(nomeCliente);
     setContactoCliente(contactoDb);
     setMoradaCliente(moradaDb);
-    setMostrarSugestoes(false);
+    setMostrarSugestoes(false); 
   };
 
   const adicionarAoCarrinho = (produto: Produto) => {
@@ -577,7 +578,6 @@ export default function CaixaPDV() {
     const dataHoraCriacaoCompleta = `${dataPedido}T${agora.toTimeString().split(' ')[0]}`;
 
     try {
-      // 1. Atualizar ou Inserir Cliente de forma 100% segura (sem depender do comando Upsert que quebra se as regras na BD não existirem)
       const nomeDoCliente = cliente.trim();
       
       const { data: clienteExistente } = await supabase
@@ -587,7 +587,6 @@ export default function CaixaPDV() {
         .single();
         
       if (clienteExistente) {
-        // Se já existe atualizamos morada e contacto
         await supabase.from('clientes')
           .update({
              contacto: contactoCliente.trim(),
@@ -595,7 +594,6 @@ export default function CaixaPDV() {
           })
           .eq('id', clienteExistente.id);
       } else {
-        // Se é um cliente novo, cria-o
         await supabase.from('clientes')
           .insert([{
              nome: nomeDoCliente,
@@ -604,7 +602,6 @@ export default function CaixaPDV() {
           }]);
       }
 
-      // 2. Gerar Número e Lançar Pedido
       const { data: todosPedidos } = await supabase.from('pedidos').select('numero_pedido');
       let maiorNumero = 365;
       if (todosPedidos) {
@@ -709,7 +706,7 @@ export default function CaixaPDV() {
                 setMostrarSugestoes(true);
               }} 
               onFocus={() => setMostrarSugestoes(true)}
-              onBlur={() => setTimeout(() => setMostrarSugestoes(false), 200)} // Adicionado o timeout padrão para não colidir com o clique na listagem
+              onBlur={() => setTimeout(() => setMostrarSugestoes(false), 200)}
               placeholder="Nome ou Telemóvel..." 
               className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none text-white font-bold transition-all"
               autoComplete="off" 
@@ -720,13 +717,13 @@ export default function CaixaPDV() {
               <div className="absolute left-0 right-0 top-full mt-2 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-[100] max-h-60 overflow-y-auto custom-scrollbar">
                 {listaClientesCadastrados
                   .filter(c => {
-                    const termo = cliente.toLowerCase();
-                    const nomeStr = (c.nome || '').toLowerCase();
+                    const termo = cliente.toLowerCase().trim();
+                    const nomeStr = (c.nome || c.nome_cliente || c.cliente || '').toLowerCase();
                     const telStr = (c.contacto || c.telefone || c.telemovel || '').toLowerCase();
                     return nomeStr.includes(termo) || telStr.includes(termo);
                   })
                   .map(c => {
-                    // Extração de variáveis dinâmicas caso o nome da coluna da BD varie
+                    const nomeExibicao = c.nome || c.nome_cliente || c.cliente || 'Sem Nome';
                     const telExibicao = c.contacto || c.telefone || c.telemovel || 'S/N';
                     const moradaExibicao = c.morada || c.endereco || '';
 
@@ -739,7 +736,7 @@ export default function CaixaPDV() {
                         }}
                         className="p-3 hover:bg-orange-600/20 cursor-pointer border-b border-zinc-800/50 text-xs flex justify-between items-center transition-all"
                       >
-                        <span className="font-bold text-white">{c.nome}</span>
+                        <span className="font-bold text-white">{nomeExibicao}</span>
                         <span className="text-zinc-400 text-[10px] truncate max-w-[150px] text-right">
                           📞 {telExibicao} {moradaExibicao ? `| 📍 ${moradaExibicao}` : ''}
                         </span>
@@ -749,8 +746,8 @@ export default function CaixaPDV() {
                   
                 {/* Mensagem se não encontrar nada */}
                 {listaClientesCadastrados.filter(c => {
-                    const termo = cliente.toLowerCase();
-                    const nomeStr = (c.nome || '').toLowerCase();
+                    const termo = cliente.toLowerCase().trim();
+                    const nomeStr = (c.nome || c.nome_cliente || c.cliente || '').toLowerCase();
                     const telStr = (c.contacto || c.telefone || c.telemovel || '').toLowerCase();
                     return nomeStr.includes(termo) || telStr.includes(termo);
                 }).length === 0 && (
