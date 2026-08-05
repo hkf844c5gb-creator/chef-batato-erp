@@ -150,10 +150,43 @@ export default function CaixaPDV() {
       const { data: dataRevs } = await supabase.from('revendedores').select('*').order('nome_empresa', { ascending: true });
       if (dataRevs) setListaRevendedores(dataRevs);
 
-      // CORREÇÃO: Remoção do order estrito para evitar falha silenciosa caso a coluna tenha outro nome na BD
-      const { data: dataClientes, error: errClientes } = await supabase.from('clientes').select('*');
-      if (errClientes) console.error("Aviso ao carregar clientes:", errClientes.message);
-      if (dataClientes) setListaClientesCadastrados(dataClientes);
+      // --- NOVA LÓGICA DE CLIENTES (LÊ TABELA PEDIDOS + TABELA CLIENTES) ---
+      const clientesMap = new Map();
+
+      // 1. Tenta carregar histórico de pedidos (Para apanhar os 258 clientes)
+      const { data: dataPedidos } = await supabase.from('pedidos').select('cliente, contacto_cliente');
+      if (dataPedidos) {
+        dataPedidos.forEach((p: any) => {
+          const nome = p.cliente ? p.cliente.trim() : '';
+          if (nome && !clientesMap.has(nome.toLowerCase())) {
+            clientesMap.set(nome.toLowerCase(), {
+              id: `hist_${nome}`,
+              nome: nome,
+              contacto: p.contacto_cliente || '',
+              morada: ''
+            });
+          }
+        });
+      }
+
+      // 2. Tenta carregar tabela clientes (Caso já existam registos reais, sobrepõe)
+      const { data: dataClientesTable } = await supabase.from('clientes').select('*');
+      if (dataClientesTable) {
+        dataClientesTable.forEach((c: any) => {
+          const nome = c.nome || c.cliente || '';
+          if (nome) {
+            clientesMap.set(nome.trim().toLowerCase(), {
+              id: c.id,
+              nome: nome.trim(),
+              contacto: c.contacto || c.telefone || c.telemovel || '',
+              morada: c.morada || c.endereco || ''
+            });
+          }
+        });
+      }
+
+      setListaClientesCadastrados(Array.from(clientesMap.values()));
+      // --------------------------------------------------------------------
 
       const { data: dataCombos, error: errCombos } = await supabase
         .from('combos')
@@ -225,13 +258,12 @@ export default function CaixaPDV() {
     (p.categoria || '').toLowerCase().includes('sobremesa')
   );
 
-  // CORREÇÃO: Mapeamento flexível das colunas da base de dados
   const selecionarClienteSugerido = (c: any) => {
-    const nomeCliente = c.nome || c.nome_cliente || c.cliente || '';
-    const contactoDb = c.contacto || c.telefone || c.telemovel || '';
-    const moradaDb = c.morada || c.endereco || '';
+    const nomeDb = c.nome || c.Nome || c.nome_cliente || c.cliente || c.NOME || '';
+    const contactoDb = c.contacto || c.telefone || c.telemovel || c.Contacto || '';
+    const moradaDb = c.morada || c.endereco || c.Morada || '';
 
-    setCliente(nomeCliente);
+    setCliente(nomeDb);
     setContactoCliente(contactoDb);
     setMoradaCliente(moradaDb);
     setMostrarSugestoes(false); 
@@ -712,20 +744,22 @@ export default function CaixaPDV() {
               autoComplete="off" 
             />
 
-            {/* CAIXA DE SUGESTÕES DE AUTOCOMPLETE */}
+            {/* CAIXA DE SUGESTÕES DE AUTOCOMPLETE COM FILTRO UNIVERSAL */}
             {mostrarSugestoes && cliente.trim().length > 0 && (
               <div className="absolute left-0 right-0 top-full mt-2 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-[100] max-h-60 overflow-y-auto custom-scrollbar">
                 {listaClientesCadastrados
                   .filter(c => {
-                    const termo = cliente.toLowerCase().trim();
-                    const nomeStr = (c.nome || c.nome_cliente || c.cliente || '').toLowerCase();
-                    const telStr = (c.contacto || c.telefone || c.telemovel || '').toLowerCase();
-                    return nomeStr.includes(termo) || telStr.includes(termo);
+                    const termoBusca = cliente.toLowerCase().trim();
+                    // Converte TODOS os valores da linha do cliente em texto e procura o termo em qualquer um deles
+                    return Object.values(c).some(val => 
+                      val && String(val).toLowerCase().includes(termoBusca)
+                    );
                   })
                   .map(c => {
-                    const nomeExibicao = c.nome || c.nome_cliente || c.cliente || 'Sem Nome';
-                    const telExibicao = c.contacto || c.telefone || c.telemovel || 'S/N';
-                    const moradaExibicao = c.morada || c.endereco || '';
+                    // Tenta capturar as chaves para apresentação visual de forma robusta
+                    const nomeExibicao = c.nome || c.Nome || c.nome_cliente || c.cliente || c.NOME || 'Sem Nome';
+                    const telExibicao = c.contacto || c.telefone || c.telemovel || c.Contacto || 'S/N';
+                    const moradaExibicao = c.morada || c.endereco || c.Morada || '';
 
                     return (
                       <div 
@@ -746,10 +780,10 @@ export default function CaixaPDV() {
                   
                 {/* Mensagem se não encontrar nada */}
                 {listaClientesCadastrados.filter(c => {
-                    const termo = cliente.toLowerCase().trim();
-                    const nomeStr = (c.nome || c.nome_cliente || c.cliente || '').toLowerCase();
-                    const telStr = (c.contacto || c.telefone || c.telemovel || '').toLowerCase();
-                    return nomeStr.includes(termo) || telStr.includes(termo);
+                    const termoBusca = cliente.toLowerCase().trim();
+                    return Object.values(c).some(val => 
+                      val && String(val).toLowerCase().includes(termoBusca)
+                    );
                 }).length === 0 && (
                   <div className="p-4 text-xs text-zinc-500 text-center italic">
                     Nenhum cliente encontrado com "{cliente}"
