@@ -102,7 +102,12 @@ export default function GestaoEstoqueProdutos() {
     if (!formNome.trim()) return alert("O nome é obrigatório!");
     setProcessando(true);
     try {
+      // GERAÇÃO DO CÓDIGO AUTOMÁTICO ADICIONADA AQUI
+      const prefixo = formCategoria.substring(0, 3).toUpperCase();
+      const codigoGerado = `${prefixo}-${Math.floor(100000 + Math.random() * 900000)}`;
+
       const { data: novoProduto, error } = await supabase.from('produtos').insert([{
+        codigo: codigoGerado, // <--- Aplica o código automático à base de dados
         nome: formNome.trim(),
         categoria: formCategoria.toLowerCase(),
         estoque_atual: Number(formEstoqueAtual) || 0,
@@ -124,7 +129,7 @@ export default function GestaoEstoqueProdutos() {
           quantidade: Number(formEstoqueAtual),
           saldo_atualizado: Number(formEstoqueAtual),
           origem: 'CRIAÇÃO DE ITEM',
-          observacoes: 'Stock inicial inserido na criação'
+          observacoes: `Stock inicial (Código: ${codigoGerado})`
         }]);
       }
 
