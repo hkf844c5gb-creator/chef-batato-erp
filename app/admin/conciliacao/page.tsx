@@ -21,7 +21,7 @@ export default function ConciliacaoPage() {
   
   const [processando, setProcessando] = useState(false);
   const [progresso, setProgresso] = useState({ atual: 0, total: 0 });
-  const [statusTexto, setStatusTexto] = useState('A extrair itens e faturas...'); // Novo estado para o texto de loading
+  const [statusTexto, setStatusTexto] = useState('A extrair itens e faturas...'); 
 
   const [files, setFiles] = useState<File[]>([]);
   const [categoria, setCategoria] = useState('Fatura');
@@ -46,7 +46,7 @@ export default function ConciliacaoPage() {
 
   async function carregarHistorico() {
     setLoading(true);
-    let query = supabase.from('auditoria_sessoes').select('*'); 
+    let query = supabase.from('auditoria_sessoes').select('*').order('periodo_ref', { ascending: false }); 
 
     if (filtroMes) query = query.eq('periodo_ref', filtroMes);
 
@@ -243,7 +243,7 @@ export default function ConciliacaoPage() {
     <div className="p-8 font-sans max-w-7xl mx-auto relative">
       <div className="mb-8 border-b border-zinc-800 pb-4">
         <h1 className="text-3xl font-bold text-orange-500 flex items-center gap-3">
-          Conciliador Inteligente <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full">v2.1</span>
+          Conciliador Inteligente <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full">v2.2</span>
         </h1>
         <p className="text-zinc-400 text-sm mt-2">Upload em lote, eliminação em massa, extração inteligente de itens de faturas.</p>
       </div>
@@ -256,7 +256,7 @@ export default function ConciliacaoPage() {
             <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider mb-4">Anexar Lote de Documentos</h3>
             
             <div className="border-2 border-dashed border-zinc-700 hover:border-orange-500 bg-zinc-950 rounded-xl p-8 text-center transition-colors relative mb-4">
-              <input type="file" multiple onChange={handleFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" accept=".pdf,.png,.jpg,.csv" />
+              <input type="file" multiple onChange={handleFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" accept=".pdf,.png,.jpg,.jpeg,.csv" />
               <div className="text-4xl mb-2">📂</div>
               {files.length > 0 ? (
                 <div className="flex flex-col items-center">
@@ -342,13 +342,25 @@ export default function ConciliacaoPage() {
                     const listaItens = dados?.itens || dados?.produtos || dados?.line_items || dados?.dadosExtraidos?.itens || dados?.dadosExtraidos?.produtos || (Array.isArray(dados) ? dados : []);
                     const qtdItensListados = listaItens.length > 0 ? listaItens.length : (dados?.dadosExtraidos ? 1 : 0);
 
+                    // EXTRAI O NOME DO FICHEIRO ORIGINAL E O EMOJI
+                    const nomeFicheiroOriginal = dados?.fileName || dados?.nome_arquivo || dados?.file_name;
+                    
+                    let emoji = '🧾';
+                    let tituloFallback = 'Recibo / Fatura';
+
+                    if (sessao.tipo_arquivo === 'Glovo') { emoji = '🛵'; tituloFallback = 'Extrato Glovo'; }
+                    else if (sessao.tipo_arquivo === 'Palmbites') { emoji = '🌴'; tituloFallback = 'Extrato Palmbites'; }
+                    else if (sessao.tipo_arquivo === 'Extrato') { emoji = '🏦'; tituloFallback = 'Extrato Bancário'; }
+
+                    const tituloExibicao = nomeFicheiroOriginal ? nomeFicheiroOriginal : tituloFallback;
+
                     return (
                       <div 
                         key={sessao.id} 
                         onClick={() => setSessaoDetalhe(sessao)}
                         className={`bg-zinc-900 border p-4 rounded-xl flex justify-between items-center cursor-pointer hover:border-orange-500/50 transition-all ${selecionados.includes(sessao.id) ? 'border-orange-500 shadow-sm shadow-orange-900/20' : 'border-zinc-700'}`}
                       >
-                        <div className="flex items-center gap-4" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center gap-4 flex-1 min-w-0 pr-4" onClick={(e) => e.stopPropagation()}>
                           <input 
                             type="checkbox" 
                             checked={selecionados.includes(sessao.id)}
@@ -356,15 +368,13 @@ export default function ConciliacaoPage() {
                             className="w-5 h-5 rounded border-zinc-700 bg-zinc-950 accent-orange-500 cursor-pointer flex-shrink-0"
                           />
                           
-                          <div>
+                          <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-3 mb-1">
                               <span className="text-xs text-orange-400 font-bold bg-orange-950 px-2 py-1 rounded">{sessao.periodo_ref}</span>
                               <span className="text-xs text-zinc-500">ID: {sessao.id.split('-')[0]}...</span>
                             </div>
-                            <h4 className="text-sm font-bold text-white mt-2">
-                              {sessao.tipo_arquivo === 'Glovo' ? '🛵 Extrato Glovo' : 
-                               sessao.tipo_arquivo === 'Palmbites' ? '🌴 Extrato Palmbites' : 
-                               sessao.tipo_arquivo === 'Extrato' ? '🏦 Extrato Bancário' : '🧾 Recibo / Fatura'}
+                            <h4 className="text-sm font-bold text-white mt-2 truncate w-full" title={tituloExibicao}>
+                              {emoji} {tituloExibicao}
                             </h4>
                             
                             {qtdItensListados > 0 ? (
@@ -379,8 +389,8 @@ export default function ConciliacaoPage() {
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                          <select value={sessao.tipo_arquivo} onChange={(e) => mudarCategoria(sessao.id, e.target.value)} className="bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-300">
+                        <div className="flex items-center gap-2 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                          <select value={sessao.tipo_arquivo} onChange={(e) => mudarCategoria(sessao.id, e.target.value)} className="bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-300 outline-none focus:border-orange-500">
                             {categoriasDisponiveis.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
                           </select>
                         </div>
@@ -399,20 +409,22 @@ export default function ConciliacaoPage() {
       {sessaoDetalhe && (
         <div className="fixed inset-0 bg-black/80 z-[120] flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-zinc-900 border border-zinc-700 w-full max-w-2xl rounded-3xl p-6 shadow-2xl flex flex-col max-h-[85vh]">
-            <div className="flex justify-between items-center border-b border-zinc-800 pb-4 mb-4">
-              <div>
-                <span className="text-xs font-bold text-orange-400 bg-orange-950 px-2 py-1 rounded">Período: {sessaoDetalhe.periodo_ref}</span>
-                <h3 className="text-xl font-black text-white mt-2">Detalhes dos Itens Extraídos</h3>
+            <div className="flex justify-between items-start border-b border-zinc-800 pb-4 mb-4">
+              <div className="pr-4">
+                <span className="text-xs font-bold text-orange-400 bg-orange-950 px-2 py-1 rounded inline-block mb-2">Período: {sessaoDetalhe.periodo_ref}</span>
+                <h3 className="text-xl font-black text-white break-words">
+                  {sessaoDetalhe.resumo?.fileName ? `📑 Documento: ${sessaoDetalhe.resumo.fileName}` : 'Detalhes dos Itens Extraídos'}
+                </h3>
               </div>
               <button 
                 onClick={() => setSessaoDetalhe(null)}
-                className="bg-zinc-800 hover:bg-zinc-700 text-white w-8 h-8 rounded-full font-bold flex items-center justify-center transition-colors"
+                className="bg-zinc-800 hover:bg-zinc-700 text-white w-8 h-8 rounded-full font-bold flex items-center justify-center transition-colors flex-shrink-0"
               >
                 ✕
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+            <div className="flex-1 overflow-y-auto space-y-3 pr-1 custom-scrollbar">
               {sessaoDetalhe.resumo?.fornecedor && (
                 <div className="bg-zinc-950 p-3 rounded-xl border border-zinc-800 mb-4 flex justify-between items-center">
                   <span className="text-xs text-zinc-400 font-bold uppercase">Fornecedor Identificado:</span>
@@ -424,7 +436,6 @@ export default function ConciliacaoPage() {
                 const dados = sessaoDetalhe.resumo;
                 const listaItens = dados?.itens || dados?.produtos || dados?.line_items || dados?.dadosExtraidos?.itens || dados?.dadosExtraidos?.produtos || (Array.isArray(dados) ? dados : []);
 
-                // Se a IA guardou apenas um objeto consolidado em dadosExtraidos, criamos um item virtual para exibição
                 const itensParaMostrar = listaItens.length > 0 ? listaItens : (dados?.dadosExtraidos ? [{
                   nome_extraido: `Fatura / Recibo - ${dados.dadosExtraidos.fornecedor || 'Fornecedor'}`,
                   tipo: 'geral',
@@ -486,7 +497,6 @@ export default function ConciliacaoPage() {
       {processando && (
         <div className="fixed inset-0 bg-black/90 z-[120] flex flex-col items-center justify-center backdrop-blur-md">
           <div className="w-16 h-16 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mb-6"></div>
-          {/* 🔥 NOVO: Mostra em que passo a IA está (inclusive a pausa de arrefecimento) */}
           <h2 className="text-2xl font-bold text-white mb-2 text-center px-4">{statusTexto}</h2>
           <p className="text-zinc-400">
             A auditar <span className="font-bold text-white">{progresso.atual}</span> de <span className="font-bold text-white">{progresso.total}</span> ficheiros inseridos.
