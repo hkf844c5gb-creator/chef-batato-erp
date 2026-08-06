@@ -25,13 +25,18 @@ export default function ConciliacaoPage() {
 
   const [files, setFiles] = useState<File[]>([]);
   const [categoria, setCategoria] = useState('Fatura');
-  const [periodo, setPeriodo] = useState(() => {
+  
+  // Data inicial partilhada entre o Upload e o Filtro do Histórico
+  const getMesAtual = () => {
     const hoje = new Date();
     return `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`;
-  });
+  };
+
+  const [periodo, setPeriodo] = useState(getMesAtual);
   const [autoDetectado, setAutoDetectado] = useState(false);
 
-  const [filtroMes, setFiltroMes] = useState('');
+  // NOVO: O filtro começa automaticamente no mês atual!
+  const [filtroMes, setFiltroMes] = useState(getMesAtual);
   const [selecionados, setSelecionados] = useState<string[]>([]);
 
   // Estado para controlar a Fatura/Sessão aberta no Modal de Detalhes
@@ -312,7 +317,7 @@ export default function ConciliacaoPage() {
                 <span className="text-[10px] text-zinc-400 font-bold uppercase">Mês:</span>
                 <input type="month" value={filtroMes} onChange={(e) => setFiltroMes(e.target.value)} className="bg-transparent text-sm text-white focus:outline-none cursor-pointer" />
                 {filtroMes && (
-                  <button onClick={() => setFiltroMes('')} className="text-red-500 hover:text-red-400 font-bold ml-2 text-xs">LIMPAR</button>
+                  <button onClick={() => setFiltroMes('')} className="text-orange-500 hover:text-orange-400 font-bold ml-2 text-xs">VER TODOS</button>
                 )}
               </div>
             </div>
@@ -323,7 +328,7 @@ export default function ConciliacaoPage() {
               ) : historico.length === 0 ? (
                 <div className="flex flex-col justify-center items-center h-full text-zinc-600">
                   <span className="text-5xl mb-4">📂</span>
-                  <p className="text-sm">Nenhum documento encontrado no histórico.</p>
+                  <p className="text-sm">Nenhum documento encontrado neste mês.</p>
                 </div>
               ) : (
                 <div className="space-y-3">
