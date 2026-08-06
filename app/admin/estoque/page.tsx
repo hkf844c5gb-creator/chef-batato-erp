@@ -9,6 +9,7 @@ interface ProdutoEstoque {
   categoria: string;
   estoque_atual: number;
   estoque_minimo: number;
+  ativo: boolean;
 }
 
 interface MovimentoKardex {
@@ -33,28 +34,38 @@ export default function GestaoEstoqueProdutos() {
   const [loading, setLoading] = useState(true);
   const [filtroCategoria, setFiltroCategoria] = useState('todos');
 
-  // Modais
+  // Modais Originais
   const [modalRepor, setModalRepor] = useState<ProdutoEstoque | null>(null);
   const [modalAlerta, setModalAlerta] = useState<ProdutoEstoque | null>(null);
-  
-  // Novo Modal de Histórico Individual
   const [modalHistorico, setModalHistorico] = useState<ProdutoEstoque | null>(null);
   const [historicoProduto, setHistoricoProduto] = useState<MovimentoKardex[]>([]);
   const [loadingHistorico, setLoadingHistorico] = useState(false);
 
-  // Formulários
+  // NOVOS MODAIS (CRUD)
+  const [mostrarModalNovo, setMostrarModalNovo] = useState(false);
+  const [modalEditar, setModalEditar] = useState<ProdutoEstoque | null>(null);
+
+  // Formulários Originais
   const [qtdRepor, setQtdRepor] = useState('');
   const [dataRepor, setDataRepor] = useState(() => new Date().toISOString().split('T')[0]);
   const [novoAlerta, setNovoAlerta] = useState('');
   const [processando, setProcessando] = useState(false);
 
+  // Formulários CRUD
+  const [formNome, setFormNome] = useState('');
+  const [formCategoria, setFormCategoria] = useState('embalagem');
+  const [formEstoqueAtual, setFormEstoqueAtual] = useState('');
+  const [formEstoqueMinimo, setFormEstoqueMinimo] = useState('');
+  const [formAtivo, setFormAtivo] = useState(true);
+
   async function carregarDados() {
     setLoading(true);
     try {
+      // Removemos o .eq('ativo', true) para podermos ver e gerir os itens inativos no estoque
       const { data: prods, error: errProds } = await supabase
         .from('produtos')
-        .select('id, nome, categoria, estoque_atual, estoque_minimo')
-        .eq('ativo', true)
+        .select('id, nome, categoria, estoque_atual, estoque_minimo, ativo')
+        .order('ativo', { ascending: false }) // Ativos primeiro
         .order('nome', { ascending: true });
 
       if (errProds) throw errProds;
@@ -77,6 +88,111 @@ export default function GestaoEstoqueProdutos() {
 
   useEffect(() => { carregarDados(); }, []);
 
+  // ---- FUNÇÕES NOVAS DE CRUD (CRIAR, EDITAR, EXCLUIR) ----
+  
+  const abrirModalNovo = () => {
+    setFormNome('');
+    setFormCategoria('embalagem');
+    setFormEstoqueAtual('0');
+    setFormEstoqueMinimo('5');
+    setMostrarModalNovo(true);
+  };
+
+  const criarNovoItem = async () => {
+    if (!formNome.trim()) return alert("O nome é obrigatório!");
+    setProcessando(true);
+    try {
+      const { data: novoProduto, error } = await supabase.from('produtos').insert([{
+        nome: formNome.trim(),
+        categoria: formCategoria.toLowerCase(),
+        estoque_atual: Number(formEstoqueAtual) || 0,
+        estoque_minimo: Number(formEstoqueMinimo) || 5,
+        preco_cardapio: 0, // Como é criado pelo estoque, preço base 0
+        preco_whatsapp: 0,
+        preco_glovo: 0,
+        ativo: true
+      }]).select().single();
+
+      if (error) throw error;
+
+      // Grava o movimento inicial se o estoque for maior que zero
+      if (Number(formEstoqueAtual) > 0 && novoProduto) {
+        await supabase.from('movimentos_estoque').insert([{
+          produto_id: novoProduto.id,
+          nome_produto: novoProduto.nome,
+          tipo_movimento: 'ENTRADA',
+          quantidade: Number(formEstoqueAtual),
+          saldo_atualizado: Number(formEstoqueAtual),
+          origem: 'CRIAÇÃO DE ITEM',
+          observacoes: 'Stock inicial inserido na criação'
+        }]);
+      }
+
+      alert("✅ Novo item criado com sucesso!");
+      setMostrarModalNovo(false);
+      carregarDados();
+    } catch (err: any) {
+      alert("Erro ao criar item: " + err.message);
+    } finally {
+      setProcessando(false);
+    }
+  };
+
+  const abrirModalEditar = (item: ProdutoEstoque) => {
+    setFormNome(item.nome);
+    setFormCategoria(item.categoria);
+    setFormAtivo(item.ativo);
+    setModalEditar(item);
+  };
+
+  const guardarEdicao = async () => {
+    if (!modalEditar || !formNome.trim()) return;
+    setProcessando(true);
+    try {
+      const { error } = await supabase.from('produtos').update({
+        nome: formNome.trim(),
+        categoria: formCategoria.toLowerCase(),
+        ativo: formAtivo
+      }).eq('id', modalEditar.id);
+
+      if (error) throw error;
+
+      alert("✅ Item atualizado com sucesso!");
+      setModalEditar(null);
+      carregarDados();
+    } catch (err: any) {
+      alert("Erro ao atualizar item: " + err.message);
+    } finally {
+      setProcessando(false);
+    }
+  };
+
+  const excluirItem = async () => {
+    if (!modalEditar) return;
+    const confirmacao = window.confirm(`Tem a certeza que deseja excluir o item "${modalEditar.nome}" definitivamente? Esta ação não pode ser desfeita.`);
+    if (!confirmacao) return;
+
+    setProcessando(true);
+    try {
+      const { error } = await supabase.from('produtos').delete().eq('id', modalEditar.id);
+      
+      if (error) {
+        // Se houver erro (ex: constraint de chave estrangeira), sugerimos desativar
+        alert(`❌ Não é possível apagar este item porque já possui histórico de vendas ou movimentos associados. Por favor, apenas altere o estado para "Inativo" no botão acima para que ele deixe de aparecer.`);
+      } else {
+        alert("🗑️ Item excluído com sucesso!");
+        setModalEditar(null);
+        carregarDados();
+      }
+    } catch (err: any) {
+      alert("Erro ao excluir: " + err.message);
+    } finally {
+      setProcessando(false);
+    }
+  };
+
+  // ---- FUNÇÕES ORIGINAIS (REPOR, ALERTA, HISTÓRICO) ----
+
   const registarEntradaStock = async () => {
     if (!modalRepor || !qtdRepor || Number(qtdRepor) <= 0) return;
     setProcessando(true);
@@ -85,7 +201,6 @@ export default function GestaoEstoqueProdutos() {
       const qtdAdicionar = Number(qtdRepor);
       const novoStock = Number(modalRepor.estoque_atual || 0) + qtdAdicionar;
 
-      // 1. Atualiza o saldo do Produto
       const { error: errUpdate } = await supabase
         .from('produtos')
         .update({ estoque_atual: novoStock })
@@ -93,7 +208,6 @@ export default function GestaoEstoqueProdutos() {
       
       if (errUpdate) throw errUpdate;
 
-      // 2. Grava a Entrada no Histórico Oficial com a Data Selecionada
       await supabase.from('movimentos_estoque').insert([{
         produto_id: modalRepor.id,
         nome_produto: modalRepor.nome,
@@ -147,7 +261,7 @@ export default function GestaoEstoqueProdutos() {
         .select('*')
         .eq('produto_id', produto.id)
         .order('data_movimento', { ascending: false })
-        .limit(50); // Mostra os últimos 50 movimentos
+        .limit(50);
       
       if (error) throw error;
       setHistoricoProduto(data || []);
@@ -158,15 +272,18 @@ export default function GestaoEstoqueProdutos() {
     }
   };
 
-  const produtosEmAlerta = produtos.filter(p => (p.estoque_atual || 0) <= (p.estoque_minimo || 5));
+  // ---- FILTROS ----
+
+  const produtosEmAlerta = produtos.filter(p => p.ativo && (p.estoque_atual || 0) <= (p.estoque_minimo || 5));
   
   const produtosFiltrados = produtos.filter(p => {
     const cat = (p.categoria || '').toLowerCase();
-    if (filtroCategoria === 'alertas') return (p.estoque_atual || 0) <= (p.estoque_minimo || 5);
+    if (filtroCategoria === 'alertas') return p.ativo && (p.estoque_atual || 0) <= (p.estoque_minimo || 5);
     if (filtroCategoria === 'bebidas') return cat.includes('bebida');
     if (filtroCategoria === 'sobremesas') return cat.includes('sobremesa') || cat.includes('brownie');
     if (filtroCategoria === 'batatas') return cat.includes('batata');
     if (filtroCategoria === 'embalagens') return cat.includes('embalagem') || cat.includes('material') || cat.includes('uso interno');
+    if (filtroCategoria === 'inativos') return !p.ativo; // Novo filtro para ver apenas os inativos
     return true;
   });
 
@@ -177,7 +294,7 @@ export default function GestaoEstoqueProdutos() {
       <div className="flex flex-col gap-4">
         <div>
           <h1 className="text-2xl font-black text-orange-500">📦 Gestão de Estoque Completa</h1>
-          <p className="text-xs text-zinc-400 mt-1">Registo detalhado com data, histórico e cruzamento em tempo real com as vendas do PDV.</p>
+          <p className="text-xs text-zinc-400 mt-1">Crie itens, edite, apague e consulte o histórico de movimentos cruzado com o PDV.</p>
         </div>
 
         {produtosEmAlerta.length > 0 && !loading && (
@@ -202,6 +319,13 @@ export default function GestaoEstoqueProdutos() {
         
         {/* MENU LATERAL */}
         <div className="lg:col-span-1 space-y-6">
+          <button 
+            onClick={abrirModalNovo}
+            className="w-full bg-orange-600 hover:bg-orange-500 text-white font-black py-4 rounded-3xl text-sm uppercase tracking-widest shadow-[0_0_15px_rgba(249,115,22,0.3)] transition-all"
+          >
+            + Novo Item / Embalagem
+          </button>
+
           <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-3xl shadow-xl flex flex-col gap-2">
             <h3 className="text-[10px] text-zinc-500 font-bold uppercase mb-1 px-2">Categorias</h3>
             <button onClick={() => setFiltroCategoria('todos')} className={`text-left px-4 py-3 rounded-xl text-xs font-bold transition-all ${filtroCategoria === 'todos' ? 'bg-orange-600 text-white shadow-md' : 'bg-zinc-950 text-zinc-400 hover:bg-zinc-800'}`}>📋 Todos os Itens</button>
@@ -212,11 +336,13 @@ export default function GestaoEstoqueProdutos() {
             <button onClick={() => setFiltroCategoria('sobremesas')} className={`text-left px-4 py-3 rounded-xl text-xs font-bold transition-all ${filtroCategoria === 'sobremesas' ? 'bg-orange-600 text-white shadow-md' : 'bg-zinc-950 text-zinc-400 hover:bg-zinc-800'}`}>🍫 Sobremesas</button>
             <button onClick={() => setFiltroCategoria('batatas')} className={`text-left px-4 py-3 rounded-xl text-xs font-bold transition-all ${filtroCategoria === 'batatas' ? 'bg-orange-600 text-white shadow-md' : 'bg-zinc-950 text-zinc-400 hover:bg-zinc-800'}`}>🥔 Batatas (Recheios)</button>
             <button onClick={() => setFiltroCategoria('embalagens')} className={`text-left px-4 py-3 rounded-xl text-xs font-bold transition-all ${filtroCategoria === 'embalagens' ? 'bg-orange-600 text-white shadow-md' : 'bg-zinc-950 text-zinc-400 hover:bg-zinc-800'}`}>🛍️ Embalagens / Materiais</button>
+            <div className="border-t border-zinc-800 my-1"></div>
+            <button onClick={() => setFiltroCategoria('inativos')} className={`text-left px-4 py-3 rounded-xl text-xs font-bold transition-all ${filtroCategoria === 'inativos' ? 'bg-zinc-700 text-white shadow-md' : 'bg-zinc-950 text-zinc-600 hover:bg-zinc-800'}`}>🗑️ Itens Inativos</button>
           </div>
 
           {/* HISTÓRICO GLOBAL RECENTE */}
           {historicoGlobal.length > 0 && (
-            <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col gap-3 max-h-[600px] overflow-y-auto custom-scrollbar">
+            <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col gap-3 max-h-[400px] overflow-y-auto custom-scrollbar">
               <h3 className="text-[10px] text-zinc-500 font-bold uppercase mb-2">Movimentos Globais Recentes</h3>
               {historicoGlobal.map(h => {
                 const isEntrada = h.tipo_movimento === 'ENTRADA';
@@ -243,41 +369,41 @@ export default function GestaoEstoqueProdutos() {
         {/* LISTA DE PRODUTOS */}
         <div className="lg:col-span-3">
           {loading ? (
-            <div className="text-center text-zinc-500 py-12 font-bold text-xs uppercase tracking-widest animate-pulse">A carregar dados cruzados...</div>
+            <div className="text-center text-zinc-500 py-12 font-bold text-xs uppercase tracking-widest animate-pulse">A carregar dados...</div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {produtosFiltrados.map((item) => {
                 const stockAtual = item.estoque_atual || 0;
                 const stockMinimo = item.estoque_minimo || 5;
-                const stockCritico = stockAtual <= stockMinimo;
+                const stockCritico = stockAtual <= stockMinimo && item.ativo;
 
                 return (
-                  <div key={item.id} className={`bg-zinc-900 border p-5 rounded-3xl flex flex-col justify-between gap-4 shadow-lg transition-all ${stockCritico ? 'border-red-900/50 shadow-[0_0_15px_rgba(220,38,38,0.1)]' : 'border-zinc-800 hover:border-zinc-700'}`}>
+                  <div key={item.id} className={`bg-zinc-900 border p-5 rounded-3xl flex flex-col justify-between gap-4 shadow-lg transition-all ${!item.ativo ? 'opacity-50 grayscale' : ''} ${stockCritico ? 'border-red-900/50 shadow-[0_0_15px_rgba(220,38,38,0.1)]' : 'border-zinc-800 hover:border-zinc-700'}`}>
                     
                     <div className="flex justify-between items-start gap-2">
                       <div className="flex-1">
-                        <span className="text-[8px] font-bold uppercase tracking-widest text-orange-400 bg-orange-500/10 px-2 py-0.5 rounded">{item.categoria}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[8px] font-bold uppercase tracking-widest text-orange-400 bg-orange-500/10 px-2 py-0.5 rounded">{item.categoria}</span>
+                          {!item.ativo && <span className="text-[8px] font-bold uppercase tracking-widest text-red-400 bg-red-500/10 px-2 py-0.5 rounded">INATIVO</span>}
+                        </div>
                         <h3 className="font-bold text-white text-sm mt-2 leading-tight">{item.nome}</h3>
                         
                         {/* BOTÕES DE GESTÃO DO ITEM */}
-                        <div className="flex flex-wrap gap-3 mt-3">
-                          <button 
-                            onClick={() => { setModalAlerta(item); setNovoAlerta(String(stockMinimo)); }}
-                            className="text-[9px] text-zinc-400 hover:text-orange-400 uppercase font-bold flex items-center gap-1 bg-zinc-950 px-2 py-1 rounded border border-zinc-800"
-                          >
+                        <div className="flex flex-wrap gap-2 mt-3">
+                          <button onClick={() => abrirModalEditar(item)} className="text-[9px] text-zinc-400 hover:text-white uppercase font-bold flex items-center gap-1 bg-zinc-950 hover:bg-zinc-800 px-2 py-1 rounded border border-zinc-800 transition-all">
+                            ⚙️ Editar
+                          </button>
+                          <button onClick={() => { setModalAlerta(item); setNovoAlerta(String(stockMinimo)); }} className="text-[9px] text-zinc-400 hover:text-orange-400 uppercase font-bold flex items-center gap-1 bg-zinc-950 hover:bg-zinc-800 px-2 py-1 rounded border border-zinc-800 transition-all">
                             ✏️ Min: {stockMinimo}
                           </button>
-                          <button 
-                            onClick={() => verHistoricoProduto(item)}
-                            className="text-[9px] text-zinc-400 hover:text-blue-400 uppercase font-bold flex items-center gap-1 bg-zinc-950 px-2 py-1 rounded border border-zinc-800"
-                          >
+                          <button onClick={() => verHistoricoProduto(item)} className="text-[9px] text-zinc-400 hover:text-blue-400 uppercase font-bold flex items-center gap-1 bg-zinc-950 hover:bg-zinc-800 px-2 py-1 rounded border border-zinc-800 transition-all">
                             🕒 Histórico
                           </button>
                         </div>
 
                       </div>
                       <div className="flex flex-col items-end text-right">
-                        <span className={`text-3xl font-black font-mono leading-none ${stockCritico ? 'text-red-500' : 'text-green-400'}`}>
+                        <span className={`text-3xl font-black font-mono leading-none ${stockCritico ? 'text-red-500' : 'text-zinc-200'}`}>
                           {stockAtual}
                         </span>
                       </div>
@@ -285,9 +411,10 @@ export default function GestaoEstoqueProdutos() {
 
                     <button 
                       onClick={() => { setModalRepor(item); setQtdRepor(''); }}
-                      className={`w-full font-bold py-3.5 rounded-xl text-xs transition-all uppercase tracking-wider flex items-center justify-center gap-2 ${stockCritico ? 'bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-900/20' : 'bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-zinc-300'}`}
+                      disabled={!item.ativo}
+                      className={`w-full font-bold py-3.5 rounded-xl text-xs transition-all uppercase tracking-wider flex items-center justify-center gap-2 ${!item.ativo ? 'bg-zinc-950 text-zinc-600 border border-zinc-800 cursor-not-allowed' : stockCritico ? 'bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-900/20' : 'bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-zinc-300'}`}
                     >
-                      {stockCritico ? '⚠️ Registar Reposição' : '🛒 Repor Estoque'}
+                      {!item.ativo ? 'Item Inativo' : stockCritico ? '⚠️ Registar Reposição' : '🛒 Repor Estoque'}
                     </button>
                   </div>
                 );
@@ -303,6 +430,103 @@ export default function GestaoEstoqueProdutos() {
         </div>
 
       </div>
+
+      {/* MODAL: NOVO ITEM */}
+      {mostrarModalNovo && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-md rounded-3xl p-6 shadow-2xl relative">
+            <button onClick={() => setMostrarModalNovo(false)} className="absolute top-5 right-5 text-zinc-400 hover:text-white bg-zinc-800 w-8 h-8 rounded-full flex items-center justify-center">✕</button>
+            <h2 className="text-lg font-black text-white mb-6 pr-8">➕ Cadastrar Novo Item</h2>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Nome do Item</label>
+                <input type="text" placeholder="Ex: Saco de Papel Grande" value={formNome} onChange={(e) => setFormNome(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 outline-none focus:border-orange-500" />
+              </div>
+              <div>
+                <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Categoria</label>
+                <select value={formCategoria} onChange={(e) => setFormCategoria(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 outline-none focus:border-orange-500">
+                  <option value="embalagem">Embalagem</option>
+                  <option value="material">Material / Uso Interno</option>
+                  <option value="bebida">Bebida</option>
+                  <option value="sobremesa">Sobremesa</option>
+                  <option value="batata">Batata (Recheio)</option>
+                  <option value="adicional">Adicional Extra</option>
+                </select>
+                <p className="text-[9px] text-zinc-500 mt-1">Dica: "Embalagens" e "Materiais" não aparecem na frente de loja (PDV).</p>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Stock Atual</label>
+                  <input type="number" min="0" value={formEstoqueAtual} onChange={(e) => setFormEstoqueAtual(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-green-400 font-bold outline-none focus:border-green-500" />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Alerta Mínimo</label>
+                  <input type="number" min="0" value={formEstoqueMinimo} onChange={(e) => setFormEstoqueMinimo(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-red-400 font-bold outline-none focus:border-red-500" />
+                </div>
+              </div>
+              <button onClick={criarNovoItem} disabled={processando} className="w-full bg-orange-600 hover:bg-orange-500 text-white font-black py-4 rounded-xl text-sm uppercase tracking-widest mt-2 shadow-lg disabled:opacity-50">
+                {processando ? 'A Gravar...' : 'Criar Item'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EDITAR ITEM */}
+      {modalEditar && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-md rounded-3xl p-6 shadow-2xl relative">
+            <button onClick={() => setModalEditar(null)} className="absolute top-5 right-5 text-zinc-400 hover:text-white bg-zinc-800 w-8 h-8 rounded-full flex items-center justify-center">✕</button>
+            <h2 className="text-lg font-black text-white pr-8">⚙️ Editar Configurações</h2>
+            <p className="text-xs text-orange-400 mb-6 font-bold">{modalEditar.nome}</p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Nome</label>
+                <input type="text" value={formNome} onChange={(e) => setFormNome(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 outline-none focus:border-orange-500" />
+              </div>
+              
+              <div>
+                <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Categoria</label>
+                <select value={formCategoria} onChange={(e) => setFormCategoria(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 outline-none focus:border-orange-500">
+                  <option value="embalagem">Embalagem</option>
+                  <option value="material">Material / Uso Interno</option>
+                  <option value="bebida">Bebida</option>
+                  <option value="sobremesa">Sobremesa</option>
+                  <option value="batata">Batata (Recheio)</option>
+                  <option value="adicional">Adicional Extra</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-3 bg-zinc-950 border border-zinc-800 p-4 rounded-xl">
+                <input 
+                  type="checkbox" 
+                  id="chkAtivo"
+                  checked={formAtivo} 
+                  onChange={(e) => setFormAtivo(e.target.checked)}
+                  className="w-5 h-5 accent-orange-600"
+                />
+                <label htmlFor="chkAtivo" className="text-sm font-bold text-zinc-300 cursor-pointer select-none">
+                  Item Ativo (Visível no sistema)
+                </label>
+              </div>
+              <p className="text-[10px] text-zinc-500 leading-tight">
+                Dica: Desativar um item oculta-o das vendas sem apagar o histórico de vendas passado. É mais seguro do que excluir.
+              </p>
+
+              <div className="pt-4 border-t border-zinc-800 mt-2 flex flex-col gap-2">
+                <button onClick={guardarEdicao} disabled={processando} className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-black py-3.5 rounded-xl text-sm uppercase tracking-widest shadow-lg disabled:opacity-50 transition-all">
+                  {processando ? 'A Guardar...' : 'Guardar Alterações'}
+                </button>
+                <button onClick={excluirItem} disabled={processando} className="w-full text-red-500 hover:text-white hover:bg-red-900/50 font-bold py-3 rounded-xl text-xs uppercase tracking-widest transition-all">
+                  🗑️ Excluir Item Definitivamente
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MODAL: REPOR STOCK */}
       {modalRepor && (
@@ -350,7 +574,7 @@ export default function GestaoEstoqueProdutos() {
         </div>
       )}
 
-      {/* NOVO MODAL: HISTÓRICO ESPECÍFICO DO PRODUTO */}
+      {/* MODAL: HISTÓRICO ESPECÍFICO DO PRODUTO */}
       {modalHistorico && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-zinc-900 border border-zinc-800 w-full max-w-3xl rounded-3xl p-6 shadow-2xl relative max-h-[90vh] flex flex-col">
