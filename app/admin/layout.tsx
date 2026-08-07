@@ -4,18 +4,18 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  // Deteta em que página estamos para "acender" o botão certo no menu
   const pathname = usePathname(); 
 
   const menuItems = [
     { href: '/admin/dashboard', icon: '📊', label: 'Dashboard' },
     { href: '/admin/pdv', icon: '💻', label: 'Frente de Loja (PDV)' },
     { href: '/admin/pedidos', icon: '📓', label: 'Pedidos' },
-    { href: '/admin/clientes', icon: '👥', label: 'Clientes' }, // <-- BOTÃO CLIENTES ADICIONADO
+    { href: '/admin/clientes', icon: '👥', label: 'Clientes' },
     { href: '/admin/caixa', icon: '💶', label: 'Caixa / Movimentos' },
     
     // --- PRODUÇÃO E STOCK ESSENCIAIS ---
     { href: '/admin/producao-batata', icon: '🥔', label: 'Produção Batata' },
+    { href: '/admin/estoque', icon: '📦', label: 'Gestão de Estoque' },
     
     // --- CADASTROS E GESTÃO ---
     { href: '/admin/produtos', icon: '🍟', label: 'Produtos' },
@@ -32,9 +32,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       {/* MENU LATERAL TOTALMENTE FIXO E SEMPRE ABERTO */}
       <aside className="w-64 bg-zinc-900 border-r border-zinc-800 flex flex-col z-40 shrink-0">
         
-        {/* Cabeçalho do Menu (Logo) */}
+        {/* Cabeçalho do Menu (Logo Personalizada) */}
         <div className="p-4 pt-6 flex items-center gap-3 border-b border-zinc-800/50 mb-4 h-20 shrink-0">
-          <span className="text-3xl min-w-[30px] flex justify-center">🥔</span>
+          <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-orange-500/50 shrink-0 flex items-center justify-center bg-black shadow-[0_0_10px_rgba(249,115,22,0.2)]">
+            <img 
+              src="/logo.jpg" 
+              alt="Logo Chef Batatô" 
+              className="w-full h-full object-cover"
+            />
+          </div>
           <div className="whitespace-nowrap">
             <h1 className="font-bold text-orange-500 leading-tight">Chef Batatô</h1>
             <p className="text-[9px] text-zinc-500 uppercase tracking-widest">Backoffice</p>
@@ -46,8 +52,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           {menuItems.map((item, index) => {
             const isAtivo = pathname === item.href || pathname?.startsWith(item.href + '/');
             
-            // Separador visual antes da área de Produtos
-            const addSeparator = index === 6; 
+            const addSeparator = index === 7; 
             
             return (
               <div key={item.href}>
