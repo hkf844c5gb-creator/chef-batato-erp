@@ -32,19 +32,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       {/* MENU LATERAL TOTALMENTE FIXO E SEMPRE ABERTO */}
       <aside className="w-64 bg-zinc-900 border-r border-zinc-800 flex flex-col z-40 shrink-0">
         
-        {/* Cabeçalho do Menu (Logo Personalizada) */}
-        <div className="p-4 pt-6 flex items-center gap-3 border-b border-zinc-800/50 mb-4 h-20 shrink-0">
-          <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-orange-500/50 shrink-0 flex items-center justify-center bg-black shadow-[0_0_10px_rgba(249,115,22,0.2)]">
+        {/* Cabeçalho do Menu (Logo Personalizada Maior e Centrada) */}
+        <div className="p-6 flex flex-col items-center justify-center border-b border-zinc-800/50 mb-2 shrink-0">
+          <div className="w-36 h-36 flex items-center justify-center transition-transform hover:scale-105 duration-300">
             <img 
               src="/logo.jpg" 
               alt="Logo Chef Batatô" 
-              className="w-full h-full object-cover"
+              className="max-w-full max-h-full object-contain drop-shadow-[0_0_15px_rgba(249,115,22,0.3)]"
             />
           </div>
-          <div className="whitespace-nowrap">
-            <h1 className="font-bold text-orange-500 leading-tight">Chef Batatô</h1>
-            <p className="text-[9px] text-zinc-500 uppercase tracking-widest">Backoffice</p>
-          </div>
+          <p className="text-[9px] text-zinc-500 uppercase tracking-widest mt-2">Backoffice</p>
         </div>
 
         {/* Links do Menu */}
