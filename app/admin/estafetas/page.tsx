@@ -51,6 +51,11 @@ export default function GestaoEstafetas() {
     return match ? match[1] : nome;
   };
 
+  // Função de segurança: Limpa nomes para evitar que 'Marcelo', 'marcelo' e 'Marcelo ' sejam tratados como pessoas diferentes
+  const normalizarNome = (nome: string) => {
+    return nome ? nome.trim().toLowerCase() : '';
+  };
+
   async function carregarDados() {
     setLoading(true);
     try {
@@ -77,30 +82,38 @@ export default function GestaoEstafetas() {
 
   useEffect(() => { carregarDados(); }, []);
 
-  // --- MOTOR DE CÁLCULO GERAL ---
-  const nomesUnicos = Array.from(new Set([
-    ...estafetasDB.map(e => e.nome),
-    ...pedidosDB.map(p => p.entregador),
-    ...pagamentosDB.map(p => p.entregador)
-  ]));
+  // --- MOTOR DE CÁLCULO GERAL (CORRIGIDO PARA IGNORAR MAIÚSCULAS E ESPAÇOS) ---
+  
+  // Cria uma lista de nomes originais (preservando o formato), mas usando o Set normalizado para remover duplicados ocultos
+  const mapaNomesUnicos = new Map<string, string>(); // Mapa: nome_normalizado -> nome_original_bonito
 
-  const estafetasCalculados: EstafetaCalculado[] = nomesUnicos.map(nome => {
-    const perfilDB = estafetasDB.find(e => e.nome === nome);
+  estafetasDB.forEach(e => { if(e.nome) mapaNomesUnicos.set(normalizarNome(e.nome), e.nome); });
+  pedidosDB.forEach(p => { if(p.entregador && !mapaNomesUnicos.has(normalizarNome(p.entregador))) mapaNomesUnicos.set(normalizarNome(p.entregador), p.entregador.trim()); });
+  pagamentosDB.forEach(p => { if(p.entregador && !mapaNomesUnicos.has(normalizarNome(p.entregador))) mapaNomesUnicos.set(normalizarNome(p.entregador), p.entregador.trim()); });
+
+  const estafetasCalculados: EstafetaCalculado[] = Array.from(mapaNomesUnicos.entries()).map(([nomeNorm, nomeBonito]) => {
+    
+    // Procura a ficha pelo nome normalizado
+    const perfilDB = estafetasDB.find(e => normalizarNome(e.nome) === nomeNorm);
     const taxasAntigas = Number(perfilDB?.divida_inicial) || 0.0; 
     
-    const pedsAtuais = pedidosDB.filter(p => p.entregador === nome);
-    const pagsAtuais = pagamentosDB.filter(p => p.entregador === nome);
+    // Filtra as entregas pelo nome normalizado
+    const pedsAtuais = pedidosDB.filter(p => normalizarNome(p.entregador) === nomeNorm);
+    // Filtra os pagamentos pelo nome normalizado
+    const pagsAtuais = pagamentosDB.filter(p => normalizarNome(p.entregador) === nomeNorm);
 
     const entregasNovas = pedsAtuais.length;
-    const taxasNovas = pedsAtuais.reduce((sum, p) => sum + (Number(p.taxa_entrega) || 0), 0);
-    const pagamentosNovos = pagsAtuais.reduce((sum, p) => sum + (Number(p.valor_pago) || 0), 0);
+    
+    // Soma cravada, garantindo que valores nulos ou strings inválidas da BD viram 0
+    const taxasNovas = pedsAtuais.reduce((sum, p) => sum + (parseFloat(p.taxa_entrega) || 0), 0);
+    const pagamentosNovos = pagsAtuais.reduce((sum, p) => sum + (parseFloat(p.valor_pago) || 0), 0);
 
     // MATEMÁTICA CORRETA: (Taxas Passadas + Taxas Novas) - Todos os Pagamentos
     const pendenteAtual = taxasAntigas + taxasNovas - pagamentosNovos;
 
     return { 
       db_id: perfilDB?.id,
-      nome, 
+      nome: nomeBonito, 
       contacto: perfilDB?.contacto || '',
       entregas_novas: entregasNovas, 
       taxas_novas: taxasNovas, 
@@ -185,7 +198,7 @@ export default function GestaoEstafetas() {
     setProcessando(true);
     try {
       const dadosInsercao: any = {
-        entregador: novoPagamento.entregador,
+        entregador: novoPagamento.entregador.trim(),
         valor_pago: novoPagamento.valor,
         data_pagamento: novoPagamento.data,
         inicio_periodo: novoPagamento.inicio || null,
@@ -286,16 +299,16 @@ export default function GestaoEstafetas() {
             ) : estafetasCalculados.map(estafeta => {
               const isExpanded = estafetaExpandidoId === estafeta.nome;
               
-              // Pagamentos nativos da BD
-              const pagamentosDesteEstafeta = pagamentosDB.filter(p => p.entregador === estafeta.nome);
+              // Pagamentos nativos da BD - normalizando o nome para evitar bugs
+              const pagamentosDesteEstafeta = pagamentosDB.filter(p => normalizarNome(p.entregador) === normalizarNome(estafeta.nome));
 
               // Entregas da BD (com filtro local)
-              let entregasDesteEstafeta = pedidosDB.filter(p => p.entregador === estafeta.nome);
+              let entregasDesteEstafeta = pedidosDB.filter(p => normalizarNome(p.entregador) === normalizarNome(estafeta.nome));
               if (filtroInicio) entregasDesteEstafeta = entregasDesteEstafeta.filter(p => p.criado_em.split('T')[0] >= filtroInicio);
               if (filtroFim) entregasDesteEstafeta = entregasDesteEstafeta.filter(p => p.criado_em.split('T')[0] <= filtroFim);
 
               // Cálculo do total filtrado de taxas
-              const totalTaxasFiltradas = entregasDesteEstafeta.reduce((sum, ped) => sum + Number(ped.taxa_entrega), 0);
+              const totalTaxasFiltradas = entregasDesteEstafeta.reduce((sum, ped) => sum + (parseFloat(ped.taxa_entrega) || 0), 0);
 
               return (
                 <div key={estafeta.nome} className="bg-zinc-900/60 border border-zinc-800/60 rounded-[24px] overflow-hidden transition-all hover:border-zinc-700">
