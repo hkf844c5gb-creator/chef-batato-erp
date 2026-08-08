@@ -52,7 +52,6 @@ export default function GestaoCaixa() {
       if (caixaError) throw caixaError;
 
       // ⚡ ABERTURA AUTOMÁTICA MÁGICA ⚡
-      // Verifica se já existe uma abertura hoje. Se não existir, procura o último fecho!
       const temAberturaHoje = caixaData?.some(m => m.tipo === 'Abertura');
       
       if (!temAberturaHoje) {
@@ -64,7 +63,6 @@ export default function GestaoCaixa() {
           .order('data_dia', { ascending: false })
           .limit(1);
 
-        // Se encontrou um fecho anterior, regista a abertura automaticamente
         if (ultimoFecho && ultimoFecho.length > 0) {
           const valorTransitado = Number(ultimoFecho[0].valor);
           
@@ -75,7 +73,6 @@ export default function GestaoCaixa() {
             valor: valorTransitado
           }]);
 
-          // Se a inserção correu bem, atualiza a lista de movimentos do dia para incluir a nova abertura
           if (!erroInsert) {
             const { data: novoCaixaData } = await supabase
               .from('caixa')
@@ -107,7 +104,7 @@ export default function GestaoCaixa() {
         tipo: m.tipo,
         descricao: m.descricao,
         valor: Number(m.valor),
-        isAutomatico: m.descricao.includes('Abertura Automática') // Marca como automático se foi o sistema a abrir
+        isAutomatico: m.descricao.includes('Abertura Automática') 
       }));
 
       // Transforma os pedidos de dinheiro em "Entradas"
@@ -238,11 +235,19 @@ export default function GestaoCaixa() {
             <p className="text-[11px] text-zinc-400 font-bold uppercase tracking-widest mt-0.5">Controlo de Dinheiro Físico</p>
           </div>
         </div>
+        
+        {/* CORREÇÃO DO IMPUT DE DATA PARA EVITAR O BUG DO CHROME AO DIGITAR */}
         <input 
           type="date" 
+          max="2099-12-31" /* Corrige erro de digitação de ano no Chrome */
           value={dataFiltro} 
-          onChange={(e) => setDataFiltro(e.target.value)}
-          className="bg-zinc-900 border border-zinc-800 text-white px-4 py-2.5 rounded-xl text-sm font-bold outline-none focus:border-green-500 cursor-pointer shadow-lg"
+          onChange={(e) => {
+            if (e.target.value) setDataFiltro(e.target.value);
+          }}
+          onClick={(e) => {
+            try { e.currentTarget.showPicker(); } catch (err) {} /* Abre o calendário automaticamente ao clicar */
+          }}
+          className="bg-zinc-900 border border-zinc-800 text-white px-4 py-2.5 rounded-xl text-sm font-bold outline-none focus:border-green-500 cursor-pointer shadow-lg w-40"
         />
       </header>
 
@@ -281,7 +286,7 @@ export default function GestaoCaixa() {
           </div>
         </div>
 
-        {/* BOTÕES DE AÇÃO */}
+        {/* BOTÕES DE AÇÃO COM O NOVO BOTÃO DE ENTRADA */}
         <div className="flex flex-wrap gap-4">
           {!temAbertura && (
             <button onClick={() => abrirModal('Abertura')} className="bg-green-600 hover:bg-green-500 text-white px-6 py-3 rounded-xl text-sm font-black shadow-lg shadow-green-900/50 transition-transform active:scale-95 flex-1 md:flex-none">
@@ -365,7 +370,6 @@ export default function GestaoCaixa() {
                           {mov.tipo === 'Saida' ? '-' : mov.tipo === 'Fechamento' ? '=' : '+'}{Number(mov.valor).toFixed(2)}€
                         </div>
                         
-                        {/* Se for automático (Venda do PDV ou Abertura Automática), oculta o botão de edição */}
                         {!mov.isAutomatico ? (
                           <div className="flex gap-2">
                             <button onClick={() => abrirModal(mov.tipo, mov)} className="w-8 h-8 rounded-lg bg-zinc-800/80 hover:bg-blue-600 flex items-center justify-center text-zinc-400 hover:text-white transition-colors" title="Editar">
