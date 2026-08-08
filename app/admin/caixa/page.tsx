@@ -27,7 +27,7 @@ export default function GestaoCaixa() {
   const hoje = new Date().toISOString().split('T')[0];
   const [dataFiltro, setDataFiltro] = useState(hoje);
 
-  // Estados do Modal (CORREÇÃO APLICADA AQUI: Adicionado 'Entrada')
+  // Estados do Modal
   const [modalAberto, setModalAberto] = useState(false);
   const [tipoModal, setTipoModal] = useState<'Abertura' | 'Entrada' | 'Saida' | 'Fechamento' | null>(null);
   const [idEditando, setIdEditando] = useState<string | null>(null);
@@ -144,7 +144,7 @@ export default function GestaoCaixa() {
   
   const saldoAtual = Number(valorAbertura) + totalEntradas - totalSaidas;
 
-  // --- AÇÕES CRUD (CORREÇÃO APLICADA AQUI: Adicionado 'Entrada') ---
+  // --- AÇÕES CRUD ---
   const abrirModal = (tipo: 'Abertura' | 'Entrada' | 'Saida' | 'Fechamento', movEdit?: MovimentoCaixa) => {
     setTipoModal(tipo);
     setIdEditando(movEdit ? movEdit.id : null);
@@ -164,6 +164,7 @@ export default function GestaoCaixa() {
     } else {
       if (tipo === 'Abertura') setForm({ valor: 0, descricao: 'Fundo de Maneio Inicial', subtipo: 'Pagamento' });
       else if (tipo === 'Fechamento') setForm({ valor: saldoAtual, descricao: 'Fecho do Dia', subtipo: 'Pagamento' });
+      else if (tipo === 'Entrada') setForm({ valor: 0, descricao: 'Reforço de Caixa (Trocos)', subtipo: 'Pagamento' });
       else setForm({ valor: 0, descricao: '', subtipo: 'Pagamento' });
     }
     
@@ -266,7 +267,7 @@ export default function GestaoCaixa() {
           </div>
 
           <div className="bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-800/80 p-6 rounded-[32px] shadow-xl flex flex-col justify-center">
-            <span className="text-[10px] font-bold text-green-500/80 uppercase tracking-widest">Entradas (Apenas Vendas)</span>
+            <span className="text-[10px] font-bold text-green-500/80 uppercase tracking-widest">Entradas (Vendas + Reforços)</span>
             <div className="text-2xl font-black text-green-400 font-mono mt-2 tracking-tighter">
               + {totalEntradas.toFixed(2)}€
             </div>
@@ -290,6 +291,9 @@ export default function GestaoCaixa() {
           
           {caixaAberto && (
             <>
+              <button onClick={() => abrirModal('Entrada')} className="bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-500 hover:border-emerald-400 px-6 py-3 rounded-xl text-sm font-black shadow-lg transition-transform active:scale-95 flex-1 md:flex-none">
+                + Nova Entrada / Reforço
+              </button>
               <button onClick={() => abrirModal('Saida')} className="bg-zinc-800 hover:bg-zinc-700 text-red-400 border border-zinc-700 hover:border-red-500/50 px-6 py-3 rounded-xl text-sm font-black shadow-lg transition-transform active:scale-95 flex-1 md:flex-none">
                 - Nova Saída / Retirada
               </button>
@@ -324,16 +328,23 @@ export default function GestaoCaixa() {
                     }
                   }
 
+                  const badgeCor = mov.tipo === 'Abertura' ? 'bg-green-950 text-green-400' : 
+                                   mov.tipo === 'Entrada' && !mov.isAutomatico ? 'bg-emerald-950 text-emerald-400 border border-emerald-500/30' : 
+                                   mov.isAutomatico ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' : 
+                                   mov.tipo === 'Saida' ? 'bg-red-950 text-red-400' : 
+                                   'bg-zinc-700 text-zinc-300';
+                  
+                  const iconMov = mov.tipo === 'Abertura' ? '🔓' : 
+                                  mov.tipo === 'Entrada' && !mov.isAutomatico ? '💵' : 
+                                  mov.isAutomatico ? '🤖' : 
+                                  mov.tipo === 'Saida' ? '📉' : '🔒';
+
                   return (
                     <div key={mov.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 hover:bg-zinc-800/40 rounded-xl transition-colors gap-4">
                       
                       <div className="flex items-center gap-4 flex-1">
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg shadow-sm flex-shrink-0
-                          ${mov.tipo === 'Abertura' ? 'bg-green-950 text-green-400' : 
-                            mov.isAutomatico ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' : 
-                            mov.tipo === 'Saida' ? 'bg-red-950 text-red-400' : 
-                            'bg-zinc-700 text-zinc-300'}`}>
-                          {mov.tipo === 'Abertura' ? '🔓' : mov.isAutomatico ? '🤖' : mov.tipo === 'Saida' ? '📉' : '🔒'}
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg shadow-sm flex-shrink-0 ${badgeCor}`}>
+                          {iconMov}
                         </div>
                         
                         <div>
@@ -388,6 +399,7 @@ export default function GestaoCaixa() {
               <h2 className="text-xl font-black text-white">
                 {idEditando ? '✏️ Editar Movimento' : 
                  tipoModal === 'Abertura' ? '🔓 Abrir Caixa' : 
+                 tipoModal === 'Entrada' ? '💵 Nova Entrada' :
                  tipoModal === 'Saida' ? '📉 Nova Saída' : '🔒 Fechar Caixa'}
               </h2>
               <button onClick={() => setModalAberto(false)} className="w-8 h-8 bg-zinc-800 rounded-full flex items-center justify-center text-zinc-400 font-bold hover:text-white">✕</button>
@@ -421,7 +433,7 @@ export default function GestaoCaixa() {
 
               <div>
                 <label className="block text-[10px] text-zinc-400 font-black uppercase tracking-widest mb-2">Descrição / Motivo</label>
-                <input required type="text" value={form.descricao} onChange={e => setForm({...form, descricao: e.target.value})} className={`w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3.5 text-sm text-white outline-none font-bold ${tipoModal === 'Saida' ? 'focus:border-red-500' : 'focus:border-green-500'}`} placeholder="Ex: Pão, Gás, Troco..." />
+                <input required type="text" value={form.descricao} onChange={e => setForm({...form, descricao: e.target.value})} className={`w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3.5 text-sm text-white outline-none font-bold ${tipoModal === 'Saida' ? 'focus:border-red-500' : 'focus:border-green-500'}`} placeholder="Ex: Reforço de Caixa, Levantamento..." />
               </div>
 
               <div>
