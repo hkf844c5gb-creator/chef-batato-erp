@@ -13,8 +13,6 @@ interface MovimentoCaixa {
   isAutomatico?: boolean; 
 }
 
-type SubtipoSaida = 'Pagamento' | 'Sangria (Depósito)' | 'Pagamento Estafetas' | 'Retirada Sócios';
-
 export default function GestaoCaixa() {
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -35,7 +33,7 @@ export default function GestaoCaixa() {
   const [form, setForm] = useState({ 
     valor: 0, 
     descricao: '',
-    subtipo: 'Pagamento' as SubtipoSaida
+    subtipo: 'Pagamento' 
   });
   
   const [processando, setProcessando] = useState(false);
@@ -148,20 +146,21 @@ export default function GestaoCaixa() {
 
     if (movEdit) {
       let desc = movEdit.descricao;
-      let subtipo = 'Pagamento';
+      let subtipo = tipo === 'Saida' ? 'Pagamento' : 'Levantamento Banco';
       
-      if (tipo === 'Saida' && desc.startsWith('[')) {
+      // Lê o prefixo de categoria (tanto para Entradas como Saídas)
+      if (desc.startsWith('[')) {
         const match = desc.match(/^\[(.*?)\]\s*(.*)$/);
         if (match) {
           subtipo = match[1];
           desc = match[2];
         }
       }
-      setForm({ valor: movEdit.valor, descricao: desc, subtipo: subtipo as SubtipoSaida });
+      setForm({ valor: movEdit.valor, descricao: desc, subtipo });
     } else {
-      if (tipo === 'Abertura') setForm({ valor: 0, descricao: 'Fundo de Maneio Inicial', subtipo: 'Pagamento' });
-      else if (tipo === 'Fechamento') setForm({ valor: saldoAtual, descricao: 'Fecho do Dia', subtipo: 'Pagamento' });
-      else if (tipo === 'Entrada') setForm({ valor: 0, descricao: 'Reforço de Caixa (Trocos)', subtipo: 'Pagamento' });
+      if (tipo === 'Abertura') setForm({ valor: 0, descricao: 'Fundo de Maneio Inicial', subtipo: '' });
+      else if (tipo === 'Fechamento') setForm({ valor: saldoAtual, descricao: 'Fecho do Dia', subtipo: '' });
+      else if (tipo === 'Entrada') setForm({ valor: 0, descricao: '', subtipo: 'Levantamento Banco' });
       else setForm({ valor: 0, descricao: '', subtipo: 'Pagamento' });
     }
     
@@ -191,7 +190,9 @@ export default function GestaoCaixa() {
     setProcessando(true);
     try {
       let descFinal = form.descricao;
-      if (tipoModal === 'Saida') {
+      
+      // Salva a tag [Categoria] tanto em Entradas como em Saídas
+      if (tipoModal === 'Saida' || tipoModal === 'Entrada') {
         descFinal = `[${form.subtipo}] ${form.descricao}`;
       }
 
@@ -236,7 +237,6 @@ export default function GestaoCaixa() {
           </div>
         </div>
         
-        {/* INPUT DE DATA CORRIGIDO - PERMITE DIGITAR LIVREMENTE */}
         <input 
           type="date" 
           max="9999-12-31" 
@@ -319,13 +319,14 @@ export default function GestaoCaixa() {
               <div className="space-y-1">
                 {movimentos.map((mov) => {
                   
-                  let badgeSaida = '';
+                  let badgeCategoria = '';
                   let textoDescricao = mov.descricao;
                   
-                  if (mov.tipo === 'Saida' && textoDescricao.startsWith('[')) {
+                  // Analisa se o movimento tem a tag [Categoria] (funciona para Saída e Entrada)
+                  if (textoDescricao.startsWith('[')) {
                     const match = textoDescricao.match(/^\[(.*?)\]\s*(.*)$/);
                     if (match) {
-                      badgeSaida = match[1];
+                      badgeCategoria = match[1];
                       textoDescricao = match[2];
                     }
                   }
@@ -353,7 +354,11 @@ export default function GestaoCaixa() {
                           <p className="text-sm font-bold text-white flex flex-wrap items-center gap-2">
                             {textoDescricao}
                             {mov.isAutomatico && <span className="text-[9px] bg-orange-600 text-white px-1.5 py-0.5 rounded uppercase">Automático</span>}
-                            {badgeSaida && <span className="text-[9px] border border-red-500/30 text-red-400 px-1.5 py-0.5 rounded uppercase">{badgeSaida}</span>}
+                            {badgeCategoria && (
+                              <span className={`text-[9px] border px-1.5 py-0.5 rounded uppercase ${mov.tipo === 'Entrada' ? 'border-emerald-500/30 text-emerald-400' : 'border-red-500/30 text-red-400'}`}>
+                                {badgeCategoria}
+                              </span>
+                            )}
                           </p>
                           <p className="text-[10px] text-zinc-500 font-mono mt-0.5">
                             {new Date(mov.created_at).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })} • {mov.tipo}
@@ -416,25 +421,36 @@ export default function GestaoCaixa() {
                 </div>
               ) : null}
 
-              {tipoModal === 'Saida' && (
+              {/* SELETOR DE CATEGORIA (APARECE EM ENTRADAS E SAÍDAS) */}
+              {(tipoModal === 'Saida' || tipoModal === 'Entrada') && (
                 <div>
-                  <label className="block text-[10px] text-zinc-400 font-black uppercase tracking-widest mb-2">Categoria da Saída</label>
+                  <label className="block text-[10px] text-zinc-400 font-black uppercase tracking-widest mb-2">Categoria da {tipoModal}</label>
                   <select 
                     value={form.subtipo} 
-                    onChange={e => setForm({...form, subtipo: e.target.value as SubtipoSaida})} 
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3.5 text-sm text-white outline-none focus:border-red-500 font-bold appearance-none cursor-pointer"
+                    onChange={e => setForm({...form, subtipo: e.target.value})} 
+                    className={`w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3.5 text-sm text-white outline-none font-bold appearance-none cursor-pointer ${tipoModal === 'Saida' ? 'focus:border-red-500' : 'focus:border-emerald-500'}`}
                   >
-                    <option value="Pagamento">Pagamento (Fornecedores/Despesas)</option>
-                    <option value="Sangria (Depósito)">Sangria (Depósito no Banco/Cofre)</option>
-                    <option value="Pagamento Estafetas">Pagamento Estafetas (Acertos)</option>
-                    <option value="Retirada Sócios">Retirada Sócios (Distribuição)</option>
+                    {tipoModal === 'Saida' ? (
+                      <>
+                        <option value="Pagamento">Pagamento (Fornecedores/Despesas)</option>
+                        <option value="Sangria (Depósito)">Sangria (Depósito no Banco/Cofre)</option>
+                        <option value="Pagamento Estafetas">Pagamento Estafetas (Acertos)</option>
+                        <option value="Retirada Sócios">Retirada Sócios (Distribuição)</option>
+                      </>
+                    ) : (
+                      <>
+                        <option value="Levantamento Banco">Levantamento de Conta Bancária</option>
+                        <option value="Reforço de Caixa">Reforço de Caixa / Trocos</option>
+                        <option value="Outras Entradas">Outras Entradas</option>
+                      </>
+                    )}
                   </select>
                 </div>
               )}
 
               <div>
                 <label className="block text-[10px] text-zinc-400 font-black uppercase tracking-widest mb-2">Descrição / Motivo</label>
-                <input required type="text" value={form.descricao} onChange={e => setForm({...form, descricao: e.target.value})} className={`w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3.5 text-sm text-white outline-none font-bold ${tipoModal === 'Saida' ? 'focus:border-red-500' : 'focus:border-green-500'}`} placeholder="Ex: Reforço de Caixa, Levantamento..." />
+                <input required type="text" value={form.descricao} onChange={e => setForm({...form, descricao: e.target.value})} className={`w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3.5 text-sm text-white outline-none font-bold ${tipoModal === 'Saida' ? 'focus:border-red-500' : 'focus:border-green-500'}`} placeholder={tipoModal === 'Entrada' ? 'Ex: Trocos de 5€, Banco Santander...' : 'Ex: Reforço de Caixa, Levantamento...'} />
               </div>
 
               <div>
