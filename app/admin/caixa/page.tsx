@@ -11,6 +11,7 @@ interface MovimentoCaixa {
   descricao: string;
   valor: number;
   isAutomatico?: boolean; 
+  isFromPDV?: boolean; 
 }
 
 export default function GestaoCaixa() {
@@ -25,7 +26,6 @@ export default function GestaoCaixa() {
   const hoje = new Date().toISOString().split('T')[0];
   const [dataFiltro, setDataFiltro] = useState(hoje);
 
-  // Estados do Modal
   const [modalAberto, setModalAberto] = useState(false);
   const [tipoModal, setTipoModal] = useState<'Abertura' | 'Entrada' | 'Saida' | 'Fechamento' | null>(null);
   const [idEditando, setIdEditando] = useState<string | null>(null);
@@ -41,7 +41,6 @@ export default function GestaoCaixa() {
   async function carregarCaixa() {
     setLoading(true);
     try {
-      // 1. Busca os movimentos MANUAIS para o dia selecionado
       let { data: caixaData, error: caixaError } = await supabase
         .from('caixa')
         .select('*')
@@ -49,16 +48,17 @@ export default function GestaoCaixa() {
 
       if (caixaError) throw caixaError;
 
-      // ⚡ ABERTURA AUTOMÁTICA MÁGICA ⚡
       const temAberturaHoje = caixaData?.some(m => m.tipo === 'Abertura');
       
       if (!temAberturaHoje) {
+        // Ordena por data e created_at para garantir que puxa o último fecho exato
         const { data: ultimoFecho } = await supabase
           .from('caixa')
           .select('valor')
           .eq('tipo', 'Fechamento')
           .lt('data_dia', dataFiltro)
           .order('data_dia', { ascending: false })
+          .order('created_at', { ascending: false }) 
           .limit(1);
 
         if (ultimoFecho && ultimoFecho.length > 0) {
@@ -81,7 +81,6 @@ export default function GestaoCaixa() {
         }
       }
 
-      // 2. Busca AS VENDAS DO PDV EXCLUSIVAMENTE EM DINHEIRO
       const dataInicio = new Date(`${dataFiltro}T00:00:00`).toISOString();
       const dataFim = new Date(`${dataFiltro}T23:59:59`).toISOString();
 
@@ -95,6 +94,7 @@ export default function GestaoCaixa() {
 
       if (pedidosError) throw pedidosError;
 
+      // Movimentos da tabela CAIXA (Manuais + Abertura Automática)
       const movimentosManuais: MovimentoCaixa[] = (caixaData || []).map(m => ({
         id: m.id,
         created_at: m.created_at,
@@ -102,10 +102,11 @@ export default function GestaoCaixa() {
         tipo: m.tipo,
         descricao: m.descricao,
         valor: Number(m.valor),
-        isAutomatico: m.descricao.includes('Abertura Automática') 
+        isAutomatico: m.descricao.includes('Abertura Automática'),
+        isFromPDV: false // Permite editar/excluir!
       }));
 
-      // Transforma os pedidos de dinheiro em "Entradas"
+      // Movimentos da tabela PEDIDOS (Apenas Vendas)
       const movimentosPDV: MovimentoCaixa[] = (pedidosData || []).map(p => ({
         id: p.id,
         created_at: p.criado_em,
@@ -113,7 +114,8 @@ export default function GestaoCaixa() {
         tipo: 'Entrada', 
         descricao: `Venda PDV #${p.numero_pedido || 'S/N'} (${p.canal}) - ${p.forma_pagamento}`,
         valor: Number(p.total_geral),
-        isAutomatico: true
+        isAutomatico: true,
+        isFromPDV: true // Bloqueia edição pois vem do sistema de vendas
       }));
 
       const todosMovimentos = [...movimentosManuais, ...movimentosPDV];
@@ -139,7 +141,6 @@ export default function GestaoCaixa() {
   
   const saldoAtual = Number(valorAbertura) + totalEntradas - totalSaidas;
 
-  // --- AÇÕES CRUD ---
   const abrirModal = (tipo: 'Abertura' | 'Entrada' | 'Saida' | 'Fechamento', movEdit?: MovimentoCaixa) => {
     setTipoModal(tipo);
     setIdEditando(movEdit ? movEdit.id : null);
@@ -148,7 +149,6 @@ export default function GestaoCaixa() {
       let desc = movEdit.descricao;
       let subtipo = tipo === 'Saida' ? 'Pagamento' : 'Levantamento Banco';
       
-      // Lê o prefixo de categoria (tanto para Entradas como Saídas)
       if (desc.startsWith('[')) {
         const match = desc.match(/^\[(.*?)\]\s*(.*)$/);
         if (match) {
@@ -191,7 +191,6 @@ export default function GestaoCaixa() {
     try {
       let descFinal = form.descricao;
       
-      // Salva a tag [Categoria] tanto em Entradas como em Saídas
       if (tipoModal === 'Saida' || tipoModal === 'Entrada') {
         descFinal = `[${form.subtipo}] ${form.descricao}`;
       }
@@ -283,7 +282,7 @@ export default function GestaoCaixa() {
           </div>
         </div>
 
-        {/* BOTÕES DE AÇÃO COM O NOVO BOTÃO DE ENTRADA */}
+        {/* BOTÕES DE AÇÃO */}
         <div className="flex flex-wrap gap-4">
           {!temAbertura && (
             <button onClick={() => abrirModal('Abertura')} className="bg-green-600 hover:bg-green-500 text-white px-6 py-3 rounded-xl text-sm font-black shadow-lg shadow-green-900/50 transition-transform active:scale-95 flex-1 md:flex-none">
@@ -322,7 +321,6 @@ export default function GestaoCaixa() {
                   let badgeCategoria = '';
                   let textoDescricao = mov.descricao;
                   
-                  // Analisa se o movimento tem a tag [Categoria] (funciona para Saída e Entrada)
                   if (textoDescricao.startsWith('[')) {
                     const match = textoDescricao.match(/^\[(.*?)\]\s*(.*)$/);
                     if (match) {
@@ -372,7 +370,8 @@ export default function GestaoCaixa() {
                           {mov.tipo === 'Saida' ? '-' : mov.tipo === 'Fechamento' ? '=' : '+'}{Number(mov.valor).toFixed(2)}€
                         </div>
                         
-                        {!mov.isAutomatico ? (
+                        {/* Como a abertura automática agora não é isFromPDV, o botão editar/excluir aparece! */}
+                        {!mov.isFromPDV ? (
                           <div className="flex gap-2">
                             <button onClick={() => abrirModal(mov.tipo, mov)} className="w-8 h-8 rounded-lg bg-zinc-800/80 hover:bg-blue-600 flex items-center justify-center text-zinc-400 hover:text-white transition-colors" title="Editar">
                               ✏️
@@ -421,7 +420,6 @@ export default function GestaoCaixa() {
                 </div>
               ) : null}
 
-              {/* SELETOR DE CATEGORIA (APARECE EM ENTRADAS E SAÍDAS) */}
               {(tipoModal === 'Saida' || tipoModal === 'Entrada') && (
                 <div>
                   <label className="block text-[10px] text-zinc-400 font-black uppercase tracking-widest mb-2">Categoria da {tipoModal}</label>
