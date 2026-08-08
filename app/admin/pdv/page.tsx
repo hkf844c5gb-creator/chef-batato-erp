@@ -58,7 +58,6 @@ export default function CaixaPDV() {
   const [erroCaixa, setErroCaixa] = useState<string | null>(null);
   const [categoriaAtiva, setCategoriaAtiva] = useState<CategoriaFiltro>('todos');
 
-  // CABEÇALHO DO PEDIDO NORMAL
   const [cliente, setCliente] = useState('');
   const [contactoCliente, setContactoCliente] = useState('');
   const [moradaCliente, setMoradaCliente] = useState('');
@@ -73,7 +72,6 @@ export default function CaixaPDV() {
   
   const [isProcessando, setIsProcessando] = useState(false);
 
-  // MONTADOR DINÂMICO DE COMBOS
   const [mostrarModalCombo, setMostrarModalCombo] = useState(false);
   const [comboSelecionado, setComboSelecionado] = useState<Combo | null>(null);
   const [selecoesCombo, setSelecoesCombo] = useState<{ [grupoId: string]: ProdutoVinculado[] }>({});
@@ -117,11 +115,7 @@ export default function CaixaPDV() {
         .eq('ativo', true)
         .eq('esgotado', false);
       
-      if (errorProds) {
-        setErroCaixa(`Erro nos Produtos: ${errorProds.message}`);
-        setLoading(false);
-        return;
-      }
+      if (errorProds) throw errorProds;
 
       const produtosFormatados = (dataProds || []).map((p: any) => ({
         id: p.id, codigo: p.codigo || '', nome: p.nome || '',
@@ -141,18 +135,12 @@ export default function CaixaPDV() {
       setProdutos(produtosFormatados);
 
       const clientesMap = new Map();
-
       const { data: dataPedidos } = await supabase.from('pedidos').select('cliente, contacto_cliente');
       if (dataPedidos) {
         dataPedidos.forEach((p: any) => {
           const nome = p.cliente ? p.cliente.trim() : '';
           if (nome && !clientesMap.has(nome.toLowerCase())) {
-            clientesMap.set(nome.toLowerCase(), {
-              id: `hist_${nome}`,
-              nome: nome,
-              contacto: p.contacto_cliente || '',
-              morada: ''
-            });
+            clientesMap.set(nome.toLowerCase(), { id: `hist_${nome}`, nome: nome, contacto: p.contacto_cliente || '', morada: '' });
           }
         });
       }
@@ -162,12 +150,7 @@ export default function CaixaPDV() {
         dataClientesTable.forEach((c: any) => {
           const nome = c.nome || c.cliente || '';
           if (nome) {
-            clientesMap.set(nome.trim().toLowerCase(), {
-              id: c.id,
-              nome: nome.trim(),
-              contacto: c.contacto || c.telefone || c.telemovel || '',
-              morada: c.morada || c.endereco || ''
-            });
+            clientesMap.set(nome.trim().toLowerCase(), { id: c.id, nome: nome.trim(), contacto: c.contacto || c.telefone || c.telemovel || '', morada: c.morada || c.endereco || '' });
           }
         });
       }
@@ -180,34 +163,22 @@ export default function CaixaPDV() {
           id, codigo, nome, descricao, tipo_preco, preco_fixo, desconto_percentual, desconto_absolute:desconto_absoluto, item_gratis_categoria,
           combo_grupos (
             id, nome, quantidade_minima, quantidade_maxima, obrigatorio, ordem,
-            combo_grupo_produtos (
-              produto_id, acrescimo_preco, ativo,
-              produto:produtos (id, codigo, nome, categoria, preco_cardapio, preco_whatsapp, preco_glovo)
-            )
+            combo_grupo_produtos (produto_id, acrescimo_preco, ativo, produto:produtos (id, codigo, nome, categoria, preco_cardapio, preco_whatsapp, preco_glovo))
           )
         `)
         .eq('ativo', true)
         .eq('esgotado', false);
 
-      if (errCombos) {
-        setErroCaixa(`Erro nos Combos: ${errCombos.message}`);
-        setLoading(false);
-        return;
-      }
+      if (errCombos) throw errCombos;
 
       const combosCarregados = (dataCombos || []).map((cb: any) => ({
-        ...cb,
-        desconto_absoluto: cb.desconto_absolute || 0,
+        ...cb, desconto_absoluto: cb.desconto_absolute || 0,
         combo_grupos: (cb.combo_grupos || []).sort((a: any, b: any) => a.ordem - b.ordem)
       }));
 
       setCombos(combosCarregados);
 
-      const { data: dataEsts } = await supabase
-        .from('estafetas')
-        .select('nome')
-        .order('nome', { ascending: true });
-
+      const { data: dataEsts } = await supabase.from('estafetas').select('nome').order('nome', { ascending: true });
       setListaEstafetas(dataEsts || []);
 
     } catch (err: any) {
@@ -230,13 +201,9 @@ export default function CaixaPDV() {
   };
 
   const selecionarClienteSugerido = (c: any) => {
-    const nomeDb = c.nome || c.Nome || c.nome_cliente || c.cliente || c.NOME || '';
-    const contactoDb = c.contacto || c.telefone || c.telemovel || c.Contacto || '';
-    const moradaDb = c.morada || c.endereco || c.Morada || '';
-
-    setCliente(nomeDb);
-    setContactoCliente(contactoDb);
-    setMoradaCliente(moradaDb);
+    setCliente(c.nome || c.Nome || c.nome_cliente || c.cliente || c.NOME || '');
+    setContactoCliente(c.contacto || c.telefone || c.telemovel || c.Contacto || '');
+    setMoradaCliente(c.morada || c.endereco || c.Morada || '');
     setMostrarSugestoes(false); 
   };
 
@@ -245,9 +212,7 @@ export default function CaixaPDV() {
     setCarrinho((prev) => {
       const itemExistente = prev.find((item) => item.produto.id === produto.id && !item.isCombo);
       if (itemExistente) {
-        return prev.map((item) =>
-          item.produto.id === produto.id && !item.isCombo ? { ...item, quantidade: item.quantidade + 1 } : item
-        );
+        return prev.map((item) => item.produto.id === produto.id && !item.isCombo ? { ...item, quantidade: item.quantidade + 1 } : item);
       }
       return [...prev, { produto, quantity: 1, quantidade: 1, precoAplicado: precoAtual }];
     });
@@ -272,8 +237,7 @@ export default function CaixaPDV() {
         else return { ...prev, [grupo.id]: [item] };
       }
       const currentCount = selecoesDoGrupo.filter(s => s.produto_id === item.produto_id).length;
-      const totalSelected = selecoesDoGrupo.length;
-      const remainingSpace = grupo.quantidade_maxima - totalSelected;
+      const remainingSpace = grupo.quantidade_maxima - selecoesDoGrupo.length;
       const maxAllowedForThisItem = Math.min(grupo.quantidade_maxima, currentCount + remainingSpace);
 
       let newCount = currentCount + 1;
@@ -294,10 +258,8 @@ export default function CaixaPDV() {
       }
     }
 
-    let somaPrecosOriginais = 0;
-    let somaAcrescimos = 0;
-    const itensComDetalhes: any[] = [];
-    const idsDosProdutosBase: string[] = [];
+    let somaPrecosOriginais = 0, somaAcrescimos = 0;
+    const itensComDetalhes: any[] = [], idsDosProdutosBase: string[] = [];
 
     Object.values(selecoesCombo).forEach(selecoesGrupo => {
       selecoesGrupo.forEach(item => {
@@ -307,18 +269,14 @@ export default function CaixaPDV() {
         idsDosProdutosBase.push(item.produto_id);
         
         itensComDetalhes.push({
-          id: item.produto_id,
-          nome: item.produto.nome,
+          id: item.produto_id, nome: item.produto.nome,
           categoria: (item.produto.categoria || '').toLowerCase().trim(),
-          precoBase: precoItem,
-          acrescimo: Number(item.acrescimo_preco),
-          isGratis: false
+          precoBase: precoItem, acrescimo: Number(item.acrescimo_preco), isGratis: false
         });
       });
     });
 
-    let precoBaseCombo = 0;
-    let detalheDesconto = '';
+    let precoBaseCombo = 0, detalheDesconto = '';
 
     if (comboSelecionado.nome.toLowerCase().includes('para dois')) {
       const descontoComboForcado = canal === 'Glovo' ? 1.70 : 1.50;
@@ -357,8 +315,7 @@ export default function CaixaPDV() {
          const txtAcrescimo = it.acrescimo > 0 ? ` (+${it.acrescimo.toFixed(2)}€ tx)` : '';
          return `${it.nome} (🎁 Grátis${txtAcrescimo})`;
       } else {
-         const precoTotalDesteItem = it.precoBase + it.acrescimo;
-         return `${it.nome} (${precoTotalDesteItem.toFixed(2)}€)`;
+         return `${it.nome} (${(it.precoBase + it.acrescimo).toFixed(2)}€)`;
       }
     });
 
@@ -386,35 +343,42 @@ export default function CaixaPDV() {
     setMostrarModalCombo(false);
   };
 
-  // ---- FUNÇÃO ATUALIZADA: AGREGA PRODUTOS E DESCONTA EMBALAGENS ----
+  // ---- MOTOR BLINDADO DE ESTOQUE (100% GARANTIDO) ----
   const descontarStockAutomaticamente = async (itensDoCarrinho: ItemCarrinho[], numeroDaFatura: string) => {
     try {
       const consumos = new Map<string, number>();
       let quantidadePratos = 0; 
 
-      // 1. Agrupar quantidades para não falhar a leitura na Base de Dados
+      // 1. Agrupar TUDO de forma robusta
       for (const item of itensDoCarrinho) {
         const cat = (item.produto.categoria || '').toLowerCase();
         
-        // Se for uma batata ou um combo, conta como "1 Prato" (ou 2 se pedir 2)
-        if (cat === 'batata' || cat === 'combo') {
-          quantidadePratos += item.quantidade;
+        // Deteta quantos pratos reais a encomenda tem (Combos duplos contam por 2)
+        let qtdPratosDesteItem = item.quantidade;
+        if (cat === 'combo' && (item.produto.nome.toLowerCase().includes('dois') || item.produto.nome.toLowerCase().includes('duplo'))) {
+          qtdPratosDesteItem = item.quantidade * 2;
         }
 
-        const idsParaProcessar = item.isCombo && item.itensBaseId ? item.itensBaseId : [item.produto.id];
+        if (cat === 'batata' || cat === 'combo') {
+          quantidadePratos += qtdPratosDesteItem;
+        }
+
+        const idsParaProcessar = item.isCombo && item.itensBaseId && item.itensBaseId.length > 0 ? item.itensBaseId : [item.produto.id];
         
         for (const produtoBaseId of idsParaProcessar) {
+          if (!produtoBaseId) continue;
           const qtdAtual = consumos.get(produtoBaseId) || 0;
           consumos.set(produtoBaseId, qtdAtual + item.quantidade);
         }
       }
 
-      // 2. Abater Comida Real (Batatas, Adicionais, Bebidas, etc)
+      // 2. Abater Comida Real (Bebidas, Sobremesas, Batatas, etc)
       for (const [produtoId, qtdGasta] of consumos.entries()) {
-        const { data: prodData } = await supabase.from('produtos').select('nome, estoque_atual').eq('id', produtoId).single();
+        const { data: prodData, error: errSelect } = await supabase.from('produtos').select('id, nome, estoque_atual').eq('id', produtoId).single();
         
-        if (prodData && prodData.estoque_atual !== null) {
-          const novoStockProduto = Math.max(0, Number(prodData.estoque_atual) - qtdGasta);
+        if (prodData && !errSelect) {
+          const stockAtual = Number(prodData.estoque_atual) || 0;
+          const novoStockProduto = Math.max(0, stockAtual - qtdGasta);
           
           await supabase.from('produtos').update({ estoque_atual: novoStockProduto }).eq('id', produtoId);
 
@@ -430,20 +394,24 @@ export default function CaixaPDV() {
         }
       }
 
-      // 3. Abater Embalagens Automaticamente (1 Saco, 1 Pote, 1 Garfo por Prato)
+      // 3. Abater Sacos, Potes e Garfos com base no número de Pratos
       if (quantidadePratos > 0) {
-        const { data: embalagens } = await supabase
-          .from('produtos')
-          .select('id, nome, estoque_atual')
-          .in('categoria', ['embalagem', 'material', 'uso interno']);
+        // Puxa as embalagens para descontar (sem usar filtro case-sensitive da DB)
+        const { data: todasEmbalagens } = await supabase.from('produtos').select('id, nome, estoque_atual, categoria');
 
-        if (embalagens) {
-          for (const emb of embalagens) {
+        if (todasEmbalagens) {
+          const embsParaDescontar = todasEmbalagens.filter(e => {
+            const cat = (e.categoria || '').toLowerCase();
+            return cat.includes('embalagem') || cat.includes('material') || cat.includes('uso');
+          });
+
+          for (const emb of embsParaDescontar) {
             const nomeEmb = emb.nome.toLowerCase();
             
-            // Se o nome incluir alguma destas palavras, desconta a mesma quantidade de Pratos vendidos!
+            // Se o item tiver Saco, Garfo ou Pote no nome, sai do stock automaticamente!
             if (nomeEmb.includes('saco') || nomeEmb.includes('garfo') || nomeEmb.includes('pote') || nomeEmb.includes('embalagem')) {
-              const novoStockEmb = Math.max(0, Number(emb.estoque_atual) - quantidadePratos);
+              const stockAtualEmb = Number(emb.estoque_atual) || 0;
+              const novoStockEmb = Math.max(0, stockAtualEmb - quantidadePratos);
 
               await supabase.from('produtos').update({ estoque_atual: novoStockEmb }).eq('id', emb.id);
 
@@ -462,7 +430,7 @@ export default function CaixaPDV() {
       }
 
     } catch (err) {
-      console.error("Erro ao descontar stock cruzado:", err);
+      console.error("Erro fatal ao descontar stock:", err);
     }
   };
 
@@ -481,26 +449,12 @@ export default function CaixaPDV() {
     try {
       const nomeDoCliente = cliente.trim();
       
-      const { data: clienteExistente } = await supabase
-        .from('clientes')
-        .select('id')
-        .eq('nome', nomeDoCliente)
-        .single();
+      const { data: clienteExistente } = await supabase.from('clientes').select('id').eq('nome', nomeDoCliente).single();
         
       if (clienteExistente) {
-        await supabase.from('clientes')
-          .update({
-             contacto: contactoCliente.trim(),
-             morada: moradaCliente.trim()
-          })
-          .eq('id', clienteExistente.id);
+        await supabase.from('clientes').update({ contacto: contactoCliente.trim(), morada: moradaCliente.trim() }).eq('id', clienteExistente.id);
       } else {
-        await supabase.from('clientes')
-          .insert([{
-             nome: nomeDoCliente,
-             contacto: contactoCliente.trim(),
-             morada: moradaCliente.trim()
-          }]);
+        await supabase.from('clientes').insert([{ nome: nomeDoCliente, contacto: contactoCliente.trim(), morada: moradaCliente.trim() }]);
       }
 
       const { data: todosPedidos } = await supabase.from('pedidos').select('numero_pedido');
@@ -512,12 +466,9 @@ export default function CaixaPDV() {
         });
       }
 
-      const proximoNumero = maiorNumero + 1;
-      const novoNumeroStr = String(proximoNumero);
+      const novoNumeroStr = String(maiorNumero + 1);
 
-      const { data: pedidoGravado, error: erroPedido } = await supabase
-        .from('pedidos')
-        .insert([{ 
+      const { data: pedidoGravado, error: erroPedido } = await supabase.from('pedidos').insert([{ 
           numero_pedido: novoNumeroStr, 
           cliente: nomeDoCliente, 
           contacto_cliente: contactoCliente.trim(),
@@ -530,8 +481,7 @@ export default function CaixaPDV() {
           total_liquido: totalGeral,
           pago: estaPago,
           criado_em: dataHoraCriacaoCompleta
-        }])
-        .select().single();
+        }]).select().single();
       
       if (erroPedido) throw erroPedido;
       
@@ -544,7 +494,10 @@ export default function CaixaPDV() {
           quantidade: item.quantidade, 
           preco_unitario: item.precoAplicado 
         }));
-        await supabase.from('itens_pedido').insert(itensDB);
+        
+        // Bloqueio de erro de gravação dos itens
+        const { error: errItens } = await supabase.from('itens_pedido').insert(itensDB);
+        if (errItens) throw errItens;
         
         await descontarStockAutomaticamente(carrinho, novoNumeroStr);
       }
@@ -602,10 +555,7 @@ export default function CaixaPDV() {
             <input 
               type="text" 
               value={cliente} 
-              onChange={(e) => {
-                setCliente(e.target.value);
-                setMostrarSugestoes(true);
-              }} 
+              onChange={(e) => { setCliente(e.target.value); setMostrarSugestoes(true); }} 
               onFocus={() => setMostrarSugestoes(true)}
               onBlur={() => setTimeout(() => setMostrarSugestoes(false), 200)}
               placeholder="Nome ou Telemóvel..." 
@@ -618,9 +568,7 @@ export default function CaixaPDV() {
                 {listaClientesCadastrados
                   .filter(c => {
                     const termoBusca = cliente.toLowerCase().trim();
-                    return Object.values(c).some(val => 
-                      val && String(val).toLowerCase().includes(termoBusca)
-                    );
+                    return Object.values(c).some(val => val && String(val).toLowerCase().includes(termoBusca));
                   })
                   .map(c => {
                     const nomeExibicao = c.nome || c.Nome || c.nome_cliente || c.cliente || c.NOME || 'Sem Nome';
@@ -628,32 +576,12 @@ export default function CaixaPDV() {
                     const moradaExibicao = c.morada || c.endereco || c.Morada || '';
 
                     return (
-                      <div 
-                        key={c.id} 
-                        onMouseDown={(e) => {
-                          e.preventDefault(); 
-                          selecionarClienteSugerido(c);
-                        }}
-                        className="p-3 hover:bg-orange-600/20 cursor-pointer border-b border-zinc-800/50 text-xs flex justify-between items-center transition-all"
-                      >
+                      <div key={c.id} onMouseDown={(e) => { e.preventDefault(); selecionarClienteSugerido(c); }} className="p-3 hover:bg-orange-600/20 cursor-pointer border-b border-zinc-800/50 text-xs flex justify-between items-center transition-all">
                         <span className="font-bold text-white">{nomeExibicao}</span>
-                        <span className="text-zinc-400 text-[10px] truncate max-w-[150px] text-right">
-                          📞 {telExibicao} {moradaExibicao ? `| 📍 ${moradaExibicao}` : ''}
-                        </span>
+                        <span className="text-zinc-400 text-[10px] truncate max-w-[150px] text-right">📞 {telExibicao} {moradaExibicao ? `| 📍 ${moradaExibicao}` : ''}</span>
                       </div>
                     );
                   })}
-                  
-                {listaClientesCadastrados.filter(c => {
-                    const termoBusca = cliente.toLowerCase().trim();
-                    return Object.values(c).some(val => 
-                      val && String(val).toLowerCase().includes(termoBusca)
-                    );
-                }).length === 0 && (
-                  <div className="p-4 text-xs text-zinc-500 text-center italic">
-                    Nenhum cliente encontrado com "{cliente}"
-                  </div>
-                )}
               </div>
             )}
           </div>

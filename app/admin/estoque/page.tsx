@@ -3,864 +3,639 @@
 import { useState, useEffect } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
-interface Produto {
-  id: string; codigo: string; nome: string; 
-  precoCardapio: number; precoWhatsapp: number; precoGlovo: number; 
-  custoUnitario: number; categoria: string; ativo: boolean;
-}
-
-interface ProdutoVinculado {
-  produto_id: string;
-  acrescimo_preco: number;
+interface ProdutoEstoque {
+  id: string;
+  nome: string;
+  categoria: string;
+  estoque_atual: number;
+  estoque_minimo: number;
   ativo: boolean;
-  produto: {
-    id: string; codigo: string; nome: string; categoria: string;
-    preco_cardapio: number; preco_whatsapp: number; preco_glovo: number;
-  };
 }
 
-interface GrupoCombo {
-  id: string; nome: string; quantidade_minima: number; quantidade_maxima: number;
-  obrigatorio: boolean; ordem: number;
-  combo_grupo_produtos: ProdutoVinculado[];
-}
-
-interface Combo {
-  id: string; codigo: string; nome: string; descricao: string;
-  tipo_preco: 'fixo' | 'desconto' | 'desconto_fixo' | 'item_gratis';
-  preco_fixo: number | null;
-  desconto_percentual: number;
-  desconto_absoluto: number;
-  item_gratis_categoria: string;
-  combo_grupos: GrupoCombo[];
-}
-
-interface ItemCarrinho {
-  produto: Produto;
+interface MovimentoKardex {
+  id: string;
+  nome_produto: string;
+  tipo_movimento: string;
   quantidade: number;
-  isCombo?: boolean;
-  comboNome?: string;
-  detalhesCombo?: string[];
-  precoOriginal?: number;
-  precoAplicado: number;
-  itensBaseId?: string[]; 
+  saldo_atualizado: number;
+  origem: string;
+  observacoes: string;
+  data_movimento: string;
 }
 
-type CategoriaFiltro = 'todos' | 'batatas' | 'adicionais' | 'sobremesas' | 'bebidas' | 'combos';
-
-export default function CaixaPDV() {
-  const [produtos, setProdutos] = useState<Produto[]>([]);
-  const [combos, setCombos] = useState<Combo[]>([]);
-  const [carrinho, setCarrinho] = useState<ItemCarrinho[]>([]);
-  const [listaEstafetas, setListaEstafetas] = useState<{ nome: string }[]>([]);
-  const [listaClientesCadastrados, setListaClientesCadastrados] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [erroCaixa, setErroCaixa] = useState<string | null>(null);
-  const [categoriaAtiva, setCategoriaAtiva] = useState<CategoriaFiltro>('todos');
-
-  // CABEÇALHO DO PEDIDO
-  const [cliente, setCliente] = useState('');
-  const [contactoCliente, setContactoCliente] = useState('');
-  const [moradaCliente, setMoradaCliente] = useState('');
-  const [mostrarSugestoes, setMostrarSugestoes] = useState(false);
-
-  const [dataPedido, setDataPedido] = useState(() => new Date().toISOString().split('T')[0]);
-  const [canal, setCanal] = useState<'Balcão' | 'WhatsApp' | 'Glovo' | 'Palmbites'>('Balcão');
-  const [formaPagamento, setFormaPagamento] = useState('Dinheiro');
-  const [entregador, setEntregador] = useState('');
-  const [taxaEntrega, setTaxaEntrega] = useState('0.00');
-  const [descontoManual, setDescontoManual] = useState('0.00');
-  
-  const [isProcessando, setIsProcessando] = useState(false);
-
-  // MONTADOR DINÂMICO DE COMBOS
-  const [mostrarModalCombo, setMostrarModalCombo] = useState(false);
-  const [comboSelecionado, setComboSelecionado] = useState<Combo | null>(null);
-  const [selecoesCombo, setSelecoesCombo] = useState<{ [grupoId: string]: ProdutoVinculado[] }>({});
-
+export default function GestaoEstoqueProdutos() {
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
 
-  const regrasPagamento = {
-    'Glovo': [
-      { value: 'Dinheiro Glovo', label: '💰 Dinheiro Glovo (Pago na recolha)' },
-      { value: 'Glovo', label: 'Faturamento Glovo' }
-    ],
-    'WhatsApp': [
-      { value: 'Dinheiro', label: 'Dinheiro' },
-      { value: 'MBWay', label: 'MBWay' },
-      { value: 'Multibanco', label: 'Multibanco' },
-      { value: 'Caderninho', label: '📓 Caderninho (Pagar depois)' }
-    ],
-    'Palmbites': [
-      { value: 'Dinheiro', label: 'Dinheiro' },
-      { value: 'MBWay', label: 'MBWay' },
-      { value: 'Multibanco', label: 'Multibanco' }
-    ],
-    'Balcão': [
-      { value: 'Dinheiro', label: 'Dinheiro' },
-      { value: 'MBWay', label: 'MBWay' },
-      { value: 'Multibanco', label: 'Multibanco' },
-      { value: 'Caderninho', label: '📓 Caderninho (Pagar depois)' }
-    ]
-  };
+  const [produtos, setProdutos] = useState<ProdutoEstoque[]>([]);
+  const [historicoGlobal, setHistoricoGlobal] = useState<MovimentoKardex[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [filtroCategoria, setFiltroCategoria] = useState('todos');
 
-  async function carregarMenuCompleto() {
+  // Modais Originais
+  const [modalRepor, setModalRepor] = useState<ProdutoEstoque | null>(null);
+  const [modalAlerta, setModalAlerta] = useState<ProdutoEstoque | null>(null);
+  const [modalHistorico, setModalHistorico] = useState<ProdutoEstoque | null>(null);
+  const [historicoProduto, setHistoricoProduto] = useState<MovimentoKardex[]>([]);
+  const [loadingHistorico, setLoadingHistorico] = useState(false);
+
+  // NOVOS MODAIS (CRUD)
+  const [mostrarModalNovo, setMostrarModalNovo] = useState(false);
+  const [modalEditar, setModalEditar] = useState<ProdutoEstoque | null>(null);
+
+  // Formulários Originais
+  const [qtdRepor, setQtdRepor] = useState('');
+  const [dataRepor, setDataRepor] = useState(() => new Date().toISOString().split('T')[0]);
+  const [novoAlerta, setNovoAlerta] = useState('');
+  const [processando, setProcessando] = useState(false);
+
+  // Formulários CRUD
+  const [formNome, setFormNome] = useState('');
+  const [formCategoria, setFormCategoria] = useState('embalagem');
+  const [formEstoqueAtual, setFormEstoqueAtual] = useState('');
+  const [formEstoqueMinimo, setFormEstoqueMinimo] = useState('');
+  const [formAtivo, setFormAtivo] = useState(true);
+
+  async function carregarDados() {
     setLoading(true);
-    setErroCaixa(null);
     try {
-      const { data: dataProds, error: errorProds } = await supabase
+      // Removemos o .eq('ativo', true) para podermos ver e gerir os itens inativos no estoque
+      const { data: prods, error: errProds } = await supabase
         .from('produtos')
-        .select('*')
-        .eq('ativo', true)
-        .eq('esgotado', false);
-      
-      if (errorProds) {
-        setErroCaixa(`Erro nos Produtos: ${errorProds.message}`);
-        setLoading(false);
-        return;
-      }
-
-      const produtosFormatados = (dataProds || []).map((p: any) => ({
-        id: p.id, codigo: p.codigo || '', nome: p.nome || '',
-        precoCardapio: Number(p.preco_cardapio || 0),
-        precoWhatsapp: Number(p.preco_whatsapp || p.preco_cardapio || 0),
-        precoGlovo: Number(p.preco_glovo || p.preco_cardapio || 0),
-        custoUnitario: Number(p.custo_unitario || 0),
-        categoria: (p.categoria || p.tipo || '').toLowerCase().trim(),
-        ativo: true
-      })).filter((p: any) => 
-        p.codigo !== 'ADI001' && 
-        p.categoria !== 'embalagem' && 
-        p.categoria !== 'material' &&
-        p.categoria !== 'uso interno'
-      );
-
-      setProdutos(produtosFormatados);
-
-      const clientesMap = new Map();
-
-      const { data: dataPedidos } = await supabase.from('pedidos').select('cliente, contacto_cliente');
-      if (dataPedidos) {
-        dataPedidos.forEach((p: any) => {
-          const nome = p.cliente ? p.cliente.trim() : '';
-          if (nome && !clientesMap.has(nome.toLowerCase())) {
-            clientesMap.set(nome.toLowerCase(), {
-              id: `hist_${nome}`,
-              nome: nome,
-              contacto: p.contacto_cliente || '',
-              morada: ''
-            });
-          }
-        });
-      }
-
-      const { data: dataClientesTable } = await supabase.from('clientes').select('*');
-      if (dataClientesTable) {
-        dataClientesTable.forEach((c: any) => {
-          const nome = c.nome || c.cliente || '';
-          if (nome) {
-            clientesMap.set(nome.trim().toLowerCase(), {
-              id: c.id,
-              nome: nome.trim(),
-              contacto: c.contacto || c.telefone || c.telemovel || '',
-              morada: c.morada || c.endereco || ''
-            });
-          }
-        });
-      }
-
-      setListaClientesCadastrados(Array.from(clientesMap.values()));
-
-      const { data: dataCombos, error: errCombos } = await supabase
-        .from('combos')
-        .select(`
-          id, codigo, nome, descricao, tipo_preco, preco_fixo, desconto_percentual, desconto_absolute:desconto_absoluto, item_gratis_categoria,
-          combo_grupos (
-            id, nome, quantidade_minima, quantidade_maxima, obrigatorio, ordem,
-            combo_grupo_produtos (
-              produto_id, acrescimo_preco, ativo,
-              produto:produtos (id, codigo, nome, categoria, preco_cardapio, preco_whatsapp, preco_glovo)
-            )
-          )
-        `)
-        .eq('ativo', true)
-        .eq('esgotado', false);
-
-      if (errCombos) {
-        setErroCaixa(`Erro nos Combos: ${errCombos.message}`);
-        setLoading(false);
-        return;
-      }
-
-      const combosCarregados = (dataCombos || []).map((cb: any) => ({
-        ...cb,
-        desconto_absoluto: cb.desconto_absolute || 0,
-        combo_grupos: (cb.combo_grupos || []).sort((a: any, b: any) => a.ordem - b.ordem)
-      }));
-
-      setCombos(combosCarregados);
-
-      const { data: dataEsts } = await supabase
-        .from('estafetas')
-        .select('nome')
+        .select('id, nome, categoria, estoque_atual, estoque_minimo, ativo')
+        .order('ativo', { ascending: false }) // Ativos primeiro
         .order('nome', { ascending: true });
 
-      setListaEstafetas(dataEsts || []);
+      if (errProds) throw errProds;
+      setProdutos(prods || []);
+
+      const { data: hist } = await supabase
+        .from('movimentos_estoque')
+        .select('*')
+        .order('data_movimento', { ascending: false })
+        .limit(15);
+      
+      if (hist) setHistoricoGlobal(hist);
 
     } catch (err: any) {
-      setErroCaixa(`Falha crítica de carregamento: ${err.message || err}`);
+      console.error("Aviso:", err.message);
     } finally {
       setLoading(false);
     }
   }
 
-  useEffect(() => { carregarMenuCompleto(); }, [canal]);
+  useEffect(() => { carregarDados(); }, []);
 
-  const getPrecoPorCanal = (prod: any) => {
-    const precoGlovo = prod.precoGlovo !== undefined ? prod.precoGlovo : prod.preco_glovo;
-    const precoWhatsapp = prod.precoWhatsapp !== undefined ? prod.precoWhatsapp : prod.preco_whatsapp;
-    const precoCardapio = prod.precoCardapio !== undefined ? prod.precoCardapio : prod.preco_cardapio;
-
-    if (canal === 'Glovo') return Number(precoGlovo || precoCardapio || 0);
-    if (canal === 'WhatsApp') return Number(precoWhatsapp || precoCardapio || 0);
-    return Number(precoCardapio || 0);
+  // ---- FUNÇÕES NOVAS DE CRUD (CRIAR, EDITAR, EXCLUIR) ----
+  
+  const abrirModalNovo = () => {
+    setFormNome('');
+    setFormCategoria('embalagem');
+    setFormEstoqueAtual('0');
+    setFormEstoqueMinimo('5');
+    setMostrarModalNovo(true);
   };
 
-  const selecionarClienteSugerido = (c: any) => {
-    const nomeDb = c.nome || c.Nome || c.nome_cliente || c.cliente || c.NOME || '';
-    const contactoDb = c.contacto || c.telefone || c.telemovel || c.Contacto || '';
-    const moradaDb = c.morada || c.endereco || c.Morada || '';
-
-    setCliente(nomeDb);
-    setContactoCliente(contactoDb);
-    setMoradaCliente(moradaDb);
-    setMostrarSugestoes(false); 
-  };
-
-  const adicionarAoCarrinho = (produto: Produto) => {
-    const precoAtual = getPrecoPorCanal(produto);
-    setCarrinho((prev) => {
-      const itemExistente = prev.find((item) => item.produto.id === produto.id && !item.isCombo);
-      if (itemExistente) {
-        return prev.map((item) =>
-          item.produto.id === produto.id && !item.isCombo ? { ...item, quantidade: item.quantidade + 1 } : item
-        );
-      }
-      return [...prev, { produto, quantity: 1, quantidade: 1, precoAplicado: precoAtual }];
-    });
-  };
-
-  const removerDoCarrinho = (indexParaRemover: number) => {
-    setCarrinho((prev) => prev.map((item, idx) => (idx === indexParaRemover ? { ...item, quantidade: item.quantidade - 1 } : item)).filter((item) => item.quantidade > 0));
-  };
-
-  const iniciarMontagemCombo = (combo: Combo) => {
-    setComboSelecionado(combo);
-    setSelecoesCombo({});
-    setMostrarModalCombo(true);
-  };
-
-  const toggleSelecaoCombo = (grupo: GrupoCombo, item: ProdutoVinculado) => {
-    setSelecoesCombo(prev => {
-      const selecoesDoGrupo = prev[grupo.id] || [];
-      if (grupo.quantidade_maxima === 1) {
-        const jaSelecionado = selecoesDoGrupo.some(s => s.produto_id === item.produto_id);
-        if (jaSelecionado) return { ...prev, [grupo.id]: [] };
-        else return { ...prev, [grupo.id]: [item] };
-      }
-      const currentCount = selecoesDoGrupo.filter(s => s.produto_id === item.produto_id).length;
-      const totalSelected = selecoesDoGrupo.length;
-      const remainingSpace = grupo.quantidade_maxima - totalSelected;
-      const maxAllowedForThisItem = Math.min(grupo.quantidade_maxima, currentCount + remainingSpace);
-
-      let newCount = currentCount + 1;
-      if (newCount > maxAllowedForThisItem) newCount = 0; 
-      const otherItems = selecoesDoGrupo.filter(s => s.produto_id !== item.produto_id);
-      const newItemsToAdd = Array(newCount).fill(item);
-      return { ...prev, [grupo.id]: [...otherItems, ...newItemsToAdd] };
-    });
-  };
-
-  const confirmarMontagemCombo = () => {
-    if (!comboSelecionado) return;
-
-    for (const grupo of comboSelecionado.combo_grupos) {
-      const selecoes = selecoesCombo[grupo.id] || [];
-      if (grupo.obrigatorio && selecoes.length < grupo.quantidade_minima) {
-        return alert(`O grupo "${grupo.nome}" exige no mínimo ${grupo.quantidade_minima} item(ns).`);
-      }
-    }
-
-    let somaPrecosOriginais = 0;
-    let somaAcrescimos = 0;
-    const itensComDetalhes: any[] = [];
-    const idsDosProdutosBase: string[] = [];
-
-    Object.values(selecoesCombo).forEach(selecoesGrupo => {
-      selecoesGrupo.forEach(item => {
-        const precoItem = getPrecoPorCanal(item.produto);
-        somaPrecosOriginais += precoItem;
-        somaAcrescimos += Number(item.acrescimo_preco);
-        idsDosProdutosBase.push(item.produto_id);
-        
-        itensComDetalhes.push({
-          id: item.produto_id,
-          nome: item.produto.nome,
-          categoria: (item.produto.categoria || '').toLowerCase().trim(),
-          precoBase: precoItem,
-          acrescimo: Number(item.acrescimo_preco),
-          isGratis: false
-        });
-      });
-    });
-
-    let precoBaseCombo = 0;
-    let detalheDesconto = '';
-
-    if (comboSelecionado.nome.toLowerCase().includes('para dois')) {
-      const descontoComboForcado = canal === 'Glovo' ? 1.70 : 1.50;
-      precoBaseCombo = Math.max(0, somaPrecosOriginais - descontoComboForcado);
-      detalheDesconto = `🔻 Desconto Combo (-${descontoComboForcado.toFixed(2)}€)`;
-    } else if (comboSelecionado.tipo_preco === 'fixo') {
-      precoBaseCombo = Number(comboSelecionado.preco_fixo);
-      detalheDesconto = `🏷️ Preço Fixo Especial`;
-    } else if (comboSelecionado.tipo_preco === 'desconto') {
-      const percentual = Number(comboSelecionado.desconto_percentual) || 0;
-      precoBaseCombo = somaPrecosOriginais * (1 - percentual / 100);
-      detalheDesconto = `🔻 Desconto Combo (-${percentual}%)`;
-    } else if (comboSelecionado.tipo_preco === 'desconto_fixo') {
-      const descontoFx = Number(comboSelecionado.desconto_absoluto) || 0;
-      precoBaseCombo = Math.max(0, somaPrecosOriginais - descontoFx);
-      detalheDesconto = `🔻 Desconto Combo (-${descontoFx.toFixed(2)}€)`;
-    } else if (comboSelecionado.tipo_preco === 'item_gratis') {
-      const catGratis = (comboSelecionado.item_gratis_categoria || '').toLowerCase().trim();
-      let itemParaFicarGratis = null;
-
-      if (catGratis === 'mais_barato') {
-        if (itensComDetalhes.length > 0) itemParaFicarGratis = itensComDetalhes.reduce((prev, curr) => prev.precoBase < curr.precoBase ? prev : curr);
-      } else {
-        const itensDaCat = itensComDetalhes.filter(it => it.categoria === catGratis || (catGratis === 'sobremesa' && it.categoria === 'brownie'));
-        if (itensDaCat.length > 0) itemParaFicarGratis = itensDaCat[0];
-      }
-
-      if (itemParaFicarGratis) {
-        itemParaFicarGratis.isGratis = true;
-        precoBaseCombo = Math.max(0, somaPrecosOriginais - itemParaFicarGratis.precoBase);
-      } else precoBaseCombo = somaPrecosOriginais;
-    }
-
-    const detalhesFormatados = itensComDetalhes.map(it => {
-      if (it.isGratis) {
-         const txtAcrescimo = it.acrescimo > 0 ? ` (+${it.acrescimo.toFixed(2)}€ tx)` : '';
-         return `${it.nome} (🎁 Grátis${txtAcrescimo})`;
-      } else {
-         const precoTotalDesteItem = it.precoBase + it.acrescimo;
-         return `${it.nome} (${precoTotalDesteItem.toFixed(2)}€)`;
-      }
-    });
-
-    if (detalheDesconto) detalhesFormatados.push(detalheDesconto);
-
-    const precoFinalAplicado = precoBaseCombo + somaAcrescimos;
-    const precoSemDesconto = somaPrecosOriginais + somaAcrescimos;
-
-    setCarrinho((prev) => [
-      ...prev,
-      {
-        produto: {
-          id: `${comboSelecionado.id}_${Date.now()}`, codigo: 'COMBO', nome: comboSelecionado.nome,
-          precoCardapio: precoFinalAplicado, precoWhatsapp: precoFinalAplicado, precoGlovo: precoFinalAplicado, 
-          custoUnitario: 0, categoria: 'combo', ativo: true
-        },
-        quantidade: 1, isCombo: true, comboNome: comboSelecionado.nome, 
-        detalhesCombo: detalhesFormatados, 
-        precoOriginal: Number(precoSemDesconto.toFixed(2)), 
-        precoAplicado: Number(precoFinalAplicado.toFixed(2)),
-        itensBaseId: idsDosProdutosBase 
-      }
-    ]);
-
-    setMostrarModalCombo(false);
-  };
-
-  // ---- MOTOR BLINDADO DE ESTOQUE ----
-  const descontarStockAutomaticamente = async (itensDoCarrinho: ItemCarrinho[], numeroDaFatura: string) => {
+  const criarNovoItem = async () => {
+    if (!formNome.trim()) return alert("O nome é obrigatório!");
+    setProcessando(true);
     try {
-      const consumos = new Map<string, number>();
-      let quantidadePratos = 0; 
+      // GERAÇÃO DO CÓDIGO AUTOMÁTICO ADICIONADA AQUI
+      const prefixo = formCategoria.substring(0, 3).toUpperCase();
+      const codigoGerado = `${prefixo}-${Math.floor(100000 + Math.random() * 900000)}`;
 
-      // 1. Agrupar as quantidades de TUDO
-      for (const item of itensDoCarrinho) {
-        const cat = (item.produto.categoria || '').toLowerCase();
-        
-        // Verifica de forma inteligente se o Combo vale por 2 pratos!
-        let qtdPratosDesteItem = item.quantidade;
-        if (cat === 'combo' && (item.produto.nome.toLowerCase().includes('dois') || item.produto.nome.toLowerCase().includes('duplo'))) {
-          qtdPratosDesteItem = item.quantidade * 2;
-        }
+      const { data: novoProduto, error } = await supabase.from('produtos').insert([{
+        codigo: codigoGerado, // <--- Aplica o código automático à base de dados
+        nome: formNome.trim(),
+        categoria: formCategoria.toLowerCase(),
+        estoque_atual: Number(formEstoqueAtual) || 0,
+        estoque_minimo: Number(formEstoqueMinimo) || 5,
+        preco_cardapio: 0, // Como é criado pelo estoque, preço base 0
+        preco_whatsapp: 0,
+        preco_glovo: 0,
+        ativo: true
+      }]).select().single();
 
-        if (cat === 'batata' || cat === 'combo') {
-          quantidadePratos += qtdPratosDesteItem;
-        }
+      if (error) throw error;
 
-        const idsParaProcessar = item.isCombo && item.itensBaseId ? item.itensBaseId : [item.produto.id];
-        
-        for (const produtoBaseId of idsParaProcessar) {
-          const qtdAtual = consumos.get(produtoBaseId) || 0;
-          consumos.set(produtoBaseId, qtdAtual + item.quantidade);
-        }
+      // Grava o movimento inicial se o estoque for maior que zero
+      if (Number(formEstoqueAtual) > 0 && novoProduto) {
+        await supabase.from('movimentos_estoque').insert([{
+          produto_id: novoProduto.id,
+          nome_produto: novoProduto.nome,
+          tipo_movimento: 'ENTRADA',
+          quantidade: Number(formEstoqueAtual),
+          saldo_atualizado: Number(formEstoqueAtual),
+          origem: 'CRIAÇÃO DE ITEM',
+          observacoes: `Stock inicial (Código: ${codigoGerado})`
+        }]);
       }
 
-      // 2. Abater Comida Real Sem Restrições
-      for (const [produtoId, qtdGasta] of consumos.entries()) {
-        const { data: prodData } = await supabase.from('produtos').select('nome, estoque_atual').eq('id', produtoId).single();
-        
-        if (prodData) {
-          // Mesmo que o produto não tenha stock configurado (null), forçamos a partir do 0
-          const stockAtual = Number(prodData.estoque_atual) || 0;
-          const novoStockProduto = Math.max(0, stockAtual - qtdGasta);
-          
-          await supabase.from('produtos').update({ estoque_atual: novoStockProduto }).eq('id', produtoId);
-
-          await supabase.from('movimentos_estoque').insert([{
-            produto_id: produtoId,
-            nome_produto: prodData.nome,
-            tipo_movimento: 'SAÍDA',
-            quantidade: qtdGasta,
-            saldo_atualizado: novoStockProduto,
-            origem: 'VENDA PDV',
-            observacoes: `Pedido #${numeroDaFatura}`
-          }]);
-        }
-      }
-
-      // 3. Abater Embalagens Automaticamente (Saco, Pote, Garfo por Prato)
-      if (quantidadePratos > 0) {
-        const { data: embalagens } = await supabase
-          .from('produtos')
-          .select('id, nome, estoque_atual')
-          .in('categoria', ['embalagem', 'material', 'uso interno']);
-
-        if (embalagens) {
-          for (const emb of embalagens) {
-            const nomeEmb = emb.nome.toLowerCase();
-            
-            if (nomeEmb.includes('saco') || nomeEmb.includes('garfo') || nomeEmb.includes('pote') || nomeEmb.includes('embalagem')) {
-              const stockAtualEmb = Number(emb.estoque_atual) || 0;
-              const novoStockEmb = Math.max(0, stockAtualEmb - quantidadePratos);
-
-              await supabase.from('produtos').update({ estoque_atual: novoStockEmb }).eq('id', emb.id);
-
-              await supabase.from('movimentos_estoque').insert([{
-                produto_id: emb.id,
-                nome_produto: emb.nome,
-                tipo_movimento: 'SAÍDA',
-                quantidade: quantidadePratos,
-                saldo_atualizado: novoStockEmb,
-                origem: 'VENDA PDV (Automático)',
-                observacoes: `Acompanhamento Pedido #${numeroDaFatura}`
-              }]);
-            }
-          }
-        }
-      }
-
-    } catch (err) {
-      console.error("Erro ao descontar stock cruzado:", err);
-    }
-  };
-
-  const subtotalProdutos = carrinho.reduce((acc, item) => acc + item.precoAplicado * item.quantidade, 0);
-  const totalGeral = Math.max(0, subtotalProdutos - (parseFloat(descontoManual) || 0)) + (parseFloat(taxaEntrega) || 0);
-
-  const finalizarVenda = async () => {
-    if (carrinho.length === 0) return alert('O carrinho está vazio!');
-    if (!cliente.trim()) return alert('Insira o nome do cliente!');
-    
-    setIsProcessando(true);
-    const estaPago = formaPagamento !== 'Caderninho';
-    const agora = new Date();
-    const dataHoraCriacaoCompleta = `${dataPedido}T${agora.toTimeString().split(' ')[0]}`;
-
-    try {
-      const nomeDoCliente = cliente.trim();
-      
-      const { data: clienteExistente } = await supabase
-        .from('clientes')
-        .select('id')
-        .eq('nome', nomeDoCliente)
-        .single();
-        
-      if (clienteExistente) {
-        await supabase.from('clientes')
-          .update({
-             contacto: contactoCliente.trim(),
-             morada: moradaCliente.trim()
-          })
-          .eq('id', clienteExistente.id);
-      } else {
-        await supabase.from('clientes')
-          .insert([{
-             nome: nomeDoCliente,
-             contacto: contactoCliente.trim(),
-             morada: moradaCliente.trim()
-          }]);
-      }
-
-      const { data: todosPedidos } = await supabase.from('pedidos').select('numero_pedido');
-      let maiorNumero = 365;
-      if (todosPedidos) {
-        todosPedidos.forEach(p => {
-          const num = parseInt(p.numero_pedido, 10);
-          if (!isNaN(num) && num > maiorNumero) maiorNumero = num;
-        });
-      }
-
-      const proximoNumero = maiorNumero + 1;
-      const novoNumeroStr = String(proximoNumero);
-
-      const { data: pedidoGravado, error: erroPedido } = await supabase
-        .from('pedidos')
-        .insert([{ 
-          numero_pedido: novoNumeroStr, 
-          cliente: nomeDoCliente, 
-          contacto_cliente: contactoCliente.trim(),
-          canal: canal, 
-          forma_pagamento: formaPagamento, 
-          entregador: entregador || null, 
-          taxa_entrega: parseFloat(taxaEntrega), 
-          desconto: parseFloat(descontoManual) || 0,
-          total_geral: totalGeral,
-          total_liquido: totalGeral,
-          pago: estaPago,
-          criado_em: dataHoraCriacaoCompleta
-        }])
-        .select().single();
-      
-      if (erroPedido) throw erroPedido;
-      
-      if (pedidoGravado) {
-        const itensDB = carrinho.map(item => ({ 
-          pedido_id: pedidoGravado.id, 
-          produto_id: item.isCombo ? null : item.produto.id, 
-          codigo_produto: item.produto.codigo, 
-          nome_produto: item.isCombo ? `${item.produto.nome} (${item.detalhesCombo?.join(', ')})` : item.produto.nome, 
-          quantidade: item.quantidade, 
-          preco_unitario: item.precoAplicado 
-        }));
-        await supabase.from('itens_pedido').insert(itensDB);
-        
-        await descontarStockAutomaticamente(carrinho, novoNumeroStr);
-      }
-      
-      alert(`Pedido #${novoNumeroStr} registado com sucesso!`);
-      setCarrinho([]); 
-      setCliente(''); 
-      setContactoCliente(''); 
-      setMoradaCliente('');
-      setTaxaEntrega('0.00'); 
-      setDescontoManual('0.00');
-      carregarMenuCompleto();
-    } catch (err: any) { 
-      alert(`Erro ao gravar pedido: ${err.message}`); 
+      alert("✅ Novo item criado com sucesso!");
+      setMostrarModalNovo(false);
+      carregarDados();
+    } catch (err: any) {
+      alert("Erro ao criar item: " + err.message);
     } finally {
-      setIsProcessando(false);
+      setProcessando(false);
     }
   };
 
-  const renderBotaoCombo = (combo: Combo) => (
-    <button key={combo.id} onClick={() => iniciarMontagemCombo(combo)} className="bg-zinc-900 hover:bg-zinc-800 border border-orange-500/20 p-5 rounded-2xl text-left h-40 flex flex-col justify-between transition-all">
-      <div><span className="text-[9px] font-bold text-orange-400 bg-orange-500/10 px-2 py-0.5 rounded">COMBO DINÂMICO</span><h3 className="font-bold mt-2 text-zinc-100">{combo.nome}</h3><p className="text-xs text-zinc-400 mt-1 line-clamp-2">{combo.descricao}</p></div>
-      <div className="text-xs font-semibold text-orange-500">Montar Opções ➜</div>
-    </button>
-  );
+  const abrirModalEditar = (item: ProdutoEstoque) => {
+    setFormNome(item.nome);
+    setFormCategoria(item.categoria);
+    setFormAtivo(item.ativo);
+    setModalEditar(item);
+  };
+
+  const guardarEdicao = async () => {
+    if (!modalEditar || !formNome.trim()) return;
+    setProcessando(true);
+    try {
+      const { error } = await supabase.from('produtos').update({
+        nome: formNome.trim(),
+        categoria: formCategoria.toLowerCase(),
+        ativo: formAtivo
+      }).eq('id', modalEditar.id);
+
+      if (error) throw error;
+
+      alert("✅ Item atualizado com sucesso!");
+      setModalEditar(null);
+      carregarDados();
+    } catch (err: any) {
+      alert("Erro ao atualizar item: " + err.message);
+    } finally {
+      setProcessando(false);
+    }
+  };
+
+  const excluirItem = async () => {
+    if (!modalEditar) return;
+    const confirmacao = window.confirm(`Tem a certeza que deseja excluir o item "${modalEditar.nome}" definitivamente? Esta ação não pode ser desfeita.`);
+    if (!confirmacao) return;
+
+    setProcessando(true);
+    try {
+      const { error } = await supabase.from('produtos').delete().eq('id', modalEditar.id);
+      
+      if (error) {
+        // Se houver erro (ex: constraint de chave estrangeira), sugerimos desativar
+        alert(`❌ Não é possível apagar este item porque já possui histórico de vendas ou movimentos associados. Por favor, apenas altere o estado para "Inativo" no botão acima para que ele deixe de aparecer.`);
+      } else {
+        alert("🗑️ Item excluído com sucesso!");
+        setModalEditar(null);
+        carregarDados();
+      }
+    } catch (err: any) {
+      alert("Erro ao excluir: " + err.message);
+    } finally {
+      setProcessando(false);
+    }
+  };
+
+  // ---- FUNÇÕES ORIGINAIS (REPOR, ALERTA, HISTÓRICO) ----
+
+  const registarEntradaStock = async () => {
+    if (!modalRepor || !qtdRepor || Number(qtdRepor) <= 0) return;
+    setProcessando(true);
+
+    try {
+      const qtdAdicionar = Number(qtdRepor);
+      const novoStock = Number(modalRepor.estoque_atual || 0) + qtdAdicionar;
+
+      const { error: errUpdate } = await supabase
+        .from('produtos')
+        .update({ estoque_atual: novoStock })
+        .eq('id', modalRepor.id);
+      
+      if (errUpdate) throw errUpdate;
+
+      await supabase.from('movimentos_estoque').insert([{
+        produto_id: modalRepor.id,
+        nome_produto: modalRepor.nome,
+        tipo_movimento: 'ENTRADA',
+        quantidade: qtdAdicionar,
+        saldo_atualizado: novoStock,
+        origem: 'COMPRA / REPOSIÇÃO',
+        observacoes: `Registado via painel. Data Fatura: ${dataRepor}`
+      }]);
+
+      alert(`✅ ${qtdAdicionar} unidades de ${modalRepor.nome} adicionadas com sucesso!`);
+      setModalRepor(null);
+      setQtdRepor('');
+      carregarDados();
+    } catch (err: any) {
+      alert(`Erro ao repor stock: ${err.message}`);
+    } finally {
+      setProcessando(false);
+    }
+  };
+
+  const atualizarAlertaMinimo = async () => {
+    if (!modalAlerta || !novoAlerta || Number(novoAlerta) < 0) return;
+    setProcessando(true);
+
+    try {
+      const { error } = await supabase
+        .from('produtos')
+        .update({ estoque_minimo: Number(novoAlerta) })
+        .eq('id', modalAlerta.id);
+      
+      if (error) throw error;
+
+      alert(`✅ Alerta de ${modalAlerta.nome} definido para ${novoAlerta} unidades.`);
+      setModalAlerta(null);
+      setNovoAlerta('');
+      carregarDados();
+    } catch (err: any) {
+      alert(`Erro ao atualizar alerta: ${err.message}`);
+    } finally {
+      setProcessando(false);
+    }
+  };
+
+  const verHistoricoProduto = async (produto: ProdutoEstoque) => {
+    setModalHistorico(produto);
+    setLoadingHistorico(true);
+    try {
+      const { data, error } = await supabase
+        .from('movimentos_estoque')
+        .select('*')
+        .eq('produto_id', produto.id)
+        .order('data_movimento', { ascending: false })
+        .limit(50);
+      
+      if (error) throw error;
+      setHistoricoProduto(data || []);
+    } catch (err: any) {
+      alert("Erro ao carregar histórico: " + err.message);
+    } finally {
+      setLoadingHistorico(false);
+    }
+  };
+
+  // ---- FILTROS ----
+
+  const produtosEmAlerta = produtos.filter(p => p.ativo && (p.estoque_atual || 0) <= (p.estoque_minimo || 5));
+  
+  const produtosFiltrados = produtos.filter(p => {
+    const cat = (p.categoria || '').toLowerCase();
+    if (filtroCategoria === 'alertas') return p.ativo && (p.estoque_atual || 0) <= (p.estoque_minimo || 5);
+    if (filtroCategoria === 'bebidas') return cat.includes('bebida');
+    if (filtroCategoria === 'sobremesas') return cat.includes('sobremesa') || cat.includes('brownie');
+    if (filtroCategoria === 'batatas') return cat.includes('batata');
+    if (filtroCategoria === 'embalagens') return cat.includes('embalagem') || cat.includes('material') || cat.includes('uso interno');
+    if (filtroCategoria === 'inativos') return !p.ativo; // Novo filtro para ver apenas os inativos
+    return true;
+  });
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white flex flex-col relative font-sans">
+    <div className="min-h-screen bg-zinc-950 text-white font-sans p-8 flex flex-col gap-6">
       
-      <div className="bg-zinc-900 border-b border-zinc-800 px-5 py-3 flex justify-between items-center">
-        <div className="flex gap-2">
-          <span className="px-4 py-1.5 rounded-lg text-xs font-bold bg-orange-600 text-white">PDV</span>
+      {/* CABEÇALHO */}
+      <div className="flex flex-col gap-4">
+        <div>
+          <h1 className="text-2xl font-black text-orange-500">📦 Gestão de Estoque Completa</h1>
+          <p className="text-xs text-zinc-400 mt-1">Crie itens, edite, apague e consulte o histórico de movimentos cruzado com o PDV.</p>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-xl">🥔</span>
-          <span className="text-xs font-bold text-orange-500 uppercase tracking-widest flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> Caixa Aberta
-          </span>
-        </div>
+
+        {produtosEmAlerta.length > 0 && !loading && (
+          <div className="bg-red-950/40 border border-red-900/50 rounded-3xl p-5 shadow-lg flex items-center justify-between">
+            <div>
+              <h2 className="text-red-500 font-black text-sm uppercase tracking-widest flex items-center gap-2">
+                <span className="animate-pulse">🚨</span> ALERTA DE RUPTURA DE STOCK
+              </h2>
+              <p className="text-xs text-red-400/80 mt-1">Existem {produtosEmAlerta.length} produtos abaixo do limite mínimo configurado. Faça a reposição.</p>
+            </div>
+            <button 
+              onClick={() => setFiltroCategoria('alertas')}
+              className="bg-red-600 hover:bg-red-500 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition-all shadow-md"
+            >
+              Ver Itens em Falta
+            </button>
+          </div>
+        )}
       </div>
 
-      {erroCaixa && (
-        <div className="m-6 bg-red-950/50 border border-red-900 p-5 rounded-2xl z-50">
-          <h2 className="text-red-500 font-bold text-sm uppercase tracking-wider mb-2">⚠️ Bloqueio de Sincronização POS</h2>
-          <code className="block bg-black/50 p-3 rounded-lg text-red-400 font-mono text-xs">{erroCaixa}</code>
-        </div>
-      )}
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+        
+        {/* MENU LATERAL */}
+        <div className="lg:col-span-1 space-y-6">
+          <button 
+            onClick={abrirModalNovo}
+            className="w-full bg-orange-600 hover:bg-orange-500 text-white font-black py-4 rounded-3xl text-sm uppercase tracking-widest shadow-[0_0_15px_rgba(249,115,22,0.3)] transition-all"
+          >
+            + Novo Item / Embalagem
+          </button>
 
-      {/* CABEÇALHO DO PDV */}
-      {!erroCaixa && (
-        <div className="bg-zinc-900 border-b border-zinc-800 p-5 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-9 gap-4 shadow-xl relative">
-          
-          <div className="relative col-span-2">
-            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Cliente / Nome</label>
-            <input 
-              type="text" 
-              value={cliente} 
-              onChange={(e) => {
-                setCliente(e.target.value);
-                setMostrarSugestoes(true);
-              }} 
-              onFocus={() => setMostrarSugestoes(true)}
-              onBlur={() => setTimeout(() => setMostrarSugestoes(false), 200)}
-              placeholder="Nome ou Telemóvel..." 
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none text-white font-bold transition-all"
-              autoComplete="off" 
-            />
-
-            {mostrarSugestoes && cliente.trim().length > 0 && (
-              <div className="absolute left-0 right-0 top-full mt-2 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-[100] max-h-60 overflow-y-auto custom-scrollbar">
-                {listaClientesCadastrados
-                  .filter(c => {
-                    const termoBusca = cliente.toLowerCase().trim();
-                    return Object.values(c).some(val => 
-                      val && String(val).toLowerCase().includes(termoBusca)
-                    );
-                  })
-                  .map(c => {
-                    const nomeExibicao = c.nome || c.Nome || c.nome_cliente || c.cliente || c.NOME || 'Sem Nome';
-                    const telExibicao = c.contacto || c.telefone || c.telemovel || c.Contacto || 'S/N';
-                    const moradaExibicao = c.morada || c.endereco || c.Morada || '';
-
-                    return (
-                      <div 
-                        key={c.id} 
-                        onMouseDown={(e) => {
-                          e.preventDefault(); 
-                          selecionarClienteSugerido(c);
-                        }}
-                        className="p-3 hover:bg-orange-600/20 cursor-pointer border-b border-zinc-800/50 text-xs flex justify-between items-center transition-all"
-                      >
-                        <span className="font-bold text-white">{nomeExibicao}</span>
-                        <span className="text-zinc-400 text-[10px] truncate max-w-[150px] text-right">
-                          📞 {telExibicao} {moradaExibicao ? `| 📍 ${moradaExibicao}` : ''}
-                        </span>
-                      </div>
-                    );
-                  })}
-                  
-                {listaClientesCadastrados.filter(c => {
-                    const termoBusca = cliente.toLowerCase().trim();
-                    return Object.values(c).some(val => 
-                      val && String(val).toLowerCase().includes(termoBusca)
-                    );
-                }).length === 0 && (
-                  <div className="p-4 text-xs text-zinc-500 text-center italic">
-                    Nenhum cliente encontrado com "{cliente}"
-                  </div>
-                )}
-              </div>
-            )}
+          <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-3xl shadow-xl flex flex-col gap-2">
+            <h3 className="text-[10px] text-zinc-500 font-bold uppercase mb-1 px-2">Categorias</h3>
+            <button onClick={() => setFiltroCategoria('todos')} className={`text-left px-4 py-3 rounded-xl text-xs font-bold transition-all ${filtroCategoria === 'todos' ? 'bg-orange-600 text-white shadow-md' : 'bg-zinc-950 text-zinc-400 hover:bg-zinc-800'}`}>📋 Todos os Itens</button>
+            <button onClick={() => setFiltroCategoria('alertas')} className={`text-left px-4 py-3 rounded-xl text-xs font-bold transition-all flex justify-between items-center ${filtroCategoria === 'alertas' ? 'bg-red-600 text-white shadow-md' : 'bg-zinc-950 text-red-500 hover:bg-red-950/30'}`}>
+              🚨 Em Alerta <span className="bg-red-500/20 text-red-400 px-2 py-0.5 rounded-md text-[10px]">{produtosEmAlerta.length}</span>
+            </button>
+            <button onClick={() => setFiltroCategoria('bebidas')} className={`text-left px-4 py-3 rounded-xl text-xs font-bold transition-all ${filtroCategoria === 'bebidas' ? 'bg-orange-600 text-white shadow-md' : 'bg-zinc-950 text-zinc-400 hover:bg-zinc-800'}`}>🥤 Bebidas</button>
+            <button onClick={() => setFiltroCategoria('sobremesas')} className={`text-left px-4 py-3 rounded-xl text-xs font-bold transition-all ${filtroCategoria === 'sobremesas' ? 'bg-orange-600 text-white shadow-md' : 'bg-zinc-950 text-zinc-400 hover:bg-zinc-800'}`}>🍫 Sobremesas</button>
+            <button onClick={() => setFiltroCategoria('batatas')} className={`text-left px-4 py-3 rounded-xl text-xs font-bold transition-all ${filtroCategoria === 'batatas' ? 'bg-orange-600 text-white shadow-md' : 'bg-zinc-950 text-zinc-400 hover:bg-zinc-800'}`}>🥔 Batatas (Recheios)</button>
+            <button onClick={() => setFiltroCategoria('embalagens')} className={`text-left px-4 py-3 rounded-xl text-xs font-bold transition-all ${filtroCategoria === 'embalagens' ? 'bg-orange-600 text-white shadow-md' : 'bg-zinc-950 text-zinc-400 hover:bg-zinc-800'}`}>🛍️ Embalagens / Materiais</button>
+            <div className="border-t border-zinc-800 my-1"></div>
+            <button onClick={() => setFiltroCategoria('inativos')} className={`text-left px-4 py-3 rounded-xl text-xs font-bold transition-all ${filtroCategoria === 'inativos' ? 'bg-zinc-700 text-white shadow-md' : 'bg-zinc-950 text-zinc-600 hover:bg-zinc-800'}`}>🗑️ Itens Inativos</button>
           </div>
 
-          <div>
-            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Contacto</label>
-            <input type="text" value={contactoCliente} onChange={(e) => setContactoCliente(e.target.value)} placeholder="Telemóvel" className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none" />
-          </div>
-
-          <div className="col-span-2">
-            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Morada de Entrega</label>
-            <input type="text" value={moradaCliente} onChange={(e) => setMoradaCliente(e.target.value)} placeholder="Rua, Número, Andar..." className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none text-zinc-200" />
-          </div>
-
-          <div>
-            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Data</label>
-            <input type="date" value={dataPedido} onChange={(e) => setDataPedido(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-300 outline-none cursor-pointer" />
-          </div>
-
-          <div>
-            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Canal</label>
-            <select value={canal} onChange={(e) => { const nc = e.target.value as any; setCanal(nc); setFormaPagamento(regrasPagamento[nc as keyof typeof regrasPagamento][0].value); }} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-300 outline-none">
-              <option value="Balcão">Balcão</option>
-              <option value="WhatsApp">WhatsApp</option>
-              <option value="Glovo">Glovo</option>
-              <option value="Palmbites">Palmbites</option>
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Pagamento</label>
-            <select value={formaPagamento} onChange={(e) => setFormaPagamento(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-300 outline-none">
-              {regrasPagamento[canal as keyof typeof regrasPagamento]?.map(opcao => (
-                <option key={opcao.value} value={opcao.value}>{opcao.label}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Estafeta</label>
-            <select value={entregador} onChange={(e) => setEntregador(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-300 outline-none">
-              <option value="">-- Nenhum --</option>
-              {listaEstafetas.map(est => (<option key={est.nome} value={est.nome}>{est.nome}</option>))}
-            </select>
-          </div>
-
-          <div>
-            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Taxa Entr. (€)</label>
-            <input type="number" step="0.10" min="0" value={taxaEntrega} onChange={(e) => setTaxaEntrega(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm font-bold text-orange-400 outline-none" />
-          </div>
-
-          <div>
-            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Desconto (€)</label>
-            <input type="number" step="0.50" min="0" value={descontoManual} onChange={(e) => setDescontoManual(e.target.value)} className="w-full bg-zinc-950 border border-red-900/50 rounded-xl px-3 py-2 text-sm font-bold text-red-400 outline-none" />
-          </div>
-
-        </div>
-      )}
-
-      {!erroCaixa && (
-        <div className="flex-1 flex overflow-hidden">
-          
-          <main className="flex-1 p-6 overflow-y-auto flex flex-col gap-6">
-            <div className="flex flex-wrap gap-2 bg-zinc-900/60 p-2 rounded-2xl border border-zinc-800/80">
-              {[
-                { id: 'todos', label: 'Todos' }, 
-                { id: 'batatas', label: '🥔 Batatas' }, 
-                { id: 'adicionais', label: '🥓 Adicionais' }, 
-                { id: 'sobremesas', label: '🍫 Sobremesas' }, 
-                { id: 'bebidas', label: '🥤 Bebidas' }, 
-                { id: 'combos', label: '🎁 Combos' }
-              ].map((cat) => (
-                <button key={cat.id} onClick={() => setCategoriaAtiva(cat.id as CategoriaFiltro)} className={`px-5 py-2.5 rounded-xl text-sm font-medium transition-all ${categoriaAtiva === cat.id ? 'bg-orange-600 text-white shadow-lg' : 'text-zinc-400 hover:text-zinc-200'}`}>{cat.label}</button>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 content-start flex-1">
-              {loading ? (
-                <div className="col-span-full text-center text-zinc-500 py-12">A sincronizar com a base de dados...</div>
-              ) : categoriaAtiva === 'combos' ? (
-                combos.map(renderBotaoCombo)
-              ) : (
-                <>
-                  {produtos.filter((prod) => {
-                    if (categoriaAtiva === 'todos') return true;
-                    if (categoriaAtiva === 'batatas') return prod.categoria === 'batata';
-                    if (categoriaAtiva === 'adicionais') return prod.categoria === 'adicional' || prod.categoria === 'extra';
-                    if (categoriaAtiva === 'sobremesas') return prod.categoria === 'brownie' || prod.categoria === 'sobremesa';
-                    if (categoriaAtiva === 'bebidas') return prod.categoria === 'bebida';
-                    return false;
-                  }).map((prod) => (
-                    <button key={prod.id} onClick={() => adicionarAoCarrinho(prod)} className="bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 p-4 rounded-xl text-left flex flex-col justify-between h-32 transition-all">
-                      <div><span className="text-[9px] font-bold uppercase text-orange-400 bg-orange-500/10 px-2 py-0.5 rounded">{prod.categoria}</span><h3 className="font-semibold mt-2 text-zinc-200 text-sm">{prod.nome}</h3></div>
-                      <span className="text-base font-bold text-white mt-1">{getPrecoPorCanal(prod).toFixed(2)}€</span>
-                    </button>
-                  ))}
-                  {categoriaAtiva === 'todos' && combos.map(renderBotaoCombo)}
-                </>
-              )}
-            </div>
-          </main>
-
-          <aside className="w-96 bg-zinc-900 border-l border-zinc-800 flex flex-col shadow-2xl z-10">
-            <div className="p-4 border-b border-zinc-800 font-semibold text-zinc-300 flex justify-between items-center">
-              <div className="flex flex-col">
-                <span className="text-xs text-zinc-500">Pedido de:</span>
-                <span className="text-white font-bold">{cliente || '---'}</span>
-              </div>
-              <span className="text-xs text-zinc-400 bg-zinc-950 px-2 py-1 rounded border border-zinc-800">{canal}</span>
-            </div>
-
-            <div className="flex-1 p-4 overflow-y-auto space-y-3 custom-scrollbar">
-              {carrinho.map((item, idx) => (
-                <div key={idx} className="bg-zinc-950 p-3 rounded-xl border border-zinc-800 flex flex-col gap-1">
-                  <div className="flex justify-between items-start">
-                    <div className="flex-1 min-w-0 pr-2">
-                      {item.isCombo && <span className="inline-block text-[9px] font-bold text-orange-400 bg-orange-500/10 px-1.5 py-0.5 rounded mb-1.5 uppercase">COMBO</span>}
-                      <h4 className="text-xs font-bold text-zinc-200">{item.produto.nome}</h4>
-                      {item.isCombo && item.detalhesCombo && (
-                        <ul className="mt-1 space-y-0.5">
-                          {item.detalhesCombo.map((d, i) => (<li key={i} className="text-[10px] text-zinc-400">↳ {d}</li>))}
-                        </ul>
-                      )}
-                      <div className="text-xs text-zinc-400 mt-1">{item.precoAplicado.toFixed(2)}€ × {item.quantidade}</div>
-                    </div>
-                    <button onClick={() => removerDoCarrinho(idx)} className="text-zinc-500 text-lg hover:text-red-400 px-2">✕</button>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="p-4 bg-zinc-950 border-t border-zinc-800 space-y-3">
-              <div className="flex justify-between items-center text-zinc-400 text-xs"><span>Subtotal:</span><span className="text-white font-medium">{subtotalProdutos.toFixed(2)}€</span></div>
-              {parseFloat(descontoManual) > 0 && <div className="flex justify-between items-center text-red-400 text-xs"><span>Desconto:</span><span>-{parseFloat(descontoManual).toFixed(2)}€</span></div>}
-              <div className="flex justify-between items-center text-zinc-400 text-xs"><span>Taxa de Entrega:</span><span className="text-white font-medium">{parseFloat(taxaEntrega).toFixed(2)}€</span></div>
-              <div className="flex justify-between items-center border-t border-zinc-800 pt-2 text-zinc-300 text-sm"><span>Total a Cobrar:</span><span className="text-orange-500 font-black text-xl">{totalGeral.toFixed(2)}€</span></div>
-              <button 
-                onClick={finalizarVenda} 
-                disabled={isProcessando}
-                className="w-full font-bold py-3.5 rounded-xl text-center text-sm shadow-lg bg-orange-600 hover:bg-orange-700 text-white transition-all disabled:opacity-50 uppercase tracking-widest mt-2"
-              >
-                {isProcessando ? 'A Processar...' : 'Confirmar Pedido'}
-              </button>
-            </div>
-          </aside>
-
-        </div>
-      )}
-
-      {mostrarModalCombo && comboSelecionado && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-2xl p-6 flex flex-col max-h-[90vh] relative shadow-2xl">
-            <button onClick={() => setMostrarModalCombo(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-white bg-zinc-800 w-8 h-8 rounded-full flex items-center justify-center">✕</button>
-            <h2 className="text-xl font-bold text-orange-500">{comboSelecionado.nome}</h2>
-            <p className="text-xs text-zinc-400 mt-1">Selecione os sabores clicando nas caixas abaixo.</p>
-            
-            <div className="flex-1 overflow-y-auto space-y-6 mt-6 pr-1 custom-scrollbar">
-              {comboSelecionado.combo_grupos.map((grupo) => {
-                const selecoesDesteGrupo = selecoesCombo[grupo.id] || [];
+          {/* HISTÓRICO GLOBAL RECENTE */}
+          {historicoGlobal.length > 0 && (
+            <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col gap-3 max-h-[400px] overflow-y-auto custom-scrollbar">
+              <h3 className="text-[10px] text-zinc-500 font-bold uppercase mb-2">Movimentos Globais Recentes</h3>
+              {historicoGlobal.map(h => {
+                const isEntrada = h.tipo_movimento === 'ENTRADA';
                 return (
-                  <div key={grupo.id}>
-                    <h3 className="text-xs font-bold text-zinc-300 uppercase mb-3 flex items-center justify-between border-b border-zinc-800 pb-2">
-                      <span>{grupo.nome}</span>
-                      <span className={`px-2 py-0.5 rounded text-[10px] ${selecoesDesteGrupo.length >= grupo.quantidade_maxima ? 'bg-green-500/20 text-green-400' : 'bg-orange-500/20 text-orange-400'}`}>
-                        ({selecoesDesteGrupo.length}/{grupo.quantidade_maxima})
+                  <div key={h.id} className="bg-zinc-950 p-3 rounded-xl border border-zinc-800 flex flex-col gap-1 relative overflow-hidden">
+                    <div className={`absolute left-0 top-0 bottom-0 w-1 ${isEntrada ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                    <div className="flex justify-between items-start pl-2">
+                      <strong className="text-white text-xs">{h.nome_produto}</strong>
+                      <span className={`text-xs font-bold font-mono ${isEntrada ? 'text-green-400' : 'text-red-400'}`}>
+                        {isEntrada ? '+' : '-'}{h.quantidade}
                       </span>
-                    </h3>
-                    <div className="grid grid-cols-2 gap-3">
-                      {grupo.combo_grupo_produtos.filter(i => i.ativo).map((item) => {
-                        const qtdSelecionadaDesteItem = selecoesDesteGrupo.filter(s => s.produto_id === item.produto_id).length;
-                        const estaSelecionado = qtdSelecionadaDesteItem > 0;
-                        
-                        return (
-                          <button 
-                            key={item.produto_id} type="button" onClick={() => toggleSelecaoCombo(grupo, item)} 
-                            className={`p-4 text-left rounded-xl text-xs border transition-all ${estaSelecionado ? 'bg-orange-600/20 border-orange-500 text-white shadow-[0_0_15px_rgba(249,115,22,0.15)]' : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
-                          >
-                            <div className="flex justify-between items-center gap-2">
-                              <span className="block font-medium">{item.produto.nome}</span>
-                              {qtdSelecionadaDesteItem > 1 && (
-                                <span className="bg-orange-500 text-white px-2 py-0.5 rounded text-[10px] font-black shadow-md">
-                                  x{qtdSelecionadaDesteItem}
-                                </span>
-                              )}
-                            </div>
-                          </button>
-                        );
-                      })}
+                    </div>
+                    <div className="flex justify-between items-end pl-2 text-[9px] text-zinc-500">
+                      <span>{h.origem}</span>
+                      <span className="font-mono text-zinc-400 font-bold">Saldo: {h.saldo_atualizado}</span>
                     </div>
                   </div>
                 );
               })}
             </div>
+          )}
+        </div>
 
-            <div className="pt-4 border-t border-zinc-800 mt-6">
-              <button type="button" onClick={confirmarMontagemCombo} className="w-full bg-orange-600 hover:bg-orange-700 py-3.5 rounded-xl text-sm font-bold text-white uppercase tracking-widest shadow-lg">Adicionar Combo ao Carrinho</button>
+        {/* LISTA DE PRODUTOS */}
+        <div className="lg:col-span-3">
+          {loading ? (
+            <div className="text-center text-zinc-500 py-12 font-bold text-xs uppercase tracking-widest animate-pulse">A carregar dados...</div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {produtosFiltrados.map((item) => {
+                const stockAtual = item.estoque_atual || 0;
+                const stockMinimo = item.estoque_minimo || 5;
+                const stockCritico = stockAtual <= stockMinimo && item.ativo;
+
+                return (
+                  <div key={item.id} className={`bg-zinc-900 border p-5 rounded-3xl flex flex-col justify-between gap-4 shadow-lg transition-all ${!item.ativo ? 'opacity-50 grayscale' : ''} ${stockCritico ? 'border-red-900/50 shadow-[0_0_15px_rgba(220,38,38,0.1)]' : 'border-zinc-800 hover:border-zinc-700'}`}>
+                    
+                    <div className="flex justify-between items-start gap-2">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[8px] font-bold uppercase tracking-widest text-orange-400 bg-orange-500/10 px-2 py-0.5 rounded">{item.categoria}</span>
+                          {!item.ativo && <span className="text-[8px] font-bold uppercase tracking-widest text-red-400 bg-red-500/10 px-2 py-0.5 rounded">INATIVO</span>}
+                        </div>
+                        <h3 className="font-bold text-white text-sm mt-2 leading-tight">{item.nome}</h3>
+                        
+                        {/* BOTÕES DE GESTÃO DO ITEM */}
+                        <div className="flex flex-wrap gap-2 mt-3">
+                          <button onClick={() => abrirModalEditar(item)} className="text-[9px] text-zinc-400 hover:text-white uppercase font-bold flex items-center gap-1 bg-zinc-950 hover:bg-zinc-800 px-2 py-1 rounded border border-zinc-800 transition-all">
+                            ⚙️ Editar
+                          </button>
+                          <button onClick={() => { setModalAlerta(item); setNovoAlerta(String(stockMinimo)); }} className="text-[9px] text-zinc-400 hover:text-orange-400 uppercase font-bold flex items-center gap-1 bg-zinc-950 hover:bg-zinc-800 px-2 py-1 rounded border border-zinc-800 transition-all">
+                            ✏️ Min: {stockMinimo}
+                          </button>
+                          <button onClick={() => verHistoricoProduto(item)} className="text-[9px] text-zinc-400 hover:text-blue-400 uppercase font-bold flex items-center gap-1 bg-zinc-950 hover:bg-zinc-800 px-2 py-1 rounded border border-zinc-800 transition-all">
+                            🕒 Histórico
+                          </button>
+                        </div>
+
+                      </div>
+                      <div className="flex flex-col items-end text-right">
+                        <span className={`text-3xl font-black font-mono leading-none ${stockCritico ? 'text-red-500' : 'text-zinc-200'}`}>
+                          {stockAtual}
+                        </span>
+                      </div>
+                    </div>
+
+                    <button 
+                      onClick={() => { setModalRepor(item); setQtdRepor(''); }}
+                      disabled={!item.ativo}
+                      className={`w-full font-bold py-3.5 rounded-xl text-xs transition-all uppercase tracking-wider flex items-center justify-center gap-2 ${!item.ativo ? 'bg-zinc-950 text-zinc-600 border border-zinc-800 cursor-not-allowed' : stockCritico ? 'bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-900/20' : 'bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-zinc-300'}`}
+                    >
+                      {!item.ativo ? 'Item Inativo' : stockCritico ? '⚠️ Registar Reposição' : '🛒 Repor Estoque'}
+                    </button>
+                  </div>
+                );
+              })}
+              
+              {produtosFiltrados.length === 0 && (
+                <div className="col-span-full bg-zinc-900 border border-zinc-800 rounded-3xl p-8 text-center text-zinc-500 text-sm">
+                  Nenhum produto encontrado nesta categoria.
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+      </div>
+
+      {/* MODAL: NOVO ITEM */}
+      {mostrarModalNovo && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-md rounded-3xl p-6 shadow-2xl relative">
+            <button onClick={() => setMostrarModalNovo(false)} className="absolute top-5 right-5 text-zinc-400 hover:text-white bg-zinc-800 w-8 h-8 rounded-full flex items-center justify-center">✕</button>
+            <h2 className="text-lg font-black text-white mb-6 pr-8">➕ Cadastrar Novo Item</h2>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Nome do Item</label>
+                <input type="text" placeholder="Ex: Saco de Papel Grande" value={formNome} onChange={(e) => setFormNome(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 outline-none focus:border-orange-500" />
+              </div>
+              <div>
+                <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Categoria</label>
+                <select value={formCategoria} onChange={(e) => setFormCategoria(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 outline-none focus:border-orange-500">
+                  <option value="embalagem">Embalagem</option>
+                  <option value="material">Material / Uso Interno</option>
+                  <option value="bebida">Bebida</option>
+                  <option value="sobremesa">Sobremesa</option>
+                  <option value="batata">Batata (Recheio)</option>
+                  <option value="adicional">Adicional Extra</option>
+                </select>
+                <p className="text-[9px] text-zinc-500 mt-1">Dica: "Embalagens" e "Materiais" não aparecem na frente de loja (PDV).</p>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Stock Atual</label>
+                  <input type="number" min="0" value={formEstoqueAtual} onChange={(e) => setFormEstoqueAtual(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-green-400 font-bold outline-none focus:border-green-500" />
+                </div>
+                <div>
+                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Alerta Mínimo</label>
+                  <input type="number" min="0" value={formEstoqueMinimo} onChange={(e) => setFormEstoqueMinimo(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-red-400 font-bold outline-none focus:border-red-500" />
+                </div>
+              </div>
+              <button onClick={criarNovoItem} disabled={processando} className="w-full bg-orange-600 hover:bg-orange-500 text-white font-black py-4 rounded-xl text-sm uppercase tracking-widest mt-2 shadow-lg disabled:opacity-50">
+                {processando ? 'A Gravar...' : 'Criar Item'}
+              </button>
             </div>
           </div>
         </div>
       )}
+
+      {/* MODAL: EDITAR ITEM */}
+      {modalEditar && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-md rounded-3xl p-6 shadow-2xl relative">
+            <button onClick={() => setModalEditar(null)} className="absolute top-5 right-5 text-zinc-400 hover:text-white bg-zinc-800 w-8 h-8 rounded-full flex items-center justify-center">✕</button>
+            <h2 className="text-lg font-black text-white pr-8">⚙️ Editar Configurações</h2>
+            <p className="text-xs text-orange-400 mb-6 font-bold">{modalEditar.nome}</p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Nome</label>
+                <input type="text" value={formNome} onChange={(e) => setFormNome(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 outline-none focus:border-orange-500" />
+              </div>
+              
+              <div>
+                <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Categoria</label>
+                <select value={formCategoria} onChange={(e) => setFormCategoria(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 outline-none focus:border-orange-500">
+                  <option value="embalagem">Embalagem</option>
+                  <option value="material">Material / Uso Interno</option>
+                  <option value="bebida">Bebida</option>
+                  <option value="sobremesa">Sobremesa</option>
+                  <option value="batata">Batata (Recheio)</option>
+                  <option value="adicional">Adicional Extra</option>
+                </select>
+              </div>
+
+              <div className="flex items-center gap-3 bg-zinc-950 border border-zinc-800 p-4 rounded-xl">
+                <input 
+                  type="checkbox" 
+                  id="chkAtivo"
+                  checked={formAtivo} 
+                  onChange={(e) => setFormAtivo(e.target.checked)}
+                  className="w-5 h-5 accent-orange-600"
+                />
+                <label htmlFor="chkAtivo" className="text-sm font-bold text-zinc-300 cursor-pointer select-none">
+                  Item Ativo (Visível no sistema)
+                </label>
+              </div>
+              <p className="text-[10px] text-zinc-500 leading-tight">
+                Dica: Desativar um item oculta-o das vendas sem apagar o histórico de vendas passado. É mais seguro do que excluir.
+              </p>
+
+              <div className="pt-4 border-t border-zinc-800 mt-2 flex flex-col gap-2">
+                <button onClick={guardarEdicao} disabled={processando} className="w-full bg-zinc-800 hover:bg-zinc-700 text-white font-black py-3.5 rounded-xl text-sm uppercase tracking-widest shadow-lg disabled:opacity-50 transition-all">
+                  {processando ? 'A Guardar...' : 'Guardar Alterações'}
+                </button>
+                <button onClick={excluirItem} disabled={processando} className="w-full text-red-500 hover:text-white hover:bg-red-900/50 font-bold py-3 rounded-xl text-xs uppercase tracking-widest transition-all">
+                  🗑️ Excluir Item Definitivamente
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: REPOR STOCK */}
+      {modalRepor && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-md rounded-3xl p-6 shadow-2xl relative">
+            <button onClick={() => setModalRepor(null)} className="absolute top-5 right-5 text-zinc-400 hover:text-white bg-zinc-800 w-8 h-8 rounded-full flex items-center justify-center">✕</button>
+            <h2 className="text-lg font-black text-white pr-8">🛒 Comprar / Repor Estoque</h2>
+            <p className="text-xs text-orange-400 mb-6 font-bold">{modalRepor.nome}</p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Data da Entrada</label>
+                <input type="date" value={dataRepor} onChange={(e) => setDataRepor(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 outline-none focus:border-orange-500" />
+              </div>
+              <div>
+                <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Quantidade Adicionada (Unidades)</label>
+                <input type="number" min="1" placeholder="Quantas unidades repôs?" value={qtdRepor} onChange={(e) => setQtdRepor(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-lg font-black text-green-400 outline-none focus:border-green-500" />
+              </div>
+              <button onClick={registarEntradaStock} disabled={processando} className="w-full bg-green-600 hover:bg-green-500 text-white font-black py-4 rounded-xl text-sm uppercase tracking-widest mt-2 shadow-lg disabled:opacity-50">
+                {processando ? 'A Gravar...' : 'Confirmar Entrada no Estoque'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: ALERTA MÍNIMO */}
+      {modalAlerta && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-3xl p-6 shadow-2xl relative">
+            <button onClick={() => setModalAlerta(null)} className="absolute top-5 right-5 text-zinc-400 hover:text-white bg-zinc-800 w-8 h-8 rounded-full flex items-center justify-center">✕</button>
+            <h2 className="text-lg font-black text-white pr-8">🚨 Alerta de Estoque Mínimo</h2>
+            <p className="text-xs text-orange-400 mb-6 font-bold">{modalAlerta.nome}</p>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Avisar quando o estoque chegar a:</label>
+                <input type="number" min="0" value={novoAlerta} onChange={(e) => setNovoAlerta(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-lg font-black text-red-400 outline-none focus:border-red-500 text-center" />
+              </div>
+              <button onClick={atualizarAlertaMinimo} disabled={processando} className="w-full bg-orange-600 hover:bg-orange-500 text-white font-black py-4 rounded-xl text-sm uppercase tracking-widest mt-2 shadow-lg disabled:opacity-50">
+                Guardar Novo Limite
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: HISTÓRICO ESPECÍFICO DO PRODUTO */}
+      {modalHistorico && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-3xl rounded-3xl p-6 shadow-2xl relative max-h-[90vh] flex flex-col">
+            <button onClick={() => setModalHistorico(null)} className="absolute top-5 right-5 text-zinc-400 hover:text-white bg-zinc-800 w-8 h-8 rounded-full flex items-center justify-center">✕</button>
+            
+            <h2 className="text-lg font-black text-white pr-8">🕒 Histórico de Movimentos (Extrato)</h2>
+            <p className="text-xs text-blue-400 mb-6 font-bold">{modalHistorico.nome}</p>
+
+            <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
+              {loadingHistorico ? (
+                <p className="text-xs text-zinc-500 text-center py-8">A consultar base de dados...</p>
+              ) : historicoProduto.length === 0 ? (
+                <p className="text-xs text-zinc-500 text-center py-8">Nenhum movimento registado para este item.</p>
+              ) : (
+                <table className="w-full text-left text-xs">
+                  <thead className="text-[10px] text-zinc-500 uppercase border-b border-zinc-800">
+                    <tr>
+                      <th className="py-2">Data do Movimento</th>
+                      <th className="py-2">Tipo</th>
+                      <th className="py-2 text-center">Quantidade</th>
+                      <th className="py-2 text-center">Saldo Restante</th>
+                      <th className="py-2 text-right">Origem / Documento</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-800/40">
+                    {historicoProduto.map(h => {
+                      const isEntrada = h.tipo_movimento === 'ENTRADA';
+                      return (
+                        <tr key={h.id} className="hover:bg-zinc-950 transition-all">
+                          <td className="py-3 text-zinc-300">
+                            {new Date(h.data_movimento).toLocaleString('pt-PT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </td>
+                          <td className="py-3">
+                            <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${isEntrada ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
+                              {h.tipo_movimento}
+                            </span>
+                          </td>
+                          <td className={`py-3 text-center font-mono font-bold ${isEntrada ? 'text-green-400' : 'text-red-400'}`}>
+                            {isEntrada ? '+' : '-'}{h.quantidade}
+                          </td>
+                          <td className="py-3 text-center font-mono text-white font-bold">{h.saldo_atualizado}</td>
+                          <td className="py-3 text-right text-[10px] text-zinc-500">
+                            <span className="block font-bold text-zinc-400">{h.origem}</span>
+                            {h.observacoes}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
