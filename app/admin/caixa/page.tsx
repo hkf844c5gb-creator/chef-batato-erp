@@ -236,18 +236,15 @@ export default function GestaoCaixa() {
           </div>
         </div>
         
-        {/* CORREÇÃO DO IMPUT DE DATA PARA EVITAR O BUG DO CHROME AO DIGITAR */}
+        {/* INPUT DE DATA CORRIGIDO - PERMITE DIGITAR LIVREMENTE */}
         <input 
           type="date" 
-          max="2099-12-31" /* Corrige erro de digitação de ano no Chrome */
+          max="9999-12-31" 
           value={dataFiltro} 
           onChange={(e) => {
             if (e.target.value) setDataFiltro(e.target.value);
           }}
-          onClick={(e) => {
-            try { e.currentTarget.showPicker(); } catch (err) {} /* Abre o calendário automaticamente ao clicar */
-          }}
-          className="bg-zinc-900 border border-zinc-800 text-white px-4 py-2.5 rounded-xl text-sm font-bold outline-none focus:border-green-500 cursor-pointer shadow-lg w-40"
+          className="bg-zinc-900 border border-zinc-800 text-white px-4 py-2.5 rounded-xl text-sm font-bold outline-none focus:border-green-500 shadow-lg w-40"
         />
       </header>
 
