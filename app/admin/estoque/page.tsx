@@ -14,6 +14,7 @@ interface ProdutoEstoque {
 
 interface MovimentoKardex {
   id: string;
+  produto_id: string; // Adicionado produto_id para garantir a ligação correta
   nome_produto: string;
   tipo_movimento: string;
   quantidade: number;
@@ -61,26 +62,26 @@ export default function GestaoEstoqueProdutos() {
   async function carregarDados() {
     setLoading(true);
     try {
-      // Removemos o .eq('ativo', true) para podermos ver e gerir os itens inativos no estoque
       const { data: prods, error: errProds } = await supabase
         .from('produtos')
         .select('id, nome, categoria, estoque_atual, estoque_minimo, ativo')
-        .order('ativo', { ascending: false }) // Ativos primeiro
+        .order('ativo', { ascending: false })
         .order('nome', { ascending: true });
 
       if (errProds) throw errProds;
       setProdutos(prods || []);
 
-      const { data: hist } = await supabase
+      const { data: hist, error: errHist } = await supabase
         .from('movimentos_estoque')
         .select('*')
         .order('data_movimento', { ascending: false })
-        .limit(15);
+        .limit(20); // Aumentei um pouco o limite para ter mais contexto
       
+      if (errHist) throw errHist;
       if (hist) setHistoricoGlobal(hist);
 
     } catch (err: any) {
-      console.error("Aviso:", err.message);
+      console.error("Aviso no carregamento:", err.message);
     } finally {
       setLoading(false);
     }
@@ -88,8 +89,6 @@ export default function GestaoEstoqueProdutos() {
 
   useEffect(() => { carregarDados(); }, []);
 
-  // ---- FUNÇÕES NOVAS DE CRUD (CRIAR, EDITAR, EXCLUIR) ----
-  
   const abrirModalNovo = () => {
     setFormNome('');
     setFormCategoria('embalagem');
@@ -102,17 +101,16 @@ export default function GestaoEstoqueProdutos() {
     if (!formNome.trim()) return alert("O nome é obrigatório!");
     setProcessando(true);
     try {
-      // GERAÇÃO DO CÓDIGO AUTOMÁTICO ADICIONADA AQUI
       const prefixo = formCategoria.substring(0, 3).toUpperCase();
       const codigoGerado = `${prefixo}-${Math.floor(100000 + Math.random() * 900000)}`;
 
       const { data: novoProduto, error } = await supabase.from('produtos').insert([{
-        codigo: codigoGerado, // <--- Aplica o código automático à base de dados
+        codigo: codigoGerado,
         nome: formNome.trim(),
         categoria: formCategoria.toLowerCase(),
         estoque_atual: Number(formEstoqueAtual) || 0,
         estoque_minimo: Number(formEstoqueMinimo) || 5,
-        preco_cardapio: 0, // Como é criado pelo estoque, preço base 0
+        preco_cardapio: 0,
         preco_whatsapp: 0,
         preco_glovo: 0,
         ativo: true
@@ -120,7 +118,6 @@ export default function GestaoEstoqueProdutos() {
 
       if (error) throw error;
 
-      // Grava o movimento inicial se o estoque for maior que zero
       if (Number(formEstoqueAtual) > 0 && novoProduto) {
         await supabase.from('movimentos_estoque').insert([{
           produto_id: novoProduto.id,
@@ -182,7 +179,6 @@ export default function GestaoEstoqueProdutos() {
       const { error } = await supabase.from('produtos').delete().eq('id', modalEditar.id);
       
       if (error) {
-        // Se houver erro (ex: constraint de chave estrangeira), sugerimos desativar
         alert(`❌ Não é possível apagar este item porque já possui histórico de vendas ou movimentos associados. Por favor, apenas altere o estado para "Inativo" no botão acima para que ele deixe de aparecer.`);
       } else {
         alert("🗑️ Item excluído com sucesso!");
@@ -195,8 +191,6 @@ export default function GestaoEstoqueProdutos() {
       setProcessando(false);
     }
   };
-
-  // ---- FUNÇÕES ORIGINAIS (REPOR, ALERTA, HISTÓRICO) ----
 
   const registarEntradaStock = async () => {
     if (!modalRepor || !qtdRepor || Number(qtdRepor) <= 0) return;
@@ -220,7 +214,7 @@ export default function GestaoEstoqueProdutos() {
         quantidade: qtdAdicionar,
         saldo_atualizado: novoStock,
         origem: 'COMPRA / REPOSIÇÃO',
-        observacoes: `Registado via painel. Data Fatura: ${dataRepor}`
+        observacoes: `Registado via painel. Data Registo: ${dataRepor}` // Garante que a dataEscolhida fica registada
       }]);
 
       alert(`✅ ${qtdAdicionar} unidades de ${modalRepor.nome} adicionadas com sucesso!`);
@@ -260,11 +254,12 @@ export default function GestaoEstoqueProdutos() {
   const verHistoricoProduto = async (produto: ProdutoEstoque) => {
     setModalHistorico(produto);
     setLoadingHistorico(true);
+    setHistoricoProduto([]); // Limpa antes de carregar o novo
     try {
       const { data, error } = await supabase
         .from('movimentos_estoque')
         .select('*')
-        .eq('produto_id', produto.id)
+        .eq('produto_id', produto.id) // Assegura que filtra corretamente pelo ID
         .order('data_movimento', { ascending: false })
         .limit(50);
       
@@ -277,8 +272,6 @@ export default function GestaoEstoqueProdutos() {
     }
   };
 
-  // ---- FILTROS ----
-
   const produtosEmAlerta = produtos.filter(p => p.ativo && (p.estoque_atual || 0) <= (p.estoque_minimo || 5));
   
   const produtosFiltrados = produtos.filter(p => {
@@ -288,14 +281,13 @@ export default function GestaoEstoqueProdutos() {
     if (filtroCategoria === 'sobremesas') return cat.includes('sobremesa') || cat.includes('brownie');
     if (filtroCategoria === 'batatas') return cat.includes('batata');
     if (filtroCategoria === 'embalagens') return cat.includes('embalagem') || cat.includes('material') || cat.includes('uso interno');
-    if (filtroCategoria === 'inativos') return !p.ativo; // Novo filtro para ver apenas os inativos
+    if (filtroCategoria === 'inativos') return !p.ativo; 
     return true;
   });
 
   return (
     <div className="min-h-screen bg-zinc-950 text-white font-sans p-8 flex flex-col gap-6">
       
-      {/* CABEÇALHO */}
       <div className="flex flex-col gap-4">
         <div>
           <h1 className="text-2xl font-black text-orange-500">📦 Gestão de Estoque Completa</h1>
@@ -322,7 +314,6 @@ export default function GestaoEstoqueProdutos() {
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
         
-        {/* MENU LATERAL */}
         <div className="lg:col-span-1 space-y-6">
           <button 
             onClick={abrirModalNovo}
@@ -345,23 +336,27 @@ export default function GestaoEstoqueProdutos() {
             <button onClick={() => setFiltroCategoria('inativos')} className={`text-left px-4 py-3 rounded-xl text-xs font-bold transition-all ${filtroCategoria === 'inativos' ? 'bg-zinc-700 text-white shadow-md' : 'bg-zinc-950 text-zinc-600 hover:bg-zinc-800'}`}>🗑️ Itens Inativos</button>
           </div>
 
-          {/* HISTÓRICO GLOBAL RECENTE */}
           {historicoGlobal.length > 0 && (
             <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col gap-3 max-h-[400px] overflow-y-auto custom-scrollbar">
               <h3 className="text-[10px] text-zinc-500 font-bold uppercase mb-2">Movimentos Globais Recentes</h3>
               {historicoGlobal.map(h => {
                 const isEntrada = h.tipo_movimento === 'ENTRADA';
+                // Formata a data para visualização
+                const dataFormatada = new Date(h.data_movimento).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short' });
                 return (
                   <div key={h.id} className="bg-zinc-950 p-3 rounded-xl border border-zinc-800 flex flex-col gap-1 relative overflow-hidden">
                     <div className={`absolute left-0 top-0 bottom-0 w-1 ${isEntrada ? 'bg-green-500' : 'bg-red-500'}`}></div>
                     <div className="flex justify-between items-start pl-2">
-                      <strong className="text-white text-xs">{h.nome_produto}</strong>
+                      <strong className="text-white text-xs truncate max-w-[120px]" title={h.nome_produto}>{h.nome_produto}</strong>
                       <span className={`text-xs font-bold font-mono ${isEntrada ? 'text-green-400' : 'text-red-400'}`}>
                         {isEntrada ? '+' : '-'}{h.quantidade}
                       </span>
                     </div>
-                    <div className="flex justify-between items-end pl-2 text-[9px] text-zinc-500">
-                      <span>{h.origem}</span>
+                    <div className="flex justify-between items-end pl-2 text-[9px] text-zinc-500 mt-1">
+                      <span className="flex items-center gap-1">
+                        <span className="text-[8px] bg-zinc-800 text-zinc-300 px-1 py-0.5 rounded">{dataFormatada}</span>
+                        <span className="truncate max-w-[80px]" title={h.origem}>{h.origem}</span>
+                      </span>
                       <span className="font-mono text-zinc-400 font-bold">Saldo: {h.saldo_atualizado}</span>
                     </div>
                   </div>
@@ -371,7 +366,6 @@ export default function GestaoEstoqueProdutos() {
           )}
         </div>
 
-        {/* LISTA DE PRODUTOS */}
         <div className="lg:col-span-3">
           {loading ? (
             <div className="text-center text-zinc-500 py-12 font-bold text-xs uppercase tracking-widest animate-pulse">A carregar dados...</div>
@@ -393,7 +387,6 @@ export default function GestaoEstoqueProdutos() {
                         </div>
                         <h3 className="font-bold text-white text-sm mt-2 leading-tight">{item.nome}</h3>
                         
-                        {/* BOTÕES DE GESTÃO DO ITEM */}
                         <div className="flex flex-wrap gap-2 mt-3">
                           <button onClick={() => abrirModalEditar(item)} className="text-[9px] text-zinc-400 hover:text-white uppercase font-bold flex items-center gap-1 bg-zinc-950 hover:bg-zinc-800 px-2 py-1 rounded border border-zinc-800 transition-all">
                             ⚙️ Editar
@@ -436,7 +429,6 @@ export default function GestaoEstoqueProdutos() {
 
       </div>
 
-      {/* MODAL: NOVO ITEM */}
       {mostrarModalNovo && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-zinc-900 border border-zinc-800 w-full max-w-md rounded-3xl p-6 shadow-2xl relative">
@@ -478,7 +470,6 @@ export default function GestaoEstoqueProdutos() {
         </div>
       )}
 
-      {/* MODAL: EDITAR ITEM */}
       {modalEditar && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-zinc-900 border border-zinc-800 w-full max-w-md rounded-3xl p-6 shadow-2xl relative">
@@ -533,7 +524,6 @@ export default function GestaoEstoqueProdutos() {
         </div>
       )}
 
-      {/* MODAL: REPOR STOCK */}
       {modalRepor && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-zinc-900 border border-zinc-800 w-full max-w-md rounded-3xl p-6 shadow-2xl relative">
@@ -558,7 +548,6 @@ export default function GestaoEstoqueProdutos() {
         </div>
       )}
 
-      {/* MODAL: ALERTA MÍNIMO */}
       {modalAlerta && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-3xl p-6 shadow-2xl relative">
@@ -579,7 +568,6 @@ export default function GestaoEstoqueProdutos() {
         </div>
       )}
 
-      {/* MODAL: HISTÓRICO ESPECÍFICO DO PRODUTO */}
       {modalHistorico && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
           <div className="bg-zinc-900 border border-zinc-800 w-full max-w-3xl rounded-3xl p-6 shadow-2xl relative max-h-[90vh] flex flex-col">
