@@ -29,17 +29,6 @@ interface Pedido {
   itens_pedido?: ItemPedido[];
 }
 
-interface RelatorioBrownieConsolidado {
-  chave: string;
-  nome: string;
-  qtdProduzida: number;
-  quantidadeVendida: number;
-  qtdRevenda: number;
-  qtdDescarte: number;
-  faturacaoTotal: number;
-  custoInsumosUnitario: number;
-}
-
 interface MovimentoCaixa {
   id: string;
   created_at: string;
@@ -70,15 +59,11 @@ export default function CentralRelatorios() {
   // ESTADOS - DADOS BRUTOS
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [caixaBruta, setCaixaBruta] = useState<MovimentoCaixa[]>([]);
-  const [itensBrutosBrownies, setItensBrutosBrownies] = useState<any[]>([]);
-  const [producaoBrutaBrownies, setProducaoBrutaBrownies] = useState<any[]>([]);
-  const [revendaBrutaBrownies, setRevendaBrutaBrownies] = useState<any[]>([]);
-  const [descarteBrutoBrownies, setDescarteBrutoBrownies] = useState<any[]>([]);
 
   // ESTADOS - UI E FILTROS globais
   const [loading, setLoading] = useState(true);
   const [erroDB, setErroDB] = useState<string | null>(null);
-  const [abaAtiva, setAbaAtiva] = useState<'geral' | 'brownies' | 'caixa'>('geral');
+  const [abaAtiva, setAbaAtiva] = useState<'geral' | 'caixa'>('geral');
 
   // Filtros de Data
   const [tipoIntervalo, setTipoIntervalo] = useState<'dia' | 'mes' | 'ano' | 'personalizado'>('personalizado');
@@ -100,13 +85,6 @@ export default function CentralRelatorios() {
   const [pedidoSendoEditado, setPedidoSendoEditado] = useState<Pedido | null>(null);
   const [editCliente, setEditCliente] = useState('');
   const [editTotal, setEditTotal] = useState(0);
-
-  // Estados Específicos - BROWNIES
-  const [custosEditaveis, setCustosEditaveis] = useState<Record<string, number>>({});
-  const [modalDescarteAberto, setModalDescarteAberto] = useState(false);
-  const [saborDescarte, setSaborDescarte] = useState('');
-  const [qtdDescarteInput, setQtdDescarteInput] = useState(1);
-  const [motivoDescarte, setMotivoDescarte] = useState('Queima / Validade');
 
   // Estados Específicos - CAIXA
   const [relatorioDias, setRelatorioDias] = useState<ResumoDia[]>([]);
@@ -167,23 +145,7 @@ export default function CentralRelatorios() {
       }));
       setPedidos(pedidosMapeados);
 
-      // 2. Brownies (Produção, Revenda, Descarte)
-      const itensComData = (itensData || []).map((item: any) => {
-        const pedidoPai = (pedidosData || []).find((p: any) => p.id === item.pedido_id);
-        return { ...item, criado_em: pedidoPai ? (pedidoPai.data_pedido || pedidoPai.criado_em) : null };
-      });
-      setItensBrutosBrownies(itensComData);
-
-      const { data: prodData } = await supabase.from('producao_brownie').select('*');
-      setProducaoBrutaBrownies(prodData || []);
-
-      const { data: revData } = await supabase.from('revenda').select('*');
-      setRevendaBrutaBrownies(revData || []);
-
-      const { data: descData } = await supabase.from('perdas').select('*');
-      setDescarteBrutoBrownies(descData || []);
-
-      // 3. Auditoria de Caixa
+      // 2. Auditoria de Caixa
       const { data: cData } = await supabase.from('caixa').select('*');
       setCaixaBruta(cData || []);
 
@@ -241,64 +203,6 @@ export default function CentralRelatorios() {
     return Object.values(mapa).sort((a, b) => b.quantidade - a.quantidade);
   }, [pedidosFiltrados]);
 
-  // --- PROCESSAMENTO: BROWNIES ---
-  const mapaConsolidadoBrownies: Record<string, { nome: string, quantidadeVendida: number, faturacao: number, qtdRevenda: number, qtdProduzida: number, qtdDescarte: number }> = {};
-  
-  itensBrutosBrownies.filter(i => (i.nome_produto || '').toLowerCase().includes('brownie') && validarIntervaloData(i.criado_em)).forEach(item => {
-    const nomeLimpo = limparNomeProduto(item.nome_produto);
-    const chave = nomeLimpo.toLowerCase().trim();
-    const qtd = Number(item.quantidade || 0);
-    const fat = qtd * Number(item.preco_unitario || 0);
-    if (!mapaConsolidadoBrownies[chave]) mapaConsolidadoBrownies[chave] = { nome: nomeLimpo, quantidadeVendida: 0, faturacao: 0, qtdRevenda: 0, qtdProduzida: 0, qtdDescarte: 0 };
-    mapaConsolidadoBrownies[chave].quantidadeVendida += qtd;
-    mapaConsolidadoBrownies[chave].faturacao += fat;
-  });
-
-  revendaBrutaBrownies.filter(r => validarIntervaloData(r.criado_em || r.data)).forEach(rev => {
-    const nomeLimpo = limparNomeProduto(rev.nome_produto || rev.sabor || 'Brownie Revenda');
-    const chave = nomeLimpo.toLowerCase().trim();
-    const qtd = Number(rev.quantidade || rev.qtd || 0);
-    if (!mapaConsolidadoBrownies[chave]) mapaConsolidadoBrownies[chave] = { nome: nomeLimpo, quantidadeVendida: 0, faturacao: 0, qtdRevenda: 0, qtdProduzida: 0, qtdDescarte: 0 };
-    mapaConsolidadoBrownies[chave].qtdRevenda += qtd;
-  });
-
-  producaoBrutaBrownies.filter(prod => validarIntervaloData(prod.criado_em || prod.data)).forEach(prod => {
-    const nomeLimpo = limparNomeProduto(prod.nome_produto || prod.sabor || 'Brownie Produzido');
-    const chave = nomeLimpo.toLowerCase().trim();
-    const qtd = Number(prod.quantidade || prod.qtd || 0);
-    if (!mapaConsolidadoBrownies[chave]) mapaConsolidadoBrownies[chave] = { nome: nomeLimpo, quantidadeVendida: 0, faturacao: 0, qtdRevenda: 0, qtdProduzida: 0, qtdDescarte: 0 };
-    mapaConsolidadoBrownies[chave].qtdProduzida += qtd;
-  });
-
-  descarteBrutoBrownies.filter(desc => validarIntervaloData(desc.criado_em || desc.data)).forEach(desc => {
-    const nomeLimpo = limparNomeProduto(desc.nome_produto || desc.sabor || 'Brownie Descartado');
-    const chave = nomeLimpo.toLowerCase().trim();
-    const qtd = Number(desc.quantidade || desc.qtd || 0);
-    if (!mapaConsolidadoBrownies[chave]) mapaConsolidadoBrownies[chave] = { nome: nomeLimpo, quantidadeVendida: 0, faturacao: 0, qtdRevenda: 0, qtdProduzida: 0, qtdDescarte: 0 };
-    mapaConsolidadoBrownies[chave].qtdDescarte += qtd;
-  });
-
-  const rankingBrownies: RelatorioBrownieConsolidado[] = Object.entries(mapaConsolidadoBrownies).map(([chave, v]) => {
-    const custoUnit = custosEditaveis[chave] !== undefined ? custosEditaveis[chave] : 0.50;
-    return {
-      chave, nome: v.nome, qtdProduzida: v.qtdProduzida, quantidadeVendida: v.quantidadeVendida,
-      qtdRevenda: v.qtdRevenda, qtdDescarte: v.qtdDescarte, faturacaoTotal: v.faturacao, custoInsumosUnitario: custoUnit
-    };
-  }).sort((a, b) => b.quantidadeVendida - a.quantidadeVendida);
-
-  const resumoBrownies = rankingBrownies.reduce((acc, b) => {
-    const totalSaidas = b.quantidadeVendida + b.qtdRevenda + b.qtdDescarte;
-    const custoTotalItem = totalSaidas * b.custoInsumosUnitario;
-    const custoDescarteItem = b.qtdDescarte * b.custoInsumosUnitario;
-    const ganhoLiquidoItem = b.faturacaoTotal - custoTotalItem;
-    return {
-      totalProduzido: acc.totalProduzido + b.qtdProduzida, totalVendido: acc.totalVendido + b.quantidadeVendida,
-      totalRevenda: acc.totalRevenda + b.qtdRevenda, totalDescarte: acc.totalDescarte + b.qtdDescarte,
-      faturacaoBruta: acc.faturacaoBruta + b.faturacaoTotal, custoInsumosTotal: acc.custoInsumosTotal + custoTotalItem,
-      custoDescarteTotal: acc.custoDescarteTotal + custoDescarteItem, ganhoLiquidoReal: acc.ganhoLiquidoReal + ganhoLiquidoItem
-    };
-  }, { totalProduzido: 0, totalVendido: 0, totalRevenda: 0, totalDescarte: 0, faturacaoBruta: 0, custoInsumosTotal: 0, custoDescarteTotal: 0, ganhoLiquidoReal: 0 });
-
   // --- PROCESSAMENTO: CAIXA ---
   useEffect(() => {
     // Une movimentos da tabela Caixa com vendas do PDV (Dinheiro) em memória
@@ -351,25 +255,11 @@ export default function CentralRelatorios() {
   const balancoDiferencasCaixa = relatorioDias.reduce((acc, dia) => acc + (dia.diferenca || 0), 0);
 
   // --- ACÇÕES E EVENTOS ---
-
-  // -> AQUI ESTÁ A FUNÇÃO CORRIGIDA QUE FALTAVA <-
   const abrirModalEdicao = (pedido: Pedido) => {
     setPedidoSendoEditado(pedido);
     setEditCliente(pedido.cliente || ''); 
     setEditTotal(pedido.total_geral);
     setModalEdicaoAberto(true);
-  };
-
-  const registarDescarte = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      const { error } = await supabase.from('perdas').insert([{ nome_produto: saborDescarte, quantidade: Number(qtdDescarteInput), motivo: motivoDescarte, data: new Date().toISOString() }]);
-      if (error) throw error;
-      alert('Descarte registado!');
-      setModalDescarteAberto(false);
-      setQtdDescarteInput(1);
-      carregarRelatorios();
-    } catch (err: any) { alert(`Erro ao registar: ${err.message}`); }
   };
 
   const salvarAlteracoesFinanceiras = async (e: React.FormEvent) => {
@@ -405,7 +295,7 @@ export default function CentralRelatorios() {
           </div>
           <div>
             <h1 className="text-xl font-black text-white tracking-tight">Central de Relatórios</h1>
-            <p className="text-[10px] text-zinc-400 font-medium">Faturação, Brownies e Auditoria de Caixa</p>
+            <p className="text-[10px] text-zinc-400 font-medium">Faturação e Auditoria de Caixa</p>
           </div>
         </div>
 
@@ -413,9 +303,6 @@ export default function CentralRelatorios() {
         <div className="flex bg-zinc-900 p-1 rounded-2xl border border-zinc-800 overflow-x-auto w-full xl:w-auto custom-scrollbar">
           <button onClick={() => setAbaAtiva('geral')} className={`px-5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${abaAtiva === 'geral' ? 'bg-blue-600 text-white shadow-lg' : 'text-zinc-400 hover:text-white'}`}>
             📋 Faturação Geral
-          </button>
-          <button onClick={() => setAbaAtiva('brownies')} className={`px-5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${abaAtiva === 'brownies' ? 'bg-amber-600 text-white shadow-lg' : 'text-zinc-400 hover:text-white'}`}>
-            🍫 Relatório de Brownies
           </button>
           <button onClick={() => setAbaAtiva('caixa')} className={`px-5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${abaAtiva === 'caixa' ? 'bg-emerald-600 text-white shadow-lg' : 'text-zinc-400 hover:text-white'}`}>
             💶 Auditoria de Caixa
@@ -432,7 +319,7 @@ export default function CentralRelatorios() {
 
       <main className="flex-1 p-5 space-y-6 max-w-7xl mx-auto w-full">
         
-        {/* BARRA DE FILTROS SUPERIOR (GLOBAL PARA AS 3 ABAS) */}
+        {/* BARRA DE FILTROS SUPERIOR (GLOBAL PARA AS 2 ABAS) */}
         <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-3xl flex flex-col lg:flex-row justify-between items-center gap-4">
           <div className="flex flex-wrap bg-zinc-950 p-1 rounded-2xl border border-zinc-800 w-full lg:w-auto justify-center">
             <button onClick={() => setTipoIntervalo('dia')} className={`flex-1 lg:flex-initial px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${tipoIntervalo === 'dia' ? 'bg-zinc-700 text-white shadow' : 'text-zinc-400 hover:text-white'}`}>Por Dia</button>
@@ -591,70 +478,7 @@ export default function CentralRelatorios() {
           </div>
         )}
 
-        {/* ---------------- ABA 2: RELATÓRIO DE BROWNIES ---------------- */}
-        {abaAtiva === 'brownies' && (
-          <div className="space-y-6 animate-in fade-in duration-300">
-            <div className="flex justify-end">
-              <button onClick={() => setModalDescarteAberto(true)} className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-xl text-xs font-bold shadow-lg transition-colors flex items-center gap-1.5">
-                <span>🗑️</span> Registar Descarte
-              </button>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
-              <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl shadow-lg"><span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Produzido</span><span className="text-xl font-black text-blue-400">{resumoBrownies.totalProduzido} <span className="text-xs text-zinc-400">unid.</span></span></div>
-              <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl shadow-lg"><span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Vendido</span><span className="text-xl font-black text-white">{resumoBrownies.totalVendido} <span className="text-xs text-zinc-400">unid.</span></span></div>
-              <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl shadow-lg"><span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Revenda</span><span className="text-xl font-black text-purple-400">{resumoBrownies.totalRevenda} <span className="text-xs text-zinc-400">unid.</span></span></div>
-              <div className="bg-red-950/30 border border-red-900/40 p-4 rounded-2xl shadow-lg"><span className="text-[10px] font-black text-red-400 uppercase tracking-widest block mb-1">Descarte</span><span className="text-xl font-black text-red-400">{resumoBrownies.totalDescarte} <span className="text-xs text-red-300">unid.</span></span></div>
-              <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl shadow-lg"><span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Faturação</span><span className="text-xl font-black text-amber-400">{resumoBrownies.faturacaoBruta.toFixed(2)}€</span></div>
-              <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-2xl shadow-lg"><span className="text-[10px] font-black text-zinc-500 uppercase tracking-widest block mb-1">Prejuízo Descarte</span><span className="text-xl font-black text-red-500">{resumoBrownies.custoDescarteTotal.toFixed(2)}€</span></div>
-              <div className="bg-green-950/20 border border-green-900/40 p-4 rounded-2xl shadow-lg"><span className="text-[10px] font-black text-green-500 uppercase tracking-widest block mb-1">Ganho Líquido</span><span className="text-xl font-black text-green-400">{resumoBrownies.ganhoLiquidoReal.toFixed(2)}€</span></div>
-            </div>
-
-            <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-xl">
-              <h2 className="text-lg font-black text-white mb-2 flex items-center gap-2"><span>🍫</span> Cruzamento Completo: Produção, Vendas, Revenda e Descarte por Sabor</h2>
-              <p className="text-xs text-zinc-400 mb-6">Acompanhe detalhadamente o volume que foi comercializado e o que foi descartado no período selecionado.</p>
-
-              {rankingBrownies.length === 0 ? <div className="text-center text-zinc-500 py-12 text-sm italic">Nenhum registo de brownies encontrado para este período.</div> : (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="border-b border-zinc-800 text-zinc-400 text-xs uppercase">
-                        <th className="py-3 px-4 font-bold">Sabor do Brownie</th><th className="py-3 px-4 font-bold text-center">Produzido</th><th className="py-3 px-4 font-bold text-center">Vendido</th><th className="py-3 px-4 font-bold text-center">Revenda</th><th className="py-3 px-4 font-bold text-center text-red-400">Descarte</th><th className="py-3 px-4 font-bold text-right">Custo Insumos (Unit.)</th><th className="py-3 px-4 font-bold text-right">Faturação</th><th className="py-3 px-4 font-bold text-right">Ganho Líquido</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-800 text-sm">
-                      {rankingBrownies.map((b) => {
-                        const totalSaidas = b.quantidadeVendida + b.qtdRevenda + b.qtdDescarte;
-                        const custoTotalProd = totalSaidas * b.custoInsumosUnitario;
-                        const ganhoLiq = b.faturacaoTotal - custoTotalProd;
-
-                        return (
-                          <tr key={b.chave} className="hover:bg-zinc-950/40 transition-colors">
-                            <td className="py-4 px-4 font-bold text-white flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-amber-500"></span>{b.nome}</td>
-                            <td className="py-4 px-4 text-center font-mono text-blue-400 font-bold">{b.qtdProduzida}</td>
-                            <td className="py-4 px-4 text-center font-mono text-zinc-300">{b.quantidadeVendida}</td>
-                            <td className="py-4 px-4 text-center font-mono text-purple-400">{b.qtdRevenda}</td>
-                            <td className="py-4 px-4 text-center font-mono text-red-400 font-bold">{b.qtdDescarte}</td>
-                            <td className="py-4 px-4 text-right font-mono">
-                              <div className="inline-flex items-center gap-1 bg-zinc-950 border border-zinc-700 rounded-xl px-2.5 py-1 focus-within:border-amber-500">
-                                <input type="number" step="0.01" min="0" value={b.custoInsumosUnitario} onChange={e => { const novoValor = parseFloat(e.target.value) || 0; setCustosEditaveis(prev => ({ ...prev, [b.chave]: novoValor })); }} className="w-16 bg-transparent text-right text-red-300 font-bold outline-none font-mono" />
-                                <span className="text-xs text-zinc-500">€</span>
-                              </div>
-                            </td>
-                            <td className="py-4 px-4 text-right font-mono text-amber-400 font-bold">{b.faturacaoTotal.toFixed(2)}€</td>
-                            <td className="py-4 px-4 text-right font-mono font-black text-green-400">{ganhoLiq.toFixed(2)}€</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* ---------------- ABA 3: AUDITORIA DE CAIXA ---------------- */}
+        {/* ---------------- ABA 2: AUDITORIA DE CAIXA ---------------- */}
         {abaAtiva === 'caixa' && (
           <div className="space-y-6 animate-in fade-in duration-300">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -719,35 +543,6 @@ export default function CentralRelatorios() {
         )}
 
       </main>
-
-      {/* MODAIS (Manter todos ocultos se não ativos) */}
-      
-      {/* MODAL DESCARTE BROWNIES */}
-      {modalDescarteAberto && (
-        <div className="fixed inset-0 bg-zinc-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-[32px] p-6 shadow-2xl space-y-4">
-            <h2 className="text-lg font-black text-white">Registar Descarte / Quebra</h2>
-            <form onSubmit={registarDescarte} className="space-y-4 text-sm">
-              <div>
-                <label className="block text-[10px] text-zinc-400 uppercase font-bold mb-1">Sabor do Brownie</label>
-                <input required type="text" placeholder="Ex: Brownie Ninho com Nutella" value={saborDescarte} onChange={e => setSaborDescarte(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white" />
-              </div>
-              <div>
-                <label className="block text-[10px] text-zinc-400 uppercase font-bold mb-1">Quantidade Descartada</label>
-                <input required type="number" min="1" value={qtdDescarteInput} onChange={e => setQtdDescarteInput(parseInt(e.target.value) || 1)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white font-mono" />
-              </div>
-              <div>
-                <label className="block text-[10px] text-zinc-400 uppercase font-bold mb-1">Motivo</label>
-                <input required type="text" value={motivoDescarte} onChange={e => setMotivoDescarte(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-white" />
-              </div>
-              <div className="flex gap-2 pt-2">
-                <button type="button" onClick={() => setModalDescarteAberto(false)} className="flex-1 bg-zinc-800 py-3 rounded-xl font-bold text-xs">Cancelar</button>
-                <button type="submit" className="flex-1 bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl font-bold text-xs">Registar Perda</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
 
       {/* MODAL EDIÇÃO DE FATURAÇÃO */}
       {modalEdicaoAberto && (
