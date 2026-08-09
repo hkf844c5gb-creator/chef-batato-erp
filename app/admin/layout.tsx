@@ -13,16 +13,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     { href: '/admin/clientes', icon: '👥', label: 'Clientes' },
     { href: '/admin/caixa', icon: '💶', label: 'Caixa / Movimentos' },
     
-    // --- PRODUÇÃO E STOCK ESSENCIAIS ---
-    { href: '/admin/producao-batata', icon: '🥔', label: 'Produção Batata' },
+    // --- ESTOQUE E LOGÍSTICA ---
     { href: '/admin/estoque', icon: '📦', label: 'Gestão de Estoque' },
     
     // --- CADASTROS E GESTÃO ---
-    { href: '/admin/produtos', icon: '🍟', label: 'Produtos' },
-    { href: '/admin/combos', icon: '🎁', label: 'Combos' },
+    { href: '/admin/produtos', icon: '🍟', label: 'Produtos e Combos' },
     { href: '/admin/despesas', icon: '💳', label: 'Despesas' },
     { href: '/admin/estafetas', icon: '🛵', label: 'Estafetas' },
-    { href: '/admin/relatorios', icon: '📑', label: 'Relatórios' },
+    
+    // --- ANÁLISE ---
+    { href: '/admin/relatorios', icon: '📈', label: 'Central de Relatórios' },
     { href: '/admin/conciliacao', icon: '📋', label: 'Conciliação' },
   ];
 
@@ -49,7 +49,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           {menuItems.map((item, index) => {
             const isAtivo = pathname === item.href || pathname?.startsWith(item.href + '/');
             
-            const addSeparator = index === 7; 
+            // O separador visual ajustado para o novo índice (agora antes dos Produtos)
+            const addSeparator = index === 6; 
             
             return (
               <div key={item.href}>

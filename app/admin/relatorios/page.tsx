@@ -351,6 +351,15 @@ export default function CentralRelatorios() {
   const balancoDiferencasCaixa = relatorioDias.reduce((acc, dia) => acc + (dia.diferenca || 0), 0);
 
   // --- ACÇÕES E EVENTOS ---
+
+  // -> AQUI ESTÁ A FUNÇÃO CORRIGIDA QUE FALTAVA <-
+  const abrirModalEdicao = (pedido: Pedido) => {
+    setPedidoSendoEditado(pedido);
+    setEditCliente(pedido.cliente || ''); 
+    setEditTotal(pedido.total_geral);
+    setModalEdicaoAberto(true);
+  };
+
   const registarDescarte = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
