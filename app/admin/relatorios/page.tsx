@@ -187,6 +187,7 @@ export default function CentralRelatorios() {
     setPedidosFiltrados(resultado);
   }, [pedidos, tipoIntervalo, dataUnica, dataInicio, dataFim, mesSelecionado, anoSelecionado, filtroCanal, filtroPagamento, termoBusca, ordenacao]);
 
+  // AGRUPAMENTO DE PRODUTOS VENDIDOS
   const topProdutosVendas = useMemo(() => {
     const mapa: Record<string, { nome: string; quantidade: number; faturacao: number }> = {};
     pedidosFiltrados.forEach(p => {
@@ -203,9 +204,19 @@ export default function CentralRelatorios() {
     return Object.values(mapa).sort((a, b) => b.quantidade - a.quantidade);
   }, [pedidosFiltrados]);
 
+  // CÁLCULO DE TOTAIS DA FATURAÇÃO
+  const totalFaturadoBruto = pedidosFiltrados.reduce((acc, p) => acc + Number(p.total_geral || 0), 0);
+  const totalRecebido = pedidosFiltrados.filter(p => p.pago).reduce((acc, p) => acc + Number(p.total_geral || 0), 0);
+  const totalPendente = pedidosFiltrados.filter(p => !p.pago).reduce((acc, p) => acc + Number(p.total_geral || 0), 0);
+  const totalTaxasEntrega = pedidosFiltrados.reduce((acc, p) => acc + Number(p.taxa_entrega || 0), 0);
+  
+  // ---> AQUI ESTÁ A SOMA DO NÚMERO TOTAL DE ITENS FÍSICOS VENDIDOS NESTE PERÍODO <---
+  const totalItensVendidos = pedidosFiltrados.reduce((acc, p) => {
+    return acc + (p.itens_pedido || []).reduce((soma, item) => soma + Number(item.quantidade || 0), 0);
+  }, 0);
+
   // --- PROCESSAMENTO: CAIXA ---
   useEffect(() => {
-    // Une movimentos da tabela Caixa com vendas do PDV (Dinheiro) em memória
     const movimentosManuais = caixaBruta.filter(c => validarIntervaloData(c.data_dia)).map(m => ({
       ...m, valor: Number(m.valor)
     }));
@@ -363,26 +374,35 @@ export default function CentralRelatorios() {
         {/* ---------------- ABA 1: FATURAÇÃO GERAL ---------------- */}
         {abaAtiva === 'geral' && (
           <div className="space-y-6 animate-in fade-in duration-300">
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            
+            {/* CARDS COM O NOVO CONTADOR DE ITENS VENDIDOS */}
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
               <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between">
-                <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">Nº de Pedidos</span>
+                <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">Nº Pedidos</span>
                 <span className="text-3xl font-black text-white font-mono mt-2">{pedidosFiltrados.length}</span>
               </div>
+              
+              {/* CARTÃO NOVO: ITENS VENDIDOS */}
               <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between">
-                <span className="text-[10px] font-bold text-amber-400 uppercase tracking-widest">Faturamento Bruto</span>
-                <span className="text-3xl font-black text-amber-400 font-mono mt-2">{pedidosFiltrados.reduce((acc, p) => acc + Number(p.total_geral || 0), 0).toFixed(2)}€</span>
+                <span className="text-[10px] font-bold text-purple-400 uppercase tracking-widest">Itens Vendidos</span>
+                <span className="text-3xl font-black text-white font-mono mt-2">{totalItensVendidos}</span>
+              </div>
+
+              <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between">
+                <span className="text-[10px] font-bold text-amber-400 uppercase tracking-widest">Fatur. Bruto</span>
+                <span className="text-3xl font-black text-amber-400 font-mono mt-2">{totalFaturadoBruto.toFixed(2)}€</span>
               </div>
               <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between">
                 <span className="text-[10px] font-bold text-green-400 uppercase tracking-widest">Caixa Realizado</span>
-                <span className="text-2xl font-black text-green-400 font-mono mt-2">{pedidosFiltrados.filter(p => p.pago).reduce((acc, p) => acc + Number(p.total_geral || 0), 0).toFixed(2)}€</span>
+                <span className="text-2xl font-black text-green-400 font-mono mt-2">{totalRecebido.toFixed(2)}€</span>
               </div>
               <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between">
                 <span className="text-[10px] font-bold text-red-400 uppercase tracking-widest">Fiado Pendente</span>
-                <span className="text-2xl font-black text-red-400 font-mono mt-2">{pedidosFiltrados.filter(p => !p.pago).reduce((acc, p) => acc + Number(p.total_geral || 0), 0).toFixed(2)}€</span>
+                <span className="text-2xl font-black text-red-400 font-mono mt-2">{totalPendente.toFixed(2)}€</span>
               </div>
-              <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between col-span-2 md:col-span-1">
+              <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between">
                 <span className="text-[10px] font-bold text-orange-400 uppercase tracking-widest">Custos Entrega</span>
-                <span className="text-2xl font-black text-orange-400 font-mono mt-2">{pedidosFiltrados.reduce((acc, p) => acc + Number(p.taxa_entrega || 0), 0).toFixed(2)}€</span>
+                <span className="text-2xl font-black text-orange-400 font-mono mt-2">{totalTaxasEntrega.toFixed(2)}€</span>
               </div>
             </div>
 
@@ -459,14 +479,23 @@ export default function CentralRelatorios() {
                 )}
               </div>
 
+              {/* LISTA COMPLETA DE PRODUTOS VENDIDOS COM SCROLL */}
               <div className="space-y-6">
-                <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-6 shadow-xl space-y-4">
-                  <h3 className="text-sm font-black uppercase tracking-wider text-orange-400">🔥 Top de Vendas (Produtos)</h3>
+                <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-6 shadow-xl flex flex-col h-[600px]">
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-sm font-black uppercase tracking-wider text-orange-400">🔥 Produtos Vendidos</h3>
+                    <span className="bg-orange-500/20 text-orange-400 py-1 px-3 rounded-xl text-xs font-bold">
+                      {totalItensVendidos} itens
+                    </span>
+                  </div>
                   {topProdutosVendas.length === 0 ? <p className="text-xs text-zinc-500 italic">Sem vendas no período.</p> : (
-                    <div className="space-y-3">
-                      {topProdutosVendas.slice(0, 5).map((prod, idx) => (
+                    <div className="space-y-3 overflow-y-auto custom-scrollbar pr-2 flex-1 pb-4">
+                      {topProdutosVendas.map((prod, idx) => (
                         <div key={idx} className="flex justify-between items-center bg-zinc-950 p-3 rounded-2xl border border-zinc-800/80">
-                          <div><p className="font-bold text-xs text-white">{prod.nome}</p><span className="text-[10px] text-zinc-400 font-mono">{prod.quantidade} unidades vendidas</span></div>
+                          <div>
+                            <p className="font-bold text-xs text-white">{prod.nome}</p>
+                            <span className="text-[10px] text-zinc-400 font-mono">{prod.quantidade} unidades vendidas</span>
+                          </div>
                           <span className="font-mono font-black text-orange-400 text-sm">{prod.faturacao.toFixed(2)}€</span>
                         </div>
                       ))}
@@ -543,6 +572,8 @@ export default function CentralRelatorios() {
         )}
 
       </main>
+
+      {/* MODAIS (Manter todos ocultos se não ativos) */}
 
       {/* MODAL EDIÇÃO DE FATURAÇÃO */}
       {modalEdicaoAberto && (
