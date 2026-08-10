@@ -67,11 +67,14 @@ export default function CentralRelatorios() {
 
   // Filtros de Data
   const [tipoIntervalo, setTipoIntervalo] = useState<'dia' | 'mes' | 'ano' | 'personalizado'>('personalizado');
-  const [dataUnica, setDataUnica] = useState('2026-07-01');
-  const [dataInicio, setDataInicio] = useState('2026-07-01');
-  const [dataFim, setDataFim] = useState('2026-07-31');
-  const [mesSelecionado, setMesSelecionado] = useState('2026-07');
-  const [anoSelecionado, setAnoSelecionado] = useState('2026');
+  const [dataUnica, setDataUnica] = useState(() => new Date().toISOString().split('T')[0]);
+  const [dataInicio, setDataInicio] = useState(() => new Date().toISOString().split('T')[0]);
+  const [dataFim, setDataFim] = useState(() => new Date().toISOString().split('T')[0]);
+  const [mesSelecionado, setMesSelecionado] = useState(() => {
+    const hoje = new Date();
+    return `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [anoSelecionado, setAnoSelecionado] = useState(() => String(new Date().getFullYear()));
 
   // Filtros e Estados Específicos - FATURAÇÃO
   const [pedidosFiltrados, setPedidosFiltrados] = useState<Pedido[]>([]);
@@ -187,18 +190,94 @@ export default function CentralRelatorios() {
     setPedidosFiltrados(resultado);
   }, [pedidos, tipoIntervalo, dataUnica, dataInicio, dataFim, mesSelecionado, anoSelecionado, filtroCanal, filtroPagamento, termoBusca, ordenacao]);
 
-  // AGRUPAMENTO DE PRODUTOS VENDIDOS
+  // --- 💡 MOTOR INTELIGENTE DE DESCONSTRUÇÃO DE COMBOS ---
   const topProdutosVendas = useMemo(() => {
     const mapa: Record<string, { nome: string; quantidade: number; faturacao: number }> = {};
+    
     pedidosFiltrados.forEach(p => {
       (p.itens_pedido || []).forEach(item => {
-        const nomeLimpo = limparNomeProduto(item.nome_produto);
-        const chave = nomeLimpo.toLowerCase().trim();
-        const qtd = Number(item.quantidade || 0);
-        const fat = qtd * Number(item.preco_unitario || 0);
-        if (!mapa[chave]) mapa[chave] = { nome: nomeLimpo, quantidade: 0, faturacao: 0 };
-        mapa[chave].quantidade += qtd;
-        mapa[chave].faturacao += fat;
+        const nomeOriginal = item.nome_produto || '';
+        const qtdBase = Number(item.quantidade || 0);
+        const fatBase = qtdBase * Number(item.preco_unitario || 0);
+        
+        const nomeLower = nomeOriginal.toLowerCase();
+        const isCombo = nomeLower.includes('combo') || nomeLower.includes('para dois') || nomeLower.includes('duplo');
+        
+        // 1. TENTA ABRIR OS PARÊNTESES SE VIER DO PDV NOVO
+        if (nomeOriginal.includes('(') && nomeOriginal.trim().endsWith(')')) {
+          const firstParen = nomeOriginal.indexOf('(');
+          const detailsStr = nomeOriginal.substring(firstParen + 1, nomeOriginal.length - 1);
+          
+          // Separação segura por vírgulas (ignorando vírgulas dentro de preços)
+          let depth = 0;
+          let safeStr = "";
+          for(let i=0; i<detailsStr.length; i++) {
+              if(detailsStr[i] === '(') depth++;
+              if(detailsStr[i] === ')') depth--;
+              if(detailsStr[i] === ',' && depth === 0) safeStr += "|SPLIT|";
+              else safeStr += detailsStr[i];
+          }
+          
+          const partes = safeStr.split("|SPLIT|").map(str => str.trim());
+          const partesValidas = partes.filter(str => !str.includes('🔻') && !str.toLowerCase().includes('desconto'));
+          
+          if (partesValidas.length > 0 && isCombo) {
+              const fatPorItem = fatBase / partesValidas.length;
+              partesValidas.forEach(parte => {
+                  let cleanName = parte.replace(/\s*\([^)]*\)/g, '').trim(); // Remove " (8.90€)"
+                  cleanName = cleanName.replace(/\s*\([^)]*\)/g, '').trim(); // Dupla segurança
+                  
+                  let qtdMulti = 1;
+                  const matchX = cleanName.match(/^(\d+)[xX]\s+(.*)$/); // Apanha se for "2x Batata"
+                  if (matchX) {
+                      qtdMulti = parseInt(matchX[1]);
+                      cleanName = matchX[2].trim();
+                  }
+
+                  if (!cleanName) cleanName = "Item de Combo";
+                  const chave = cleanName.toLowerCase();
+                  if (!mapa[chave]) mapa[chave] = { nome: cleanName, quantidade: 0, faturacao: 0 };
+                  mapa[chave].quantidade += (qtdBase * qtdMulti);
+                  mapa[chave].faturacao += fatPorItem;
+              });
+              return; // Termina a leitura deste item com sucesso
+          }
+        }
+        
+        // 2. FALLBACK INTELIGENTE (CASO O NOME SEJA SÓ "BATATÔ PARA DOIS" EM TEXTO SIMPLES)
+        if (isCombo && (nomeLower.includes('para dois') || nomeLower.includes('duplo'))) {
+            // Regra do Chef: "BATATÔ para DOIS" = 2 Batatas e 1 Coca-Cola 1L
+            const chaveBatata = "batata (do combo para dois)";
+            const chaveBebida = "bebida 1l (do combo)";
+            
+            if (!mapa[chaveBatata]) mapa[chaveBatata] = { nome: "Batata (do Combo Para Dois)", quantidade: 0, faturacao: 0 };
+            if (!mapa[chaveBebida]) mapa[chaveBebida] = { nome: "Bebida 1L (do Combo)", quantidade: 0, faturacao: 0 };
+            
+            mapa[chaveBatata].quantidade += (qtdBase * 2);
+            mapa[chaveBebida].quantidade += (qtdBase * 1);
+            
+            mapa[chaveBatata].faturacao += (fatBase * 0.7); // 70% faturação p/ as batatas
+            mapa[chaveBebida].faturacao += (fatBase * 0.3); // 30% faturação p/ a bebida
+        
+        } else if (isCombo) {
+            // Combos normais (ex: Combo Pudinzudo) = Assumimos 2 itens genéricos
+            const chaveItem = "item de combo simples";
+            if (!mapa[chaveItem]) mapa[chaveItem] = { nome: "Item Genérico de Combo", quantidade: 0, faturacao: 0 };
+            mapa[chaveItem].quantidade += (qtdBase * 2);
+            mapa[chaveItem].faturacao += fatBase;
+            
+        } else {
+            // 3. PRODUTOS NORMAIS E SIMPLES (Batata Solta, Refrigerante, etc)
+            let cleanName = nomeOriginal.replace(/\s*\([^)]*\)/g, '').trim();
+            cleanName = cleanName.replace(/\s*\([^)]*\)/g, '').trim();
+            if(!cleanName) cleanName = nomeOriginal;
+            
+            const chave = cleanName.toLowerCase();
+            if (!mapa[chave]) mapa[chave] = { nome: cleanName, quantidade: 0, faturacao: 0 };
+            mapa[chave].quantidade += qtdBase;
+            mapa[chave].faturacao += fatBase;
+        }
+
       });
     });
     return Object.values(mapa).sort((a, b) => b.quantidade - a.quantidade);
@@ -210,10 +289,10 @@ export default function CentralRelatorios() {
   const totalPendente = pedidosFiltrados.filter(p => !p.pago).reduce((acc, p) => acc + Number(p.total_geral || 0), 0);
   const totalTaxasEntrega = pedidosFiltrados.reduce((acc, p) => acc + Number(p.taxa_entrega || 0), 0);
   
-  // ---> AQUI ESTÁ A SOMA DO NÚMERO TOTAL DE ITENS FÍSICOS VENDIDOS NESTE PERÍODO <---
-  const totalItensVendidos = pedidosFiltrados.reduce((acc, p) => {
-    return acc + (p.itens_pedido || []).reduce((soma, item) => soma + Number(item.quantidade || 0), 0);
-  }, 0);
+  // NÚMERO TOTAL DE ITENS FÍSICOS (Soma baseada na desconstrução)
+  const totalItensVendidos = useMemo(() => {
+    return topProdutosVendas.reduce((acc, p) => acc + p.quantidade, 0);
+  }, [topProdutosVendas]);
 
   // --- PROCESSAMENTO: CAIXA ---
   useEffect(() => {
@@ -330,7 +409,7 @@ export default function CentralRelatorios() {
 
       <main className="flex-1 p-5 space-y-6 max-w-7xl mx-auto w-full">
         
-        {/* BARRA DE FILTROS SUPERIOR (GLOBAL PARA AS 2 ABAS) */}
+        {/* BARRA DE FILTROS SUPERIOR */}
         <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-3xl flex flex-col lg:flex-row justify-between items-center gap-4">
           <div className="flex flex-wrap bg-zinc-950 p-1 rounded-2xl border border-zinc-800 w-full lg:w-auto justify-center">
             <button onClick={() => setTipoIntervalo('dia')} className={`flex-1 lg:flex-initial px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${tipoIntervalo === 'dia' ? 'bg-zinc-700 text-white shadow' : 'text-zinc-400 hover:text-white'}`}>Por Dia</button>
@@ -375,19 +454,15 @@ export default function CentralRelatorios() {
         {abaAtiva === 'geral' && (
           <div className="space-y-6 animate-in fade-in duration-300">
             
-            {/* CARDS COM O NOVO CONTADOR DE ITENS VENDIDOS */}
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
               <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between">
                 <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">Nº Pedidos</span>
                 <span className="text-3xl font-black text-white font-mono mt-2">{pedidosFiltrados.length}</span>
               </div>
-              
-              {/* CARTÃO NOVO: ITENS VENDIDOS */}
               <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between">
                 <span className="text-[10px] font-bold text-purple-400 uppercase tracking-widest">Itens Vendidos</span>
                 <span className="text-3xl font-black text-white font-mono mt-2">{totalItensVendidos}</span>
               </div>
-
               <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between">
                 <span className="text-[10px] font-bold text-amber-400 uppercase tracking-widest">Fatur. Bruto</span>
                 <span className="text-3xl font-black text-amber-400 font-mono mt-2">{totalFaturadoBruto.toFixed(2)}€</span>
@@ -491,12 +566,12 @@ export default function CentralRelatorios() {
                   {topProdutosVendas.length === 0 ? <p className="text-xs text-zinc-500 italic">Sem vendas no período.</p> : (
                     <div className="space-y-3 overflow-y-auto custom-scrollbar pr-2 flex-1 pb-4">
                       {topProdutosVendas.map((prod, idx) => (
-                        <div key={idx} className="flex justify-between items-center bg-zinc-950 p-3 rounded-2xl border border-zinc-800/80">
+                        <div key={idx} className="flex justify-between items-center bg-zinc-950 p-3 rounded-2xl border border-zinc-800/80 hover:border-orange-500/30 transition-colors">
                           <div>
-                            <p className="font-bold text-xs text-white">{prod.nome}</p>
-                            <span className="text-[10px] text-zinc-400 font-mono">{prod.quantidade} unidades vendidas</span>
+                            <p className="font-bold text-xs text-white leading-tight">{prod.nome}</p>
+                            <span className="text-[10px] text-zinc-400 font-mono">{prod.quantidade} unidades</span>
                           </div>
-                          <span className="font-mono font-black text-orange-400 text-sm">{prod.faturacao.toFixed(2)}€</span>
+                          <span className="font-mono font-black text-orange-400 text-sm ml-2">{prod.faturacao.toFixed(2)}€</span>
                         </div>
                       ))}
                     </div>
