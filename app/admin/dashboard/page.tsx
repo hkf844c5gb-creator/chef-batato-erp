@@ -61,11 +61,13 @@ export default function DashboardPage() {
     return limpo || nome;
   };
 
+  const obterDataEfetiva = (p: any) => p.data_pedido || p.criado_em || new Date().toISOString();
+
   async function carregarDados() {
     try {
       const { data: todosPedidos, error: erroPedidos } = await supabase
         .from('pedidos')
-        .select('id, total_geral, canal, taxa_entrega, criado_em, forma_pagamento, pago, desconto');
+        .select('id, total_geral, canal, taxa_entrega, criado_em, data_pedido, forma_pagamento, pago, desconto');
 
       if (erroPedidos) console.error("Erro pedidos:", erroPedidos);
 
@@ -73,11 +75,10 @@ export default function DashboardPage() {
         .from('despesas')
         .select('valor, criado_em, data_despesa');
 
+      // IGUAL AO RELATÓRIO: Filtra pela data efetiva e inclui TODOS os pedidos (mesmo os fiados) para a contagem bater certo.
       const pedidosValidos = (todosPedidos || []).filter(p => {
-        if (!p.criado_em) return true;
-        const dataPedidoStr = p.criado_em.split('T')[0];
-        const pagoOk = p.pago === true || p.pago === null;
-        return dataPedidoStr >= dataInicio && dataPedidoStr <= dataFim && pagoOk;
+        const dataPedidoStr = obterDataEfetiva(p).substring(0, 10);
+        return dataPedidoStr >= dataInicio && dataPedidoStr <= dataFim;
       });
 
       const despesasValidas = (todasDespesas || []).filter(d => {
@@ -156,9 +157,12 @@ export default function DashboardPage() {
 
         const agregacao: Record<string, RankingVenda> = {};
 
-        // MOTOR CENTRAL DE CÁLCULO E FUSÃO DE ITENS
+        // MOTOR CENTRAL DE CÁLCULO E FUSÃO DE ITENS (Igual ao Relatório)
         const adicionarProduto = (nome: string, quantidade: number, forceCategoria: string | null = null, ignoreCusto: boolean = false) => {
-          let nomeItemClean = nome.toLowerCase().trim();
+          let cleanName = nome.replace(/\s*\([^)]*\)/g, '').trim(); 
+          if (!cleanName) cleanName = nome;
+          
+          let nomeItemClean = cleanName.toLowerCase().trim();
           let categoriaItem = forceCategoria || 'outros';
           let custoItem = 0;
 
@@ -170,9 +174,9 @@ export default function DashboardPage() {
           }
 
           if (!forceCategoria) {
-            if (nomeItemClean.includes('combo') || nomeItemClean.includes('para dois') || nomeItemClean.includes('duplo')) {
+            if (nomeItemClean.includes('combo') || nomeItemClean.includes('para dois') || nomeItemClean.includes('duplo') || nomeItemClean.includes('batatô10') || nomeItemClean.includes('batato10') || nomeItemClean.includes('batatô 10')) {
               categoriaItem = 'combo';
-            } else if (nomeItemClean.includes('brownie') || nomeItemClean.includes('mousse') || nomeItemClean.includes('pudim') || nomeItemClean.includes('sobremesa')) {
+            } else if (nomeItemClean.includes('brownie') || nomeItemClean.includes('mousse') || nomeItemClean.includes('pudim') || nomeItemClean.includes('sobremesa') || nomeItemClean.includes('sensação')) {
               categoriaItem = 'sobremesa';
             } else if (nomeItemClean.includes('coca') || nomeItemClean.includes('água') || nomeItemClean.includes('agua') || nomeItemClean.includes('sumo') || nomeItemClean.includes('bebida') || nomeItemClean.includes('fanta') || nomeItemClean.includes('guaran') || nomeItemClean.includes('sprite') || nomeItemClean.includes('nestea') || nomeItemClean.includes('ice tea') || nomeItemClean.includes('compal')) {
               categoriaItem = 'bebida';
@@ -181,14 +185,13 @@ export default function DashboardPage() {
             }
           }
 
-          if (ignoreCusto) custoItem = 0; // Impede que a "Capa do Combo" conte duplamente o custo dos ingredientes
+          if (ignoreCusto) custoItem = 0; 
           custoTotalItens += (quantidade * custoItem);
 
-          // FUNDIR ITENS IGUAIS INDEPENDENTE DE VIREM ISOLADOS OU DE COMBOS
           const chave = nomeItemClean;
           if (!agregacao[chave]) {
-            // Se for Strogonoff Supreme, vai guardar "Strogonoff Supreme" perfeitinho!
-            agregacao[chave] = { nome: nome.trim(), quantidade: 0, categoria: categoriaItem };
+            const nomeBonito = cleanName.charAt(0).toUpperCase() + cleanName.slice(1);
+            agregacao[chave] = { nome: nomeBonito, quantidade: 0, categoria: categoriaItem };
           }
           agregacao[chave].quantidade += quantidade;
         };
@@ -197,17 +200,23 @@ export default function DashboardPage() {
           const nomeOriginal = item.nome_produto || 'Produto';
           const qtdBase = Number(item.quantidade || 0);
           const nomeLower = nomeOriginal.toLowerCase();
-          const isCombo = nomeLower.includes('combo') || nomeLower.includes('para dois') || nomeLower.includes('duplo');
+          
+          const isCombo = nomeLower.includes('combo') || 
+                          nomeLower.includes('para dois') || 
+                          nomeLower.includes('duplo') ||
+                          nomeLower.includes('batatô10') ||
+                          nomeLower.includes('batato10') ||
+                          nomeLower.includes('batatô 10') ||
+                          nomeLower.includes('batato 10');
 
           if (isCombo) {
             let partesValidas: string[] = [];
-            let nomeDoCombo = nomeOriginal;
+            let nomeDoCombo = limparNomeProduto(nomeOriginal);
 
-            // Formato PDV Novo com Parênteses: BATATÔ para DOIS (Frango, Coca-Cola)
-            if (nomeOriginal.includes('(')) {
+            if (nomeOriginal.includes('(') && nomeOriginal.trim().endsWith(')')) {
               const firstParen = nomeOriginal.indexOf('(');
-              nomeDoCombo = nomeOriginal.substring(0, firstParen).trim();
-              const detailsStr = nomeOriginal.substring(firstParen + 1).replace(/\)$/, '');
+              nomeDoCombo = limparNomeProduto(nomeOriginal.substring(0, firstParen).trim());
+              const detailsStr = nomeOriginal.substring(firstParen + 1, nomeOriginal.length - 1);
               
               let depth = 0;
               let safeStr = "";
@@ -217,60 +226,59 @@ export default function DashboardPage() {
                   if(detailsStr[i] === ',' && depth === 0) safeStr += "|SPLIT|";
                   else safeStr += detailsStr[i];
               }
-              // TypeScript tipagem: (str: string) => ...
               partesValidas = safeStr.split("|SPLIT|").map((str: string) => str.trim());
             
-            // Formato Plataformas Delivery / PDV Antigo com Vírgulas: BATATÔ para DOIS, Frango, Coca-Cola
             } else if (nomeOriginal.includes(',')) {
               const splitComma = nomeOriginal.split(',');
-              nomeDoCombo = splitComma[0].trim();
-              // TypeScript tipagem: (str: string) => ...
+              nomeDoCombo = limparNomeProduto(splitComma[0].trim());
               partesValidas = splitComma.slice(1).map((str: string) => str.trim());
             }
 
-            // Ignorar os descontos para não contarem como produtos! TypeScript tipagem: (str: string) => ...
             partesValidas = partesValidas.filter((str: string) => !str.includes('🔻') && !str.toLowerCase().includes('desconto'));
 
-            if (partesValidas.length > 0) {
-              // 1. Registar a "Capa do Combo" no Top Combos (sem duplicar o custo)
-              adicionarProduto(nomeDoCombo, qtdBase, 'combo', true);
+            // 1. Registar a "Capa do Combo" no Top Combos (sem duplicar o custo)
+            adicionarProduto(nomeDoCombo, qtdBase, 'combo', true);
 
-              // 2. Extrair cada produto lá de dentro e fundir no Top Normal (Batatas, Bebidas)
-              // TypeScript tipagem: (parte: string) => ...
+            if (partesValidas.length > 0) {
+              // 2. Extrair cada produto lá de dentro e fundir no Top Normal
               partesValidas.forEach((parte: string) => {
-                let cleanName = parte.replace(/\s*\([^)]*\)/g, '').trim(); // Remove tamanhos ou extras entre parênteses
+                let cleanName = parte.replace(/\s*\([^)]*\)/g, '').trim(); 
                 
                 let qtdMulti = 1;
-                const matchX = cleanName.match(/^(\d+)[xX]\s+(.*)$/); // Caso diga "2x Strogonoff"
-                if (matchX) {
-                    qtdMulti = parseInt(matchX[1]);
-                    cleanName = matchX[2].trim();
+                const matchXStart = cleanName.match(/^(\d+)\s*[xX]\s+(.*)$/i);
+                const matchXEnd = cleanName.match(/^(.*?)\s+(\d+)\s*[xX]$/i);
+
+                if (matchXStart) {
+                    qtdMulti = parseInt(matchXStart[1], 10);
+                    cleanName = matchXStart[2].trim();
+                } else if (matchXEnd) {
+                    cleanName = matchXEnd[1].trim();
+                    qtdMulti = parseInt(matchXEnd[2], 10);
                 }
+
                 if (!cleanName) cleanName = "Item de Combo";
                 
-                // O segredo: Vai mandar o 'Strogonoff Supreme' para a lista geral. Como o nome é igual, ele junta ao stock normal!
                 adicionarProduto(cleanName, qtdBase * qtdMulti, null, false);
               });
               return;
 
             } else {
-              // Caso extremo: Combo foi digitado à mão sem especificar os itens lá dentro
+              // Fallbacks se não houver sabores descritos
               if (nomeLower.includes('para dois') || nomeLower.includes('duplo')) {
-                adicionarProduto(nomeOriginal, qtdBase, 'combo', true);
                 adicionarProduto("Batata Genérica (do Combo)", qtdBase * 2, 'batata', false);
                 adicionarProduto("Bebida Genérica (do Combo)", qtdBase * 1, 'bebida', false);
+              } else if (nomeLower.includes('10')) {
+                adicionarProduto("Batata Genérica (do Batatô10)", qtdBase * 1, 'batata', false);
+                adicionarProduto("Bebida Genérica (do Batatô10)", qtdBase * 1, 'bebida', false);
               } else {
-                adicionarProduto(nomeOriginal, qtdBase, 'combo', true);
-                adicionarProduto("Item Genérico de Combo", qtdBase * 2, 'outros', false);
+                adicionarProduto("Item Genérico (Múltiplo)", qtdBase * 2, 'outros', false);
               }
               return;
             }
 
           } else {
-            // PRODUTO AVULSO NORMAL (ex: 1 Strogonoff Supreme que não estava em combo)
-            let cleanName = nomeOriginal.replace(/\s*\([^)]*\)/g, '').trim();
-            if(!cleanName) cleanName = nomeOriginal;
-            adicionarProduto(cleanName, qtdBase, null, false);
+            // PRODUTO NORMAL AVULSO
+            adicionarProduto(nomeOriginal, qtdBase, null, false);
           }
         });
 
