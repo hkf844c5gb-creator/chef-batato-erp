@@ -182,20 +182,18 @@ export default function CentralRelatorios() {
     setPedidosFiltrados(resultado);
   }, [pedidos, tipoIntervalo, dataUnica, dataInicio, dataFim, mesSelecionado, anoSelecionado, filtroCanal, filtroPagamento, termoBusca, ordenacao]);
 
-  // --- MOTOR DE DESCONSTRUÇÃO E AGRUPAMENTO DE PRODUTOS ---
+  // --- MOTOR MATEMÁTICO: DESCONSTRUÇÃO E AGRUPAMENTO DE PRODUTOS ---
   const topProdutosVendas = useMemo(() => {
     const mapa: Record<string, { nome: string; quantidade: number; faturacao: number }> = {};
     
-    // Função auxiliar para juntar produtos iguais (ex: "Strogonoff Supreme" do Combo com o Solto)
+    // Função auxiliar super estrita para somar produtos
     const adicionarProduto = (nome: string, quantidade: number, faturacaoAdicional: number) => {
-      let cleanName = nome.replace(/\s*\([^)]*\)/g, '').trim(); // Remove tamanhos ou infos extra
+      let cleanName = nome.replace(/\s*\([^)]*\)/g, '').trim(); // Limpa parenteses (ex: "Strogonoff (S)")
       if (!cleanName) cleanName = nome;
       
-      // Chave em minúsculas para garantir que os itens se fundem perfeitamente
       const chave = cleanName.toLowerCase().trim();
       
       if (!mapa[chave]) {
-        // Guarda com a primeira letra maiúscula para ficar bonito na UI
         const nomeBonito = cleanName.charAt(0).toUpperCase() + cleanName.slice(1);
         mapa[chave] = { nome: nomeBonito, quantidade: 0, faturacao: 0 };
       }
@@ -206,15 +204,23 @@ export default function CentralRelatorios() {
     pedidosFiltrados.forEach(p => {
       (p.itens_pedido || []).forEach(item => {
         const nomeOriginal = item.nome_produto || 'Produto';
-        const qtdBase = Number(item.quantidade || 0);
+        const qtdBase = Number(item.quantidade || 0); // Ex: Se pediu 2x Combo, qtdBase = 2
         const fatBase = qtdBase * Number(item.preco_unitario || 0);
         const nomeLower = nomeOriginal.toLowerCase();
         
-        const isCombo = nomeLower.includes('combo') || nomeLower.includes('para dois') || nomeLower.includes('duplo');
+        // Identificação total de qualquer combo
+        const isCombo = nomeLower.includes('combo') || 
+                        nomeLower.includes('para dois') || 
+                        nomeLower.includes('duplo') ||
+                        nomeLower.includes('batatô10') ||
+                        nomeLower.includes('batato10') ||
+                        nomeLower.includes('batatô 10') ||
+                        nomeLower.includes('batato 10');
 
         if (isCombo) {
           let partesValidas: string[] = [];
 
+          // 1. Deteção de sub-produtos dentro de parênteses (Padrão Novo PDV)
           if (nomeOriginal.includes('(') && nomeOriginal.trim().endsWith(')')) {
             const firstParen = nomeOriginal.indexOf('(');
             const detailsStr = nomeOriginal.substring(firstParen + 1, nomeOriginal.length - 1);
@@ -227,40 +233,53 @@ export default function CentralRelatorios() {
                 if(detailsStr[i] === ',' && depth === 0) safeStr += "|SPLIT|";
                 else safeStr += detailsStr[i];
             }
-            partesValidas = safeStr.split("|SPLIT|").map((str: string) => str.trim());
+            partesValidas = safeStr.split("|SPLIT|").map(str => str.trim());
+          
+          // 2. Deteção de sub-produtos divididos por vírgulas (Glovo / PDV Antigo)
           } else if (nomeOriginal.includes(',')) {
             const splitComma = nomeOriginal.split(',');
-            partesValidas = splitComma.slice(1).map((str: string) => str.trim());
+            partesValidas = splitComma.slice(1).map(str => str.trim());
           }
 
-          // Filtra palavras que são apenas indicações de desconto
-          partesValidas = partesValidas.filter((str: string) => !str.includes('🔻') && !str.toLowerCase().includes('desconto'));
+          // Limpa descritivos que não são produtos
+          partesValidas = partesValidas.filter(str => !str.includes('🔻') && !str.toLowerCase().includes('desconto'));
 
           if (partesValidas.length > 0) {
-            // Divide o valor pago pelo combo pelos itens reais que vêm lá dentro
             const fatPorItem = fatBase / partesValidas.length;
 
-            partesValidas.forEach((parte: string) => {
+            partesValidas.forEach(parte => {
               let cleanName = parte.replace(/\s*\([^)]*\)/g, '').trim(); 
               
-              let qtdMulti = 1;
-              const matchX = cleanName.match(/^(\d+)[xX]\s+(.*)$/);
-              if (matchX) {
-                  qtdMulti = parseInt(matchX[1]);
-                  cleanName = matchX[2].trim();
+              let qtdMulti = 1; // Quantidade deste sub-item específico
+              
+              // Tenta ler "2x Frango" ou "2 x Frango"
+              const matchXStart = cleanName.match(/^(\d+)\s*[xX]\s+(.*)$/i);
+              // Tenta ler "Frango 2x" ou "Frango 2 x"
+              const matchXEnd = cleanName.match(/^(.*?)\s+(\d+)\s*[xX]$/i);
+
+              if (matchXStart) {
+                  qtdMulti = parseInt(matchXStart[1], 10);
+                  cleanName = matchXStart[2].trim();
+              } else if (matchXEnd) {
+                  cleanName = matchXEnd[1].trim();
+                  qtdMulti = parseInt(matchXEnd[2], 10);
               }
+
               if (!cleanName) cleanName = "Item de Combo";
               
-              // ADICIONA O ITEM EXTRAÍDO! (Assim o Strogonoff do combo junta-se ao Strogonoff normal)
+              // ADICIONA O ITEM: Multiplica a quantidade do combo pela quantidade de itens dentro dele!
               adicionarProduto(cleanName, qtdBase * qtdMulti, fatPorItem);
             });
           } else {
-            // Fallback caso o combo tenha sido registado sem especificar os sabores
+            // Caso o combo tenha vindo sem especificação de sabores, forçamos a entrada matemática para a contagem bater certo.
             if (nomeLower.includes('para dois') || nomeLower.includes('duplo')) {
               adicionarProduto("Batata (Escolha do Cliente)", qtdBase * 2, fatBase * 0.7);
               adicionarProduto("Bebida 1L (Escolha do Cliente)", qtdBase * 1, fatBase * 0.3);
+            } else if (nomeLower.includes('10')) {
+              adicionarProduto("Batata Genérica (do Batatô10)", qtdBase * 1, fatBase * 0.8);
+              adicionarProduto("Bebida Genérica (do Batatô10)", qtdBase * 1, fatBase * 0.2);
             } else {
-              adicionarProduto("Item de Combo Genérico", qtdBase * 2, fatBase);
+              adicionarProduto("Item Genérico (Múltiplo)", qtdBase * 2, fatBase);
             }
           }
         } else {
@@ -273,13 +292,13 @@ export default function CentralRelatorios() {
     return Object.values(mapa).sort((a, b) => b.quantidade - a.quantidade);
   }, [pedidosFiltrados]);
 
-  // CÁLCULO DE TOTAIS DA FATURAÇÃO
+  // --- TOTAIS RIGOROSOS DA FATURAÇÃO ---
   const totalFaturadoBruto = pedidosFiltrados.reduce((acc, p) => acc + Number(p.total_geral || 0), 0);
   const totalRecebido = pedidosFiltrados.filter(p => p.pago).reduce((acc, p) => acc + Number(p.total_geral || 0), 0);
   const totalPendente = pedidosFiltrados.filter(p => !p.pago).reduce((acc, p) => acc + Number(p.total_geral || 0), 0);
   const totalTaxasEntrega = pedidosFiltrados.reduce((acc, p) => acc + Number(p.taxa_entrega || 0), 0);
   
-  // NÚMERO TOTAL DE ITENS FÍSICOS (Soma baseada na desconstrução exata)
+  // O TOTAL DE ITENS VENDIDOS USA AGORA A SOMA ABSOLUTA DO MOTOR DE DESCONSTRUÇÃO
   const totalItensVendidos = useMemo(() => {
     return topProdutosVendas.reduce((acc, p) => acc + p.quantidade, 0);
   }, [topProdutosVendas]);
@@ -525,7 +544,7 @@ export default function CentralRelatorios() {
                         {isExpanded && (
                           <div className="bg-zinc-950 p-4 border-t border-zinc-800 space-y-3">
                             <div className="space-y-1">
-                              {/* Nesta visão resumida mantemos o que foi faturado tal qual (para conferência visual de fatura) */}
+                              {/* Mantemos o que foi faturado tal qual (para conferência visual de fatura) */}
                               {p.itens_pedido?.map(item => (
                                 <div key={item.id} className="flex justify-between text-xs">
                                   <span className="text-zinc-300"><span className="text-zinc-500 mr-2">{item.quantidade}x</span> {item.nome_produto}</span>
@@ -554,7 +573,7 @@ export default function CentralRelatorios() {
                       {totalItensVendidos} itens
                     </span>
                   </div>
-                  <p className="text-[10px] text-zinc-500 mb-4 leading-tight">Lista real com combos desconstruídos e itens agregados para contagem exata de produção.</p>
+                  <p className="text-[10px] text-zinc-500 mb-4 leading-tight">Lista com contagem exata e detalhada (combos convertidos em produtos reais).</p>
                   
                   {topProdutosVendas.length === 0 ? <p className="text-xs text-zinc-500 italic">Sem vendas no período.</p> : (
                     <div className="space-y-3 overflow-y-auto custom-scrollbar pr-2 flex-1 pb-4">
@@ -641,9 +660,7 @@ export default function CentralRelatorios() {
 
       </main>
 
-      {/* MODAIS (Manter todos ocultos se não ativos) */}
-
-      {/* MODAL EDIÇÃO DE FATURAÇÃO */}
+      {/* MODAIS */}
       {modalEdicaoAberto && (
         <div className="fixed inset-0 bg-zinc-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-[32px] p-6 shadow-2xl space-y-4">
