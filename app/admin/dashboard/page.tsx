@@ -46,6 +46,7 @@ export default function DashboardPage() {
   const [dadosPagamento, setDadosPagamento] = useState<any[]>([]);
 
   const [topBatatas, setTopBatatas] = useState<RankingVenda[]>([]);
+  const [topCombos, setTopCombos] = useState<RankingVenda[]>([]);
   const [topSobremesas, setTopSobremesas] = useState<RankingVenda[]>([]);
   const [topBebidas, setTopBebidas] = useState<RankingVenda[]>([]);
 
@@ -53,6 +54,12 @@ export default function DashboardPage() {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
+
+  const limparNomeProduto = (nome: string) => {
+    if (!nome) return "Produto S/ Nome";
+    let limpo = nome.replace(/\s*\([^)]*\)/g, '').trim();
+    return limpo || nome;
+  };
 
   async function carregarDados() {
     try {
@@ -130,29 +137,13 @@ export default function DashboardPage() {
         pagamentosAgrupados[pagamento] = (pagamentosAgrupados[pagamento] || 0) + valorPedido;
       });
 
-      // --- BUSCAR PRODUTOS E MAPEar CUSTOS UNITÁRIOS COM RIGOR ---
+      // --- BUSCAR PRODUTOS E MAPEar CUSTOS UNITÁRIOS ---
       const { data: produtosDB } = await supabase.from('produtos').select('id, nome, categoria, custo_unitario');
-      const mapaProdutosPorId: Record<string, { nome: string, categoria: string, custo: number }> = {};
       const mapaProdutosPorNome: Record<string, { custo: number }> = {};
       
       (produtosDB || []).forEach(prod => {
-        let cat = (prod.categoria || '').toLowerCase().trim();
-        if (cat === 'brownie') cat = 'sobremesa';
-        
-        const nomeProd = prod.nome || '';
-        const nomeLower = nomeProd.toLowerCase().trim();
-        const custoUn = Number(prod.custo_unitario || 0);
-
-        if (cat === 'batata' || nomeLower.includes('calabresa') || nomeLower.includes('costela') || nomeLower.includes('frango cremoso') || nomeLower.includes('gratinado') || nomeLower.includes('strogonoff') || nomeLower.includes('misto')) {
-          cat = 'batata';
-        } else if (cat === 'sobremesa' || nomeLower.includes('brownie') || nomeLower.includes('mousse')) {
-          cat = 'sobremesa';
-        } else if (cat === 'bebida' || nomeLower.includes('coca') || nomeLower.includes('água') || nomeLower.includes('sumo') || nomeLower.includes('fanta') || nomeLower.includes('ice tea')) {
-          cat = 'bebida';
-        }
-
-        mapaProdutosPorId[prod.id] = { nome: nomeProd, categoria: cat, custo: custoUn };
-        mapaProdutosPorNome[nomeLower] = { custo: custoUn };
+        const nomeLower = (prod.nome || '').toLowerCase().trim();
+        mapaProdutosPorNome[nomeLower] = { custo: Number(prod.custo_unitario || 0) };
       });
 
       let custoTotalItens = 0;
@@ -165,59 +156,134 @@ export default function DashboardPage() {
 
         const agregacao: Record<string, RankingVenda> = {};
 
-        (itensPedido || []).forEach(item => {
-          let nomeFinal = item.nome_produto || 'Produto';
-          let categoriaItem = 'outros';
+        // MOTOR CENTRAL DE CÁLCULO E FUSÃO DE ITENS
+        const adicionarProduto = (nome: string, quantidade: number, forceCategoria: string | null = null, ignoreCusto: boolean = false) => {
+          let nomeItemClean = nome.toLowerCase().trim();
+          let categoriaItem = forceCategoria || 'outros';
           let custoItem = 0;
-          const qtd = Number(item.quantidade || 0);
 
-          // 1. Tentar encontrar custo por ID
-          if (item.produto_id && mapaProdutosPorId[item.produto_id]) {
-            nomeFinal = mapaProdutosPorId[item.produto_id].nome;
-            categoriaItem = mapaProdutosPorId[item.produto_id].categoria;
-            custoItem = mapaProdutosPorId[item.produto_id].custo;
-          } 
-          // 2. Se não tiver ID ou não achar, procurar por correspondência exata ou parcial do nome
-          else {
-            const nomeItemClean = nomeFinal.toLowerCase().trim();
-            if (mapaProdutosPorNome[nomeItemClean]) {
-              custoItem = mapaProdutosPorNome[nomeItemClean].custo;
-            } else {
-              // Procurar se o nome do produto contém alguma chave da base de dados
-              const matchKey = Object.keys(mapaProdutosPorNome).find(k => nomeItemClean.includes(k) || k.includes(nomeItemClean));
-              if (matchKey) {
-                custoItem = mapaProdutosPorNome[matchKey].custo;
-              }
-            }
+          if (mapaProdutosPorNome[nomeItemClean]) {
+            custoItem = mapaProdutosPorNome[nomeItemClean].custo;
+          } else {
+            const matchKey = Object.keys(mapaProdutosPorNome).find(k => nomeItemClean.includes(k) || k.includes(nomeItemClean));
+            if (matchKey) custoItem = mapaProdutosPorNome[matchKey].custo;
+          }
 
-            const nomeLower = nomeFinal.toLowerCase();
-            if (nomeLower.includes('calabresa') || nomeLower.includes('costela') || nomeLower.includes('frango') || nomeLower.includes('gratinado') || nomeLower.includes('strogonoff') || nomeLower.includes('misto') || nomeLower.includes('batata')) {
-              categoriaItem = 'batata';
-            } else if (nomeLower.includes('brownie') || nomeLower.includes('mousse') || nomeLower.includes('sobremesa')) {
+          if (!forceCategoria) {
+            if (nomeItemClean.includes('combo') || nomeItemClean.includes('para dois') || nomeItemClean.includes('duplo')) {
+              categoriaItem = 'combo';
+            } else if (nomeItemClean.includes('brownie') || nomeItemClean.includes('mousse') || nomeItemClean.includes('pudim') || nomeItemClean.includes('sobremesa')) {
               categoriaItem = 'sobremesa';
-            } else if (nomeLower.includes('coca') || nomeLower.includes('água') || nomeLower.includes('sumo') || nomeLower.includes('bebida') || nomeLower.includes('fanta')) {
+            } else if (nomeItemClean.includes('coca') || nomeItemClean.includes('água') || nomeItemClean.includes('agua') || nomeItemClean.includes('sumo') || nomeItemClean.includes('bebida') || nomeItemClean.includes('fanta') || nomeItemClean.includes('guaran') || nomeItemClean.includes('sprite') || nomeItemClean.includes('nestea') || nomeItemClean.includes('ice tea') || nomeItemClean.includes('compal')) {
               categoriaItem = 'bebida';
+            } else if (nomeItemClean.includes('calabresa') || nomeItemClean.includes('costela') || nomeItemClean.includes('frango') || nomeItemClean.includes('gratinado') || nomeItemClean.includes('strogonoff') || nomeItemClean.includes('misto') || nomeItemClean.includes('batata') || nomeItemClean.includes('camarão') || nomeItemClean.includes('camarao') || nomeItemClean.includes('carne') || nomeItemClean.includes('bolonhesa')) {
+              categoriaItem = 'batata';
             }
           }
 
-          // Se por acaso o custo unitário estiver a 0 mas for um combo ou item com preço de venda, 
-          // podemos garantir que não falha na soma:
-          custoTotalItens += (qtd * custoItem);
+          if (ignoreCusto) custoItem = 0; // Impede que a "Capa do Combo" conte duplamente o custo dos ingredientes
+          custoTotalItens += (quantidade * custoItem);
 
-          const chave = nomeFinal.toLowerCase().trim();
+          // FUNDIR ITENS IGUAIS INDEPENDENTE DE VIREM ISOLADOS OU DE COMBOS
+          const chave = nomeItemClean;
           if (!agregacao[chave]) {
-            agregacao[chave] = { nome: nomeFinal, quantidade: 0, categoria: categoriaItem };
+            // Se for Strogonoff Supreme, vai guardar "Strogonoff Supreme" perfeitinho!
+            agregacao[chave] = { nome: nome.trim(), quantidade: 0, categoria: categoriaItem };
           }
-          agregacao[chave].quantidade += qtd;
+          agregacao[chave].quantidade += quantidade;
+        };
+
+        (itensPedido || []).forEach(item => {
+          const nomeOriginal = item.nome_produto || 'Produto';
+          const qtdBase = Number(item.quantidade || 0);
+          const nomeLower = nomeOriginal.toLowerCase();
+          const isCombo = nomeLower.includes('combo') || nomeLower.includes('para dois') || nomeLower.includes('duplo');
+
+          if (isCombo) {
+            let partesValidas: string[] = [];
+            let nomeDoCombo = nomeOriginal;
+
+            // Formato PDV Novo com Parênteses: BATATÔ para DOIS (Frango, Coca-Cola)
+            if (nomeOriginal.includes('(')) {
+              const firstParen = nomeOriginal.indexOf('(');
+              nomeDoCombo = nomeOriginal.substring(0, firstParen).trim();
+              const detailsStr = nomeOriginal.substring(firstParen + 1).replace(/\)$/, '');
+              
+              let depth = 0;
+              let safeStr = "";
+              for(let i=0; i<detailsStr.length; i++) {
+                  if(detailsStr[i] === '(') depth++;
+                  if(detailsStr[i] === ')') depth--;
+                  if(detailsStr[i] === ',' && depth === 0) safeStr += "|SPLIT|";
+                  else safeStr += detailsStr[i];
+              }
+              // TypeScript tipagem: (str: string) => ...
+              partesValidas = safeStr.split("|SPLIT|").map((str: string) => str.trim());
+            
+            // Formato Plataformas Delivery / PDV Antigo com Vírgulas: BATATÔ para DOIS, Frango, Coca-Cola
+            } else if (nomeOriginal.includes(',')) {
+              const splitComma = nomeOriginal.split(',');
+              nomeDoCombo = splitComma[0].trim();
+              // TypeScript tipagem: (str: string) => ...
+              partesValidas = splitComma.slice(1).map((str: string) => str.trim());
+            }
+
+            // Ignorar os descontos para não contarem como produtos! TypeScript tipagem: (str: string) => ...
+            partesValidas = partesValidas.filter((str: string) => !str.includes('🔻') && !str.toLowerCase().includes('desconto'));
+
+            if (partesValidas.length > 0) {
+              // 1. Registar a "Capa do Combo" no Top Combos (sem duplicar o custo)
+              adicionarProduto(nomeDoCombo, qtdBase, 'combo', true);
+
+              // 2. Extrair cada produto lá de dentro e fundir no Top Normal (Batatas, Bebidas)
+              // TypeScript tipagem: (parte: string) => ...
+              partesValidas.forEach((parte: string) => {
+                let cleanName = parte.replace(/\s*\([^)]*\)/g, '').trim(); // Remove tamanhos ou extras entre parênteses
+                
+                let qtdMulti = 1;
+                const matchX = cleanName.match(/^(\d+)[xX]\s+(.*)$/); // Caso diga "2x Strogonoff"
+                if (matchX) {
+                    qtdMulti = parseInt(matchX[1]);
+                    cleanName = matchX[2].trim();
+                }
+                if (!cleanName) cleanName = "Item de Combo";
+                
+                // O segredo: Vai mandar o 'Strogonoff Supreme' para a lista geral. Como o nome é igual, ele junta ao stock normal!
+                adicionarProduto(cleanName, qtdBase * qtdMulti, null, false);
+              });
+              return;
+
+            } else {
+              // Caso extremo: Combo foi digitado à mão sem especificar os itens lá dentro
+              if (nomeLower.includes('para dois') || nomeLower.includes('duplo')) {
+                adicionarProduto(nomeOriginal, qtdBase, 'combo', true);
+                adicionarProduto("Batata Genérica (do Combo)", qtdBase * 2, 'batata', false);
+                adicionarProduto("Bebida Genérica (do Combo)", qtdBase * 1, 'bebida', false);
+              } else {
+                adicionarProduto(nomeOriginal, qtdBase, 'combo', true);
+                adicionarProduto("Item Genérico de Combo", qtdBase * 2, 'outros', false);
+              }
+              return;
+            }
+
+          } else {
+            // PRODUTO AVULSO NORMAL (ex: 1 Strogonoff Supreme que não estava em combo)
+            let cleanName = nomeOriginal.replace(/\s*\([^)]*\)/g, '').trim();
+            if(!cleanName) cleanName = nomeOriginal;
+            adicionarProduto(cleanName, qtdBase, null, false);
+          }
         });
 
+        // Ordenar os Rankings!
         const listaRankeada = Object.values(agregacao).sort((a, b) => b.quantidade - a.quantidade);
 
         setTopBatatas(listaRankeada.filter(i => i.categoria === 'batata').slice(0, 5));
+        setTopCombos(listaRankeada.filter(i => i.categoria === 'combo').slice(0, 5));
         setTopSobremesas(listaRankeada.filter(i => i.categoria === 'sobremesa').slice(0, 5));
         setTopBebidas(listaRankeada.filter(i => i.categoria === 'bebida').slice(0, 5));
       } else {
         setTopBatatas([]);
+        setTopCombos([]);
         setTopSobremesas([]);
         setTopBebidas([]);
       }
@@ -301,7 +367,7 @@ export default function DashboardPage() {
           dados.map((item, index) => (
             <div key={index} className="flex items-center gap-3 bg-zinc-950/50 p-3 rounded-xl border border-zinc-800">
               <span className="text-xs font-mono text-zinc-500 font-bold">#{index + 1}</span>
-              <span className="flex-1 text-sm font-bold text-zinc-200 truncate">{item.nome}</span>
+              <span className="flex-1 text-sm font-bold text-zinc-200 truncate capitalize">{item.nome}</span>
               <div className="text-right">
                 <span className="text-base font-black text-orange-500">{item.quantidade}</span>
                 <span className="text-[9px] font-bold text-zinc-500 uppercase block leading-none">unid.</span>
@@ -457,8 +523,9 @@ export default function DashboardPage() {
             <h2 className="text-lg font-bold text-zinc-300 mb-4 flex items-center gap-2">
               <span className="text-orange-500">🏆</span> Top Produtos Mais Vendidos no Período
             </h2>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               <TopList titulo="Top 5 Batatas" icone="🥔" dados={topBatatas} cor="bg-amber-500 text-zinc-950" />
+              <TopList titulo="Top 5 Combos" icone="🎁" dados={topCombos} cor="bg-red-500 text-white" />
               <TopList titulo="Top 5 Sobremesas" icone="🍫" dados={topSobremesas} cor="bg-amber-800 text-white" />
               <TopList titulo="Top 5 Bebidas" icone="🥤" dados={topBebidas} cor="bg-blue-500 text-white" />
             </div>

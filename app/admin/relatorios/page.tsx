@@ -94,12 +94,6 @@ export default function CentralRelatorios() {
   const [diaSelecionado, setDiaSelecionado] = useState<ResumoDia | null>(null);
 
   // --- UTILITÁRIOS ---
-  const limparNomeProduto = (nome: string | null | undefined) => {
-    if (!nome) return "Produto S/ Nome";
-    let limpo = nome.replace(/\s*\([^)]*\)/g, '').trim();
-    return limpo || nome;
-  };
-
   const limparNomePedido = (nome: string | null | undefined) => {
     if (!nome) return "S/ Nome";
     const match = nome.match(/Pedido\s*#?(\d+)/i);
@@ -135,7 +129,6 @@ export default function CentralRelatorios() {
     setErroDB(null);
 
     try {
-      // 1. Pedidos e Itens
       const { data: pedidosData, error: errPed } = await supabase.from('pedidos').select('*').order('data_pedido', { ascending: false });
       if (errPed) throw new Error(`Falha na tabela 'pedidos': ${errPed.message}`);
 
@@ -148,7 +141,6 @@ export default function CentralRelatorios() {
       }));
       setPedidos(pedidosMapeados);
 
-      // 2. Auditoria de Caixa
       const { data: cData } = await supabase.from('caixa').select('*');
       setCaixaBruta(cData || []);
 
@@ -190,96 +182,94 @@ export default function CentralRelatorios() {
     setPedidosFiltrados(resultado);
   }, [pedidos, tipoIntervalo, dataUnica, dataInicio, dataFim, mesSelecionado, anoSelecionado, filtroCanal, filtroPagamento, termoBusca, ordenacao]);
 
-  // --- 💡 MOTOR INTELIGENTE DE DESCONSTRUÇÃO DE COMBOS ---
+  // --- MOTOR DE DESCONSTRUÇÃO E AGRUPAMENTO DE PRODUTOS ---
   const topProdutosVendas = useMemo(() => {
     const mapa: Record<string, { nome: string; quantidade: number; faturacao: number }> = {};
     
+    // Função auxiliar para juntar produtos iguais (ex: "Strogonoff Supreme" do Combo com o Solto)
+    const adicionarProduto = (nome: string, quantidade: number, faturacaoAdicional: number) => {
+      let cleanName = nome.replace(/\s*\([^)]*\)/g, '').trim(); // Remove tamanhos ou infos extra
+      if (!cleanName) cleanName = nome;
+      
+      // Chave em minúsculas para garantir que os itens se fundem perfeitamente
+      const chave = cleanName.toLowerCase().trim();
+      
+      if (!mapa[chave]) {
+        // Guarda com a primeira letra maiúscula para ficar bonito na UI
+        const nomeBonito = cleanName.charAt(0).toUpperCase() + cleanName.slice(1);
+        mapa[chave] = { nome: nomeBonito, quantidade: 0, faturacao: 0 };
+      }
+      mapa[chave].quantidade += quantidade;
+      mapa[chave].faturacao += faturacaoAdicional;
+    };
+
     pedidosFiltrados.forEach(p => {
       (p.itens_pedido || []).forEach(item => {
-        const nomeOriginal = item.nome_produto || '';
+        const nomeOriginal = item.nome_produto || 'Produto';
         const qtdBase = Number(item.quantidade || 0);
         const fatBase = qtdBase * Number(item.preco_unitario || 0);
-        
         const nomeLower = nomeOriginal.toLowerCase();
+        
         const isCombo = nomeLower.includes('combo') || nomeLower.includes('para dois') || nomeLower.includes('duplo');
-        
-        // 1. TENTA ABRIR OS PARÊNTESES SE VIER DO PDV NOVO
-        if (nomeOriginal.includes('(') && nomeOriginal.trim().endsWith(')')) {
-          const firstParen = nomeOriginal.indexOf('(');
-          const detailsStr = nomeOriginal.substring(firstParen + 1, nomeOriginal.length - 1);
-          
-          // Separação segura por vírgulas (ignorando vírgulas dentro de preços)
-          let depth = 0;
-          let safeStr = "";
-          for(let i=0; i<detailsStr.length; i++) {
-              if(detailsStr[i] === '(') depth++;
-              if(detailsStr[i] === ')') depth--;
-              if(detailsStr[i] === ',' && depth === 0) safeStr += "|SPLIT|";
-              else safeStr += detailsStr[i];
-          }
-          
-          const partes = safeStr.split("|SPLIT|").map(str => str.trim());
-          const partesValidas = partes.filter(str => !str.includes('🔻') && !str.toLowerCase().includes('desconto'));
-          
-          if (partesValidas.length > 0 && isCombo) {
-              const fatPorItem = fatBase / partesValidas.length;
-              partesValidas.forEach(parte => {
-                  let cleanName = parte.replace(/\s*\([^)]*\)/g, '').trim(); // Remove " (8.90€)"
-                  cleanName = cleanName.replace(/\s*\([^)]*\)/g, '').trim(); // Dupla segurança
-                  
-                  let qtdMulti = 1;
-                  const matchX = cleanName.match(/^(\d+)[xX]\s+(.*)$/); // Apanha se for "2x Batata"
-                  if (matchX) {
-                      qtdMulti = parseInt(matchX[1]);
-                      cleanName = matchX[2].trim();
-                  }
 
-                  if (!cleanName) cleanName = "Item de Combo";
-                  const chave = cleanName.toLowerCase();
-                  if (!mapa[chave]) mapa[chave] = { nome: cleanName, quantidade: 0, faturacao: 0 };
-                  mapa[chave].quantidade += (qtdBase * qtdMulti);
-                  mapa[chave].faturacao += fatPorItem;
-              });
-              return; // Termina a leitura deste item com sucesso
+        if (isCombo) {
+          let partesValidas: string[] = [];
+
+          if (nomeOriginal.includes('(') && nomeOriginal.trim().endsWith(')')) {
+            const firstParen = nomeOriginal.indexOf('(');
+            const detailsStr = nomeOriginal.substring(firstParen + 1, nomeOriginal.length - 1);
+            
+            let depth = 0;
+            let safeStr = "";
+            for (let i=0; i<detailsStr.length; i++) {
+                if(detailsStr[i] === '(') depth++;
+                if(detailsStr[i] === ')') depth--;
+                if(detailsStr[i] === ',' && depth === 0) safeStr += "|SPLIT|";
+                else safeStr += detailsStr[i];
+            }
+            partesValidas = safeStr.split("|SPLIT|").map((str: string) => str.trim());
+          } else if (nomeOriginal.includes(',')) {
+            const splitComma = nomeOriginal.split(',');
+            partesValidas = splitComma.slice(1).map((str: string) => str.trim());
           }
-        }
-        
-        // 2. FALLBACK INTELIGENTE (CASO O NOME SEJA SÓ "BATATÔ PARA DOIS" EM TEXTO SIMPLES)
-        if (isCombo && (nomeLower.includes('para dois') || nomeLower.includes('duplo'))) {
-            // Regra do Chef: "BATATÔ para DOIS" = 2 Batatas e 1 Coca-Cola 1L
-            const chaveBatata = "batata (do combo para dois)";
-            const chaveBebida = "bebida 1l (do combo)";
-            
-            if (!mapa[chaveBatata]) mapa[chaveBatata] = { nome: "Batata (do Combo Para Dois)", quantidade: 0, faturacao: 0 };
-            if (!mapa[chaveBebida]) mapa[chaveBebida] = { nome: "Bebida 1L (do Combo)", quantidade: 0, faturacao: 0 };
-            
-            mapa[chaveBatata].quantidade += (qtdBase * 2);
-            mapa[chaveBebida].quantidade += (qtdBase * 1);
-            
-            mapa[chaveBatata].faturacao += (fatBase * 0.7); // 70% faturação p/ as batatas
-            mapa[chaveBebida].faturacao += (fatBase * 0.3); // 30% faturação p/ a bebida
-        
-        } else if (isCombo) {
-            // Combos normais (ex: Combo Pudinzudo) = Assumimos 2 itens genéricos
-            const chaveItem = "item de combo simples";
-            if (!mapa[chaveItem]) mapa[chaveItem] = { nome: "Item Genérico de Combo", quantidade: 0, faturacao: 0 };
-            mapa[chaveItem].quantidade += (qtdBase * 2);
-            mapa[chaveItem].faturacao += fatBase;
-            
+
+          // Filtra palavras que são apenas indicações de desconto
+          partesValidas = partesValidas.filter((str: string) => !str.includes('🔻') && !str.toLowerCase().includes('desconto'));
+
+          if (partesValidas.length > 0) {
+            // Divide o valor pago pelo combo pelos itens reais que vêm lá dentro
+            const fatPorItem = fatBase / partesValidas.length;
+
+            partesValidas.forEach((parte: string) => {
+              let cleanName = parte.replace(/\s*\([^)]*\)/g, '').trim(); 
+              
+              let qtdMulti = 1;
+              const matchX = cleanName.match(/^(\d+)[xX]\s+(.*)$/);
+              if (matchX) {
+                  qtdMulti = parseInt(matchX[1]);
+                  cleanName = matchX[2].trim();
+              }
+              if (!cleanName) cleanName = "Item de Combo";
+              
+              // ADICIONA O ITEM EXTRAÍDO! (Assim o Strogonoff do combo junta-se ao Strogonoff normal)
+              adicionarProduto(cleanName, qtdBase * qtdMulti, fatPorItem);
+            });
+          } else {
+            // Fallback caso o combo tenha sido registado sem especificar os sabores
+            if (nomeLower.includes('para dois') || nomeLower.includes('duplo')) {
+              adicionarProduto("Batata (Escolha do Cliente)", qtdBase * 2, fatBase * 0.7);
+              adicionarProduto("Bebida 1L (Escolha do Cliente)", qtdBase * 1, fatBase * 0.3);
+            } else {
+              adicionarProduto("Item de Combo Genérico", qtdBase * 2, fatBase);
+            }
+          }
         } else {
-            // 3. PRODUTOS NORMAIS E SIMPLES (Batata Solta, Refrigerante, etc)
-            let cleanName = nomeOriginal.replace(/\s*\([^)]*\)/g, '').trim();
-            cleanName = cleanName.replace(/\s*\([^)]*\)/g, '').trim();
-            if(!cleanName) cleanName = nomeOriginal;
-            
-            const chave = cleanName.toLowerCase();
-            if (!mapa[chave]) mapa[chave] = { nome: cleanName, quantidade: 0, faturacao: 0 };
-            mapa[chave].quantidade += qtdBase;
-            mapa[chave].faturacao += fatBase;
+          // PRODUTO NORMAL AVULSO
+          adicionarProduto(nomeOriginal, qtdBase, fatBase);
         }
-
       });
     });
+
     return Object.values(mapa).sort((a, b) => b.quantidade - a.quantidade);
   }, [pedidosFiltrados]);
 
@@ -289,7 +279,7 @@ export default function CentralRelatorios() {
   const totalPendente = pedidosFiltrados.filter(p => !p.pago).reduce((acc, p) => acc + Number(p.total_geral || 0), 0);
   const totalTaxasEntrega = pedidosFiltrados.reduce((acc, p) => acc + Number(p.taxa_entrega || 0), 0);
   
-  // NÚMERO TOTAL DE ITENS FÍSICOS (Soma baseada na desconstrução)
+  // NÚMERO TOTAL DE ITENS FÍSICOS (Soma baseada na desconstrução exata)
   const totalItensVendidos = useMemo(() => {
     return topProdutosVendas.reduce((acc, p) => acc + p.quantidade, 0);
   }, [topProdutosVendas]);
@@ -535,9 +525,10 @@ export default function CentralRelatorios() {
                         {isExpanded && (
                           <div className="bg-zinc-950 p-4 border-t border-zinc-800 space-y-3">
                             <div className="space-y-1">
+                              {/* Nesta visão resumida mantemos o que foi faturado tal qual (para conferência visual de fatura) */}
                               {p.itens_pedido?.map(item => (
                                 <div key={item.id} className="flex justify-between text-xs">
-                                  <span className="text-zinc-300"><span className="text-zinc-500 mr-2">{item.quantidade}x</span> {limparNomeProduto(item.nome_produto)}</span>
+                                  <span className="text-zinc-300"><span className="text-zinc-500 mr-2">{item.quantidade}x</span> {item.nome_produto}</span>
                                   <span className="text-zinc-500 font-mono">{((item.quantidade || 0) * (item.preco_unitario || 0)).toFixed(2)}€</span>
                                 </div>
                               ))}
@@ -554,7 +545,7 @@ export default function CentralRelatorios() {
                 )}
               </div>
 
-              {/* LISTA COMPLETA DE PRODUTOS VENDIDOS COM SCROLL */}
+              {/* LISTA COMPLETA DE PRODUTOS VENDIDOS DESCONSTRUÍDOS COM SCROLL */}
               <div className="space-y-6">
                 <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-6 shadow-xl flex flex-col h-[600px]">
                   <div className="flex justify-between items-center mb-4">
@@ -563,12 +554,14 @@ export default function CentralRelatorios() {
                       {totalItensVendidos} itens
                     </span>
                   </div>
+                  <p className="text-[10px] text-zinc-500 mb-4 leading-tight">Lista real com combos desconstruídos e itens agregados para contagem exata de produção.</p>
+                  
                   {topProdutosVendas.length === 0 ? <p className="text-xs text-zinc-500 italic">Sem vendas no período.</p> : (
                     <div className="space-y-3 overflow-y-auto custom-scrollbar pr-2 flex-1 pb-4">
                       {topProdutosVendas.map((prod, idx) => (
                         <div key={idx} className="flex justify-between items-center bg-zinc-950 p-3 rounded-2xl border border-zinc-800/80 hover:border-orange-500/30 transition-colors">
                           <div>
-                            <p className="font-bold text-xs text-white leading-tight">{prod.nome}</p>
+                            <p className="font-bold text-xs text-white leading-tight capitalize">{prod.nome}</p>
                             <span className="text-[10px] text-zinc-400 font-mono">{prod.quantidade} unidades</span>
                           </div>
                           <span className="font-mono font-black text-orange-400 text-sm ml-2">{prod.faturacao.toFixed(2)}€</span>
