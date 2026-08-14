@@ -14,7 +14,7 @@ interface ProdutoEstoque {
 
 interface MovimentoKardex {
   id: string;
-  produto_id: string; 
+  produto_id?: string; 
   nome_produto: string;
   tipo_movimento: string;
   quantidade: number;
@@ -75,7 +75,7 @@ export default function GestaoEstoqueProdutos() {
       const { data: hist, error: errHist } = await supabase
         .from('movimentos_estoque')
         .select('*')
-        .order('id', { ascending: false })
+        .order('created_at', { ascending: false }) // ORDENAÇÃO CORRIGIDA PARA DATA
         .limit(20); 
       
       if (errHist) throw errHist;
@@ -211,7 +211,6 @@ export default function GestaoEstoqueProdutos() {
       
       if (errUpdate) throw errUpdate;
 
-      // Junta a hora atual para o formato Timestamp ficar válido
       const horaAtual = new Date().toISOString().split('T')[1] || '00:00:00.000Z';
       const dataFinalMovimento = `${dataRepor}T${horaAtual}`;
 
@@ -222,7 +221,7 @@ export default function GestaoEstoqueProdutos() {
         quantidade: qtdAdicionar,
         saldo_atualizado: novoStock,
         origem: 'COMPRA / REPOSIÇÃO',
-        observacoes: `Registado via painel.`,
+        observacoes: `Registado via painel. Data Registo: ${dataRepor}`,
         data_movimento: dataFinalMovimento,
         created_at: new Date().toISOString()
       }]);
@@ -271,8 +270,8 @@ export default function GestaoEstoqueProdutos() {
       const { data, error } = await supabase
         .from('movimentos_estoque')
         .select('*')
-        .eq('produto_id', produto.id) 
-        .order('id', { ascending: false }) // Força ordenação por ID garantindo que nunca falha
+        .eq('nome_produto', produto.nome) // FILTRA PELO NOME PARA NÃO FALHAR NOS ANTIGOS
+        .order('created_at', { ascending: false }) // ORDENA POR DATA DE CRIAÇÃO (MAIS SEGURO)
         .limit(50);
       
       if (error) throw error;
