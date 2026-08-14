@@ -22,7 +22,6 @@ interface MovimentoKardex {
   origem: string;
   observacoes: string;
   data_movimento: string;
-  created_at?: string;
 }
 
 export default function GestaoEstoqueProdutos() {
@@ -75,7 +74,7 @@ export default function GestaoEstoqueProdutos() {
       const { data: hist, error: errHist } = await supabase
         .from('movimentos_estoque')
         .select('*')
-        .order('created_at', { ascending: false }) // ORDENAÇÃO CORRIGIDA PARA DATA
+        .order('data_movimento', { ascending: false }) 
         .limit(20); 
       
       if (errHist) throw errHist;
@@ -128,8 +127,7 @@ export default function GestaoEstoqueProdutos() {
           saldo_atualizado: Number(formEstoqueAtual),
           origem: 'CRIAÇÃO DE ITEM',
           observacoes: `Stock inicial (Código: ${codigoGerado})`,
-          data_movimento: new Date().toISOString(),
-          created_at: new Date().toISOString()
+          data_movimento: new Date().toISOString()
         }]);
         if (errHist) console.error("Falha ao gravar histórico inicial:", errHist);
       }
@@ -222,8 +220,7 @@ export default function GestaoEstoqueProdutos() {
         saldo_atualizado: novoStock,
         origem: 'COMPRA / REPOSIÇÃO',
         observacoes: `Registado via painel. Data Registo: ${dataRepor}`,
-        data_movimento: dataFinalMovimento,
-        created_at: new Date().toISOString()
+        data_movimento: dataFinalMovimento
       }]);
 
       if (errInsert) throw errInsert;
@@ -270,8 +267,8 @@ export default function GestaoEstoqueProdutos() {
       const { data, error } = await supabase
         .from('movimentos_estoque')
         .select('*')
-        .eq('nome_produto', produto.nome) // FILTRA PELO NOME PARA NÃO FALHAR NOS ANTIGOS
-        .order('created_at', { ascending: false }) // ORDENA POR DATA DE CRIAÇÃO (MAIS SEGURO)
+        .eq('nome_produto', produto.nome) 
+        .order('data_movimento', { ascending: false }) 
         .limit(50);
       
       if (error) throw error;
@@ -352,7 +349,7 @@ export default function GestaoEstoqueProdutos() {
               <h3 className="text-[10px] text-zinc-500 font-bold uppercase mb-2">Movimentos Globais Recentes</h3>
               {historicoGlobal.map(h => {
                 const isEntrada = h.tipo_movimento === 'ENTRADA';
-                const dataRaw = h.data_movimento || h.created_at || new Date().toISOString();
+                const dataRaw = h.data_movimento || new Date().toISOString();
                 const dataFormatada = new Date(dataRaw).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short' });
                 
                 return (
@@ -607,7 +604,7 @@ export default function GestaoEstoqueProdutos() {
                   <tbody className="divide-y divide-zinc-800/40">
                     {historicoProduto.map(h => {
                       const isEntrada = h.tipo_movimento === 'ENTRADA';
-                      const rawDate = h.data_movimento || h.created_at || new Date().toISOString();
+                      const rawDate = h.data_movimento || new Date().toISOString();
                       
                       return (
                         <tr key={h.id} className="hover:bg-zinc-950 transition-all">
