@@ -21,7 +21,7 @@ interface MovimentoKardex {
   saldo_atualizado: number;
   origem: string;
   observacoes: string;
-  data_movimento: string;
+  data_movimento: string | null; // Pode ser nulo nos antigos
 }
 
 export default function GestaoEstoqueProdutos() {
@@ -71,11 +71,12 @@ export default function GestaoEstoqueProdutos() {
       if (errProds) throw errProds;
       setProdutos(prods || []);
 
+      // ORDENA POR ID PARA GARANTIR QUE PUXA OS ANTIGOS QUE NÃO TÊM DATA
       const { data: hist, error: errHist } = await supabase
         .from('movimentos_estoque')
         .select('*')
-        .order('data_movimento', { ascending: false }) 
-        .limit(20); 
+        .order('id', { ascending: false }) 
+        .limit(30); 
       
       if (errHist) throw errHist;
       if (hist) setHistoricoGlobal(hist);
@@ -264,11 +265,12 @@ export default function GestaoEstoqueProdutos() {
     setLoadingHistorico(true);
     setHistoricoProduto([]); 
     try {
+      // ORDENA POR ID PARA RESGATAR REGISTOS ANTIGOS SEM DATA
       const { data, error } = await supabase
         .from('movimentos_estoque')
         .select('*')
         .eq('nome_produto', produto.nome) 
-        .order('data_movimento', { ascending: false }) 
+        .order('id', { ascending: false }) 
         .limit(50);
       
       if (error) throw error;
@@ -349,8 +351,15 @@ export default function GestaoEstoqueProdutos() {
               <h3 className="text-[10px] text-zinc-500 font-bold uppercase mb-2">Movimentos Globais Recentes</h3>
               {historicoGlobal.map(h => {
                 const isEntrada = h.tipo_movimento === 'ENTRADA';
-                const dataRaw = h.data_movimento || new Date().toISOString();
-                const dataFormatada = new Date(dataRaw).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short' });
+                
+                // LÓGICA SEGURA PARA AS DATAS
+                let dataFormatada = 'Antigo';
+                if (h.data_movimento) {
+                  dataFormatada = new Date(h.data_movimento).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short' });
+                } else if (h.observacoes && h.observacoes.includes('Data Registo:')) {
+                  const match = h.observacoes.match(/Data Registo:\s*([\d-]+)/);
+                  if (match) dataFormatada = new Date(match[1]).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short' });
+                }
                 
                 return (
                   <div key={h.id} className="bg-zinc-950 p-3 rounded-xl border border-zinc-800 flex flex-col gap-1 relative overflow-hidden">
@@ -604,12 +613,20 @@ export default function GestaoEstoqueProdutos() {
                   <tbody className="divide-y divide-zinc-800/40">
                     {historicoProduto.map(h => {
                       const isEntrada = h.tipo_movimento === 'ENTRADA';
-                      const rawDate = h.data_movimento || new Date().toISOString();
+                      
+                      // LÓGICA SEGURA PARA AS DATAS DOS PRODUTOS
+                      let dataExibicao = 'Registo Antigo';
+                      if (h.data_movimento) {
+                        dataExibicao = new Date(h.data_movimento).toLocaleString('pt-PT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+                      } else if (h.observacoes && h.observacoes.includes('Data Registo:')) {
+                        const match = h.observacoes.match(/Data Registo:\s*([\d-]+)/);
+                        if (match) dataExibicao = new Date(match[1]).toLocaleDateString('pt-PT');
+                      }
                       
                       return (
                         <tr key={h.id} className="hover:bg-zinc-950 transition-all">
                           <td className="py-3 text-zinc-300">
-                            {new Date(rawDate).toLocaleString('pt-PT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            {dataExibicao}
                           </td>
                           <td className="py-3">
                             <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${isEntrada ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
