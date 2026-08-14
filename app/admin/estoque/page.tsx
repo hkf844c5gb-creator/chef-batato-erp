@@ -14,7 +14,7 @@ interface ProdutoEstoque {
 
 interface MovimentoKardex {
   id: string;
-  produto_id: string; // Adicionado produto_id para garantir a ligação correta
+  produto_id: string; 
   nome_produto: string;
   tipo_movimento: string;
   quantidade: number;
@@ -22,6 +22,7 @@ interface MovimentoKardex {
   origem: string;
   observacoes: string;
   data_movimento: string;
+  created_at?: string;
 }
 
 export default function GestaoEstoqueProdutos() {
@@ -74,8 +75,8 @@ export default function GestaoEstoqueProdutos() {
       const { data: hist, error: errHist } = await supabase
         .from('movimentos_estoque')
         .select('*')
-        .order('data_movimento', { ascending: false })
-        .limit(20); // Aumentei um pouco o limite para ter mais contexto
+        .order('id', { ascending: false })
+        .limit(20); 
       
       if (errHist) throw errHist;
       if (hist) setHistoricoGlobal(hist);
@@ -119,15 +120,18 @@ export default function GestaoEstoqueProdutos() {
       if (error) throw error;
 
       if (Number(formEstoqueAtual) > 0 && novoProduto) {
-        await supabase.from('movimentos_estoque').insert([{
+        const { error: errHist } = await supabase.from('movimentos_estoque').insert([{
           produto_id: novoProduto.id,
           nome_produto: novoProduto.nome,
           tipo_movimento: 'ENTRADA',
           quantidade: Number(formEstoqueAtual),
           saldo_atualizado: Number(formEstoqueAtual),
           origem: 'CRIAÇÃO DE ITEM',
-          observacoes: `Stock inicial (Código: ${codigoGerado})`
+          observacoes: `Stock inicial (Código: ${codigoGerado})`,
+          data_movimento: new Date().toISOString(),
+          created_at: new Date().toISOString()
         }]);
+        if (errHist) console.error("Falha ao gravar histórico inicial:", errHist);
       }
 
       alert("✅ Novo item criado com sucesso!");
@@ -207,15 +211,23 @@ export default function GestaoEstoqueProdutos() {
       
       if (errUpdate) throw errUpdate;
 
-      await supabase.from('movimentos_estoque').insert([{
+      // Junta a hora atual para o formato Timestamp ficar válido
+      const horaAtual = new Date().toISOString().split('T')[1] || '00:00:00.000Z';
+      const dataFinalMovimento = `${dataRepor}T${horaAtual}`;
+
+      const { error: errInsert } = await supabase.from('movimentos_estoque').insert([{
         produto_id: modalRepor.id,
         nome_produto: modalRepor.nome,
         tipo_movimento: 'ENTRADA',
         quantidade: qtdAdicionar,
         saldo_atualizado: novoStock,
         origem: 'COMPRA / REPOSIÇÃO',
-        observacoes: `Registado via painel. Data Registo: ${dataRepor}` // Garante que a dataEscolhida fica registada
+        observacoes: `Registado via painel.`,
+        data_movimento: dataFinalMovimento,
+        created_at: new Date().toISOString()
       }]);
+
+      if (errInsert) throw errInsert;
 
       alert(`✅ ${qtdAdicionar} unidades de ${modalRepor.nome} adicionadas com sucesso!`);
       setModalRepor(null);
@@ -254,13 +266,13 @@ export default function GestaoEstoqueProdutos() {
   const verHistoricoProduto = async (produto: ProdutoEstoque) => {
     setModalHistorico(produto);
     setLoadingHistorico(true);
-    setHistoricoProduto([]); // Limpa antes de carregar o novo
+    setHistoricoProduto([]); 
     try {
       const { data, error } = await supabase
         .from('movimentos_estoque')
         .select('*')
-        .eq('produto_id', produto.id) // Assegura que filtra corretamente pelo ID
-        .order('data_movimento', { ascending: false })
+        .eq('produto_id', produto.id) 
+        .order('id', { ascending: false }) // Força ordenação por ID garantindo que nunca falha
         .limit(50);
       
       if (error) throw error;
@@ -341,8 +353,9 @@ export default function GestaoEstoqueProdutos() {
               <h3 className="text-[10px] text-zinc-500 font-bold uppercase mb-2">Movimentos Globais Recentes</h3>
               {historicoGlobal.map(h => {
                 const isEntrada = h.tipo_movimento === 'ENTRADA';
-                // Formata a data para visualização
-                const dataFormatada = new Date(h.data_movimento).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short' });
+                const dataRaw = h.data_movimento || h.created_at || new Date().toISOString();
+                const dataFormatada = new Date(dataRaw).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short' });
+                
                 return (
                   <div key={h.id} className="bg-zinc-950 p-3 rounded-xl border border-zinc-800 flex flex-col gap-1 relative overflow-hidden">
                     <div className={`absolute left-0 top-0 bottom-0 w-1 ${isEntrada ? 'bg-green-500' : 'bg-red-500'}`}></div>
@@ -595,10 +608,12 @@ export default function GestaoEstoqueProdutos() {
                   <tbody className="divide-y divide-zinc-800/40">
                     {historicoProduto.map(h => {
                       const isEntrada = h.tipo_movimento === 'ENTRADA';
+                      const rawDate = h.data_movimento || h.created_at || new Date().toISOString();
+                      
                       return (
                         <tr key={h.id} className="hover:bg-zinc-950 transition-all">
                           <td className="py-3 text-zinc-300">
-                            {new Date(h.data_movimento).toLocaleString('pt-PT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            {new Date(rawDate).toLocaleString('pt-PT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                           </td>
                           <td className="py-3">
                             <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${isEntrada ? 'bg-green-500/10 text-green-400' : 'bg-red-500/10 text-red-400'}`}>
