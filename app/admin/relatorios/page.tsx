@@ -59,6 +59,7 @@ export default function CentralRelatorios() {
   // ESTADOS - DADOS BRUTOS
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [caixaBruta, setCaixaBruta] = useState<MovimentoCaixa[]>([]);
+  const [produtosCatalogo, setProdutosCatalogo] = useState<any[]>([]);
 
   // ESTADOS - UI E FILTROS globais
   const [loading, setLoading] = useState(true);
@@ -138,6 +139,10 @@ export default function CentralRelatorios() {
       const { data: itensData, error: errItens } = await supabase.from('itens_pedido').select('*');
       if (errItens) throw new Error(`Falha na tabela 'itens_pedido': ${errItens.message}`);
 
+      const { data: prodData, error: errProd } = await supabase.from('produtos').select('nome, custo_unitario');
+      if (errProd) throw new Error(`Falha na tabela 'produtos': ${errProd.message}`);
+      setProdutosCatalogo(prodData || []);
+
       const pedidosMapeados = (pedidosData || []).map((p: any) => ({
         ...p,
         itens_pedido: (itensData || []).filter((i: any) => i.pedido_id === p.id)
@@ -187,8 +192,15 @@ export default function CentralRelatorios() {
 
   // --- MOTOR MATEMÁTICO: DESCONSTRUÇÃO E AGRUPAMENTO DE PRODUTOS ---
   const topProdutosVendas = useMemo(() => {
-    const mapa: Record<string, { nome: string; quantidade: number; faturacao: number; categoria: string }> = {};
+    const mapa: Record<string, { nome: string; quantidade: number; faturacao: number; custoTotal: number; custoUnitario: number; categoria: string }> = {};
     
+    // Mapear custos do catálogo
+    const mapaCustos: Record<string, number> = {};
+    produtosCatalogo.forEach(prod => {
+      const nomeLower = (prod.nome || '').toLowerCase().trim();
+      mapaCustos[nomeLower] = Number(prod.custo_unitario || 0);
+    });
+
     // Função Inteligente para Auto-Categorizar o Item
     const determinarCategoria = (nomeItem: string) => {
       const n = nomeItem.toLowerCase();
@@ -205,17 +217,29 @@ export default function CentralRelatorios() {
       
       const chave = cleanName.toLowerCase().trim();
       
+      // Encontrar Custo
+      let custoUnitario = 0;
+      if (mapaCustos[chave]) {
+        custoUnitario = mapaCustos[chave];
+      } else {
+        const matchKey = Object.keys(mapaCustos).find(k => chave.includes(k) || k.includes(chave));
+        if (matchKey) custoUnitario = mapaCustos[matchKey];
+      }
+
       if (!mapa[chave]) {
         const nomeBonito = cleanName.charAt(0).toUpperCase() + cleanName.slice(1);
         mapa[chave] = { 
           nome: nomeBonito, 
           quantidade: 0, 
           faturacao: 0,
+          custoTotal: 0,
+          custoUnitario: custoUnitario,
           categoria: determinarCategoria(cleanName) 
         };
       }
       mapa[chave].quantidade += quantidade;
       mapa[chave].faturacao += faturacaoAdicional;
+      mapa[chave].custoTotal += (quantidade * custoUnitario);
     };
 
     pedidosFiltrados.forEach(p => {
@@ -296,7 +320,7 @@ export default function CentralRelatorios() {
     });
 
     return Object.values(mapa).sort((a, b) => b.quantidade - a.quantidade);
-  }, [pedidosFiltrados]);
+  }, [pedidosFiltrados, produtosCatalogo]);
 
   // APLICA O FILTRO DA UI NA LISTA DE PRODUTOS
   const produtosVendidosFiltrados = useMemo(() => {
@@ -304,15 +328,22 @@ export default function CentralRelatorios() {
     return topProdutosVendas.filter(p => p.categoria === filtroCategoriaProduto);
   }, [topProdutosVendas, filtroCategoriaProduto]);
 
-  // --- TOTAIS RIGOROSOS DA FATURAÇÃO ---
+  // CÁLCULO DOS TOTAIS ESPECÍFICOS DA CATEGORIA FILTRADA
+  const totaisFiltrados = useMemo(() => {
+    return produtosVendidosFiltrados.reduce((acc, item) => {
+      acc.quantidade += item.quantidade;
+      acc.faturacao += item.faturacao;
+      acc.custo += item.custoTotal;
+      return acc;
+    }, { quantidade: 0, faturacao: 0, custo: 0 });
+  }, [produtosVendidosFiltrados]);
+
+  // --- TOTAIS RIGOROSOS DA FATURAÇÃO GERAL ---
   const totalFaturadoBruto = pedidosFiltrados.reduce((acc, p) => acc + Number(p.total_geral || 0), 0);
   const totalRecebido = pedidosFiltrados.filter(p => p.pago).reduce((acc, p) => acc + Number(p.total_geral || 0), 0);
   const totalPendente = pedidosFiltrados.filter(p => !p.pago).reduce((acc, p) => acc + Number(p.total_geral || 0), 0);
   const totalTaxasEntrega = pedidosFiltrados.reduce((acc, p) => acc + Number(p.taxa_entrega || 0), 0);
-  
-  const totalItensVendidos = useMemo(() => {
-    return produtosVendidosFiltrados.reduce((acc, p) => acc + p.quantidade, 0);
-  }, [produtosVendidosFiltrados]);
+  const totalItensVendidosGeral = topProdutosVendas.reduce((acc, p) => acc + p.quantidade, 0);
 
   // --- PROCESSAMENTO: CAIXA ---
   useEffect(() => {
@@ -401,7 +432,7 @@ export default function CentralRelatorios() {
 
   return (
     <>
-      {/* ESTILOS DE IMPRESSÃO (PDF) - AQUI ESTÁ A CORREÇÃO DE dangerouslySetInnerHTML */}
+      {/* ESTILOS DE IMPRESSÃO (PDF) */}
       <style dangerouslySetInnerHTML={{__html: `
         @media print {
           body, html { background-color: white !important; color: black !important; }
@@ -518,8 +549,8 @@ export default function CentralRelatorios() {
                   <span className="text-3xl font-black text-white font-mono mt-2 print:text-black">{pedidosFiltrados.length}</span>
                 </div>
                 <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between print:bg-white print:border-gray-300 print:shadow-none print:rounded-lg">
-                  <span className="text-[10px] font-bold text-purple-400 uppercase tracking-widest print:text-gray-500">Itens Vendidos</span>
-                  <span className="text-3xl font-black text-white font-mono mt-2 print:text-black">{totalItensVendidos}</span>
+                  <span className="text-[10px] font-bold text-purple-400 uppercase tracking-widest print:text-gray-500">Itens Totais (Mês)</span>
+                  <span className="text-3xl font-black text-white font-mono mt-2 print:text-black">{totalItensVendidosGeral}</span>
                 </div>
                 <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between print:bg-white print:border-gray-300 print:shadow-none print:rounded-lg">
                   <span className="text-[10px] font-bold text-amber-400 uppercase tracking-widest print:text-gray-500">Fatur. Bruto</span>
@@ -621,48 +652,72 @@ export default function CentralRelatorios() {
                     <div className="flex flex-col gap-4 mb-6">
                       <div className="flex justify-between items-center">
                         <h3 className="text-lg font-black uppercase tracking-wider text-orange-500 print:text-black">🔥 Itens Produzidos / Vendidos</h3>
-                        <span className="bg-orange-500/20 text-orange-400 py-1.5 px-4 rounded-xl text-sm font-black print:bg-gray-200 print:text-black print:border print:border-black">
-                          Total: {totalItensVendidos} itens
-                        </span>
                       </div>
                       
-                      <div className="flex items-center justify-between gap-4 print:hidden">
-                        <p className="text-[10px] text-zinc-500 leading-tight flex-1">Combos desconstruídos em itens reais.</p>
-                        <select 
-                          value={filtroCategoriaProduto} 
-                          onChange={e => setFiltroCategoriaProduto(e.target.value)} 
-                          className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2 text-xs font-bold text-zinc-200 outline-none focus:border-orange-500"
-                        >
-                          <option value="todas">Todas as Categorias</option>
-                          <option value="batata">🥔 Batatas / Recheios</option>
-                          <option value="sobremesa">🍫 Sobremesas</option>
-                          <option value="bebida">🥤 Bebidas</option>
-                          <option value="outros">📦 Outros</option>
-                        </select>
+                      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 print:hidden bg-zinc-950 p-4 rounded-2xl border border-zinc-800">
+                        <div className="flex flex-col gap-2 w-full md:w-auto">
+                          <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Filtrar Categoria:</span>
+                          <select 
+                            value={filtroCategoriaProduto} 
+                            onChange={e => setFiltroCategoriaProduto(e.target.value)} 
+                            className="bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold text-zinc-200 outline-none focus:border-orange-500 w-full"
+                          >
+                            <option value="todas">Todas as Categorias</option>
+                            <option value="batata">🥔 Batatas / Recheios</option>
+                            <option value="sobremesa">🍫 Sobremesas</option>
+                            <option value="bebida">🥤 Bebidas</option>
+                            <option value="outros">📦 Outros</option>
+                          </select>
+                        </div>
+                        
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="bg-zinc-900 border border-zinc-800 px-3 py-1.5 rounded-lg flex flex-col items-center min-w-[70px]">
+                            <span className="text-[8px] text-zinc-500 uppercase tracking-widest">Qtd Total</span>
+                            <span className="font-mono font-black text-white text-sm">{totaisFiltrados.quantidade}</span>
+                          </div>
+                          <div className="bg-red-950/30 border border-red-900/50 px-3 py-1.5 rounded-lg flex flex-col items-center min-w-[80px]">
+                            <span className="text-[8px] text-red-500/70 uppercase tracking-widest">Custo Total</span>
+                            <span className="font-mono font-black text-red-400 text-sm">{totaisFiltrados.custo.toFixed(2)}€</span>
+                          </div>
+                          <div className="bg-green-950/30 border border-green-900/50 px-3 py-1.5 rounded-lg flex flex-col items-center min-w-[80px]">
+                            <span className="text-[8px] text-green-500/70 uppercase tracking-widest">Faturado</span>
+                            <span className="font-mono font-black text-green-400 text-sm">{totaisFiltrados.faturacao.toFixed(2)}€</span>
+                          </div>
+                        </div>
                       </div>
+
                       <div className="hidden print:block text-sm font-bold text-black border-b border-black pb-2">
-                        Categoria Filtrada: {filtroCategoriaProduto.toUpperCase()}
+                        <div className="flex justify-between items-end">
+                          <span>Categoria Filtrada: {filtroCategoriaProduto.toUpperCase()}</span>
+                          <span className="font-mono text-xs">
+                            Qtd: {totaisFiltrados.quantidade} | Custo: {totaisFiltrados.custo.toFixed(2)}€ | Faturado: {totaisFiltrados.faturacao.toFixed(2)}€
+                          </span>
+                        </div>
                       </div>
                     </div>
                     
                     {produtosVendidosFiltrados.length === 0 ? <p className="text-xs text-zinc-500 italic print:text-black">Sem vendas para esta categoria no período.</p> : (
                       <div className="space-y-3 overflow-y-auto custom-scrollbar pr-2 flex-1 pb-4 print:overflow-visible print:pr-0">
                         {produtosVendidosFiltrados.map((prod, idx) => (
-                          <div key={idx} className="flex justify-between items-center bg-zinc-950 p-3 rounded-2xl border border-zinc-800/80 hover:border-orange-500/30 transition-colors print:bg-white print:border-b print:border-gray-300 print:rounded-none print:p-2">
-                            <div className="flex items-center gap-3">
-                              <div className="flex flex-col items-center">
-                                <span className="font-bold text-sm text-white leading-tight capitalize print:text-black">{prod.nome}</span>
-                                <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest self-start print:text-gray-500">{prod.categoria}</span>
-                              </div>
+                          <div key={idx} className="flex flex-col sm:flex-row sm:justify-between sm:items-center bg-zinc-950 p-4 rounded-2xl border border-zinc-800/80 hover:border-orange-500/30 transition-colors print:bg-white print:border-b print:border-gray-300 print:rounded-none print:p-2 gap-2">
+                            <div className="flex flex-col gap-1 w-full sm:w-1/2">
+                              <span className="font-bold text-sm text-white leading-tight capitalize print:text-black">{prod.nome}</span>
+                              <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-widest self-start print:text-gray-500">{prod.categoria}</span>
                             </div>
-                            <div className="flex items-center gap-4">
-                              <div className="text-right flex flex-col">
-                                <span className="text-[10px] text-zinc-500 font-mono uppercase print:text-gray-600">Qtd</span>
-                                <span className="font-black text-lg text-white print:text-black">{prod.quantidade}</span>
+                            
+                            <div className="flex justify-between sm:justify-end gap-6 w-full sm:w-1/2 border-t border-zinc-800/50 pt-2 sm:pt-0 sm:border-0">
+                              <div className="text-left sm:text-right flex flex-col justify-center">
+                                <span className="text-[9px] text-zinc-500 font-mono uppercase print:text-gray-600">Custo Total</span>
+                                <span className="font-mono font-bold text-red-400 text-sm print:text-red-600">{prod.custoTotal.toFixed(2)}€</span>
+                                <span className="text-[8px] text-zinc-600 font-mono print:text-gray-400">({prod.custoUnitario.toFixed(2)}€/un)</span>
                               </div>
-                              <div className="text-right flex flex-col print:hidden">
-                                <span className="text-[10px] text-zinc-500 font-mono uppercase">Fatur.</span>
-                                <span className="font-mono font-black text-orange-400 text-sm ml-2">{prod.faturacao.toFixed(2)}€</span>
+                              <div className="text-center sm:text-right flex flex-col justify-center">
+                                <span className="text-[9px] text-zinc-500 font-mono uppercase print:text-gray-600">Faturado</span>
+                                <span className="font-mono font-bold text-green-400 text-sm print:text-green-600">{prod.faturacao.toFixed(2)}€</span>
+                              </div>
+                              <div className="text-right flex flex-col justify-center min-w-[2rem]">
+                                <span className="text-[9px] text-zinc-500 font-mono uppercase print:text-gray-600">Qtd</span>
+                                <span className="font-black text-lg text-white print:text-black">{prod.quantidade}</span>
                               </div>
                             </div>
                           </div>
