@@ -38,6 +38,8 @@ export default function GestaoCaixa() {
   
   const [processando, setProcessando] = useState(false);
 
+  const obterDataEfetiva = (p: any) => p.data_pedido || p.criado_em || new Date().toISOString();
+
   async function carregarCaixa() {
     setLoading(true);
     try {
@@ -81,18 +83,19 @@ export default function GestaoCaixa() {
         }
       }
 
-      const dataInicio = new Date(`${dataFiltro}T00:00:00`).toISOString();
-      const dataFim = new Date(`${dataFiltro}T23:59:59`).toISOString();
-
-      const { data: pedidosData, error: pedidosError } = await supabase
+      // NOVO MOTOR DE PESQUISA: Puxa todos e filtra localmente pela data exata (ignora Fuso Horário)
+      const { data: todosPedidos, error: pedidosError } = await supabase
         .from('pedidos')
-        .select('id, numero_pedido, total_geral, criado_em, forma_pagamento, canal')
-        .gte('criado_em', dataInicio)
-        .lte('criado_em', dataFim)
-        .eq('pago', true)
-        .in('forma_pagamento', ['Dinheiro', 'Dinheiro Glovo']); 
+        .select('id, numero_pedido, total_geral, criado_em, data_pedido, forma_pagamento, canal, pago');
 
       if (pedidosError) throw pedidosError;
+
+      const pedidosValidos = (todosPedidos || []).filter(p => {
+        const dataPedidoStr = obterDataEfetiva(p).substring(0, 10);
+        return dataPedidoStr === dataFiltro && 
+               p.pago === true && 
+               (p.forma_pagamento === 'Dinheiro' || p.forma_pagamento === 'Dinheiro Glovo');
+      });
 
       // Movimentos da tabela CAIXA (Manuais + Abertura Automática)
       const movimentosManuais: MovimentoCaixa[] = (caixaData || []).map(m => ({
@@ -106,10 +109,10 @@ export default function GestaoCaixa() {
         isFromPDV: false // Permite editar/excluir!
       }));
 
-      // Movimentos da tabela PEDIDOS (Apenas Vendas)
-      const movimentosPDV: MovimentoCaixa[] = (pedidosData || []).map(p => ({
+      // Movimentos da tabela PEDIDOS (Apenas Vendas Dinheiro)
+      const movimentosPDV: MovimentoCaixa[] = pedidosValidos.map(p => ({
         id: p.id,
-        created_at: p.criado_em,
+        created_at: obterDataEfetiva(p),
         data_dia: dataFiltro,
         tipo: 'Entrada', 
         descricao: `Venda PDV #${p.numero_pedido || 'S/N'} (${p.canal}) - ${p.forma_pagamento}`,
