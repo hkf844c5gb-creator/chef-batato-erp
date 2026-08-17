@@ -59,6 +59,7 @@ export default function CentralRelatorios() {
   // ESTADOS - DADOS BRUTOS
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [caixaBruta, setCaixaBruta] = useState<MovimentoCaixa[]>([]);
+  const [produtosCatalogo, setProdutosCatalogo] = useState<any[]>([]);
 
   // ESTADOS - UI E FILTROS globais
   const [loading, setLoading] = useState(true);
@@ -138,6 +139,10 @@ export default function CentralRelatorios() {
       const { data: itensData, error: errItens } = await supabase.from('itens_pedido').select('*');
       if (errItens) throw new Error(`Falha na tabela 'itens_pedido': ${errItens.message}`);
 
+      const { data: prodData, error: errProd } = await supabase.from('produtos').select('nome, custo_unitario');
+      if (errProd) throw new Error(`Falha na tabela 'produtos': ${errProd.message}`);
+      setProdutosCatalogo(prodData || []);
+
       const pedidosMapeados = (pedidosData || []).map((p: any) => ({
         ...p,
         itens_pedido: (itensData || []).filter((i: any) => i.pedido_id === p.id)
@@ -187,8 +192,15 @@ export default function CentralRelatorios() {
 
   // --- MOTOR MATEMÁTICO: DESCONSTRUÇÃO E AGRUPAMENTO DE PRODUTOS ---
   const topProdutosVendas = useMemo(() => {
-    const mapa: Record<string, { nome: string; quantidade: number; faturacao: number; categoria: string }> = {};
+    const mapa: Record<string, { nome: string; quantidade: number; faturacao: number; custoTotal: number; custoUnitario: number; categoria: string }> = {};
     
+    // Mapear custos do catálogo
+    const mapaCustos: Record<string, number> = {};
+    produtosCatalogo.forEach(prod => {
+      const nomeLower = (prod.nome || '').toLowerCase().trim();
+      mapaCustos[nomeLower] = Number(prod.custo_unitario || 0);
+    });
+
     // Função Inteligente para Auto-Categorizar o Item
     const determinarCategoria = (nomeItem: string) => {
       const n = nomeItem.toLowerCase();
@@ -205,17 +217,29 @@ export default function CentralRelatorios() {
       
       const chave = cleanName.toLowerCase().trim();
       
+      // Encontrar Custo
+      let custoUnitario = 0;
+      if (mapaCustos[chave]) {
+        custoUnitario = mapaCustos[chave];
+      } else {
+        const matchKey = Object.keys(mapaCustos).find(k => chave.includes(k) || k.includes(chave));
+        if (matchKey) custoUnitario = mapaCustos[matchKey];
+      }
+
       if (!mapa[chave]) {
         const nomeBonito = cleanName.charAt(0).toUpperCase() + cleanName.slice(1);
         mapa[chave] = { 
           nome: nomeBonito, 
           quantidade: 0, 
           faturacao: 0,
+          custoTotal: 0,
+          custoUnitario: custoUnitario,
           categoria: determinarCategoria(cleanName) 
         };
       }
       mapa[chave].quantidade += quantidade;
       mapa[chave].faturacao += faturacaoAdicional;
+      mapa[chave].custoTotal += (quantidade * custoUnitario);
     };
 
     pedidosFiltrados.forEach(p => {
@@ -296,13 +320,23 @@ export default function CentralRelatorios() {
     });
 
     return Object.values(mapa).sort((a, b) => b.quantidade - a.quantidade);
-  }, [pedidosFiltrados]);
+  }, [pedidosFiltrados, produtosCatalogo]);
 
-  // APLICA O FILTRO DA UI NA LISTA DE PRODUTOS (Para a lista detalhada)
+  // APLICA O FILTRO DA UI NA LISTA DE PRODUTOS
   const produtosVendidosFiltrados = useMemo(() => {
     if (filtroCategoriaProduto === 'todas') return topProdutosVendas;
     return topProdutosVendas.filter(p => p.categoria === filtroCategoriaProduto);
   }, [topProdutosVendas, filtroCategoriaProduto]);
+
+  // CÁLCULO DOS TOTAIS ESPECÍFICOS DA CATEGORIA FILTRADA
+  const totaisFiltrados = useMemo(() => {
+    return produtosVendidosFiltrados.reduce((acc, item) => {
+      acc.quantidade += item.quantidade;
+      acc.faturacao += item.faturacao;
+      acc.custo += item.custoTotal;
+      return acc;
+    }, { quantidade: 0, faturacao: 0, custo: 0 });
+  }, [produtosVendidosFiltrados]);
 
   // --- TOTAIS RIGOROSOS DA FATURAÇÃO GERAL ---
   const totalFaturadoBruto = pedidosFiltrados.reduce((acc, p) => acc + Number(p.total_geral || 0), 0);
@@ -310,8 +344,7 @@ export default function CentralRelatorios() {
   const totalPendente = pedidosFiltrados.filter(p => !p.pago).reduce((acc, p) => acc + Number(p.total_geral || 0), 0);
   const totalTaxasEntrega = pedidosFiltrados.reduce((acc, p) => acc + Number(p.taxa_entrega || 0), 0);
   
-  // TOTAIS DE ITENS VENDIDOS: Este valor usa a lista GERAL SEM FILTRO DE CATEGORIA, 
-  // garantindo que os cards do topo não são afetados pelo filtro das categorias lá em baixo.
+  // O TOTAL DE ITENS (Sem filtros)
   const totalItensVendidosGeral = useMemo(() => {
     return topProdutosVendas.reduce((acc, p) => acc + p.quantidade, 0);
   }, [topProdutosVendas]);
@@ -524,7 +557,7 @@ export default function CentralRelatorios() {
                   <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest print:text-gray-500">Nº Pedidos</span>
                   <span className="text-3xl font-black text-white font-mono mt-2 print:text-black">{pedidosFiltrados.length}</span>
                 </div>
-                {/* O Título agora muda consoante o período escolhido (Dia, Mês, Ano, Período) */}
+                {/* O Título agora muda consoante o período escolhido */}
                 <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between print:bg-white print:border-gray-300 print:shadow-none print:rounded-lg">
                   <span className="text-[10px] font-bold text-purple-400 uppercase tracking-widest print:text-gray-500">Itens Totais {labelPeriodo}</span>
                   <span className="text-3xl font-black text-white font-mono mt-2 print:text-black">{totalItensVendidosGeral}</span>
@@ -624,55 +657,92 @@ export default function CentralRelatorios() {
 
                 {/* LADO DIREITO: LISTA COMPLETA DE PRODUTOS VENDIDOS DESCONSTRUÍDOS (Visível no PDF) */}
                 <div className="space-y-6 print:col-span-full">
-                  <div className="bg-zinc-900 border border-zinc-800 rounded-[32px] p-6 shadow-xl flex flex-col h-[600px] print:bg-white print:border-none print:shadow-none print:p-0 print:h-auto print:overflow-visible">
+                  <div className="bg-[#111113] border border-zinc-800 rounded-[32px] p-6 shadow-xl flex flex-col h-[700px] print:bg-white print:border-none print:shadow-none print:p-0 print:h-auto print:overflow-visible">
                     
-                    <div className="flex flex-col gap-4 mb-6">
-                      <div className="flex justify-between items-center">
-                        <h3 className="text-lg font-black uppercase tracking-wider text-orange-500 print:text-black">🔥 Itens Produzidos / Vendidos</h3>
-                      </div>
-                      
-                      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4 print:hidden bg-zinc-950 p-4 rounded-2xl border border-zinc-800">
-                        <div className="flex flex-col gap-2 w-full md:w-auto">
-                          <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest">Filtrar Categoria:</span>
-                          <select 
-                            value={filtroCategoriaProduto} 
-                            onChange={e => setFiltroCategoriaProduto(e.target.value)} 
-                            className="bg-zinc-900 border border-zinc-800 rounded-xl px-3 py-2 text-xs font-bold text-zinc-200 outline-none focus:border-orange-500 w-full"
-                          >
-                            <option value="todas">Todas as Categorias</option>
-                            <option value="batata">🥔 Batatas / Recheios</option>
-                            <option value="sobremesa">🍫 Sobremesas</option>
-                            <option value="bebida">🥤 Bebidas</option>
-                            <option value="outros">📦 Outros</option>
-                          </select>
-                        </div>
+                    {/* CABEÇALHO DO PAINEL DE PRODUTOS */}
+                    <div className="flex items-center gap-2 mb-6">
+                      <span className="text-xl">🔥</span>
+                      <h3 className="text-lg font-black uppercase tracking-wider text-orange-500 print:text-black">
+                        Itens Produzidos / Vendidos
+                      </h3>
+                    </div>
+                    
+                    {/* BARRA DE FILTRO E TOTAIS (ESTILO DASHBOARD DA IMAGEM) */}
+                    <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 mb-4 flex flex-col gap-4 print:hidden">
+                      <div>
+                        <label className="block text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-2">Filtrar Categoria:</label>
+                        <select 
+                          value={filtroCategoriaProduto} 
+                          onChange={e => setFiltroCategoriaProduto(e.target.value)} 
+                          className="bg-zinc-900 border border-zinc-800 rounded-xl px-4 py-2 text-sm font-bold text-white outline-none focus:border-orange-500 w-full sm:w-auto min-w-[200px]"
+                        >
+                          <option value="todas">Todas as Categorias</option>
+                          <option value="batata">🥔 Batatas / Recheios</option>
+                          <option value="sobremesa">🍫 Sobremesas</option>
+                          <option value="bebida">🥤 Bebidas</option>
+                          <option value="combo">🎁 Combos (Capas)</option>
+                          <option value="outros">📦 Outros</option>
+                        </select>
                       </div>
 
-                      <div className="hidden print:block text-sm font-bold text-black border-b border-black pb-2">
-                        <div className="flex justify-between items-end">
-                          <span>Categoria Filtrada: {filtroCategoriaProduto.toUpperCase()}</span>
+                      {/* TOTAIS DO FILTRO SELECIONADO */}
+                      <div className="flex gap-2 overflow-x-auto custom-scrollbar">
+                        <div className="flex-1 bg-[#1a1a1c] p-3 rounded-xl border border-zinc-800/80 min-w-[100px]">
+                          <span className="block text-[9px] text-zinc-500 uppercase font-bold tracking-widest mb-1">QTD Total</span>
+                          <span className="text-xl font-black text-white">{totaisFiltrados.quantidade}</span>
+                        </div>
+                        <div className="flex-1 bg-green-950/20 p-3 rounded-xl border border-green-900/30 min-w-[120px]">
+                          <span className="block text-[9px] text-green-500/70 uppercase font-bold tracking-widest mb-1">Faturado</span>
+                          <span className="text-xl font-black font-mono text-green-400">{totaisFiltrados.faturacao.toFixed(2)}€</span>
+                        </div>
+                        <div className="flex-1 bg-red-950/20 p-3 rounded-xl border border-red-900/30 min-w-[120px]">
+                          <span className="block text-[9px] text-red-500/70 uppercase font-bold tracking-widest mb-1">Custo Total</span>
+                          <span className="text-xl font-black font-mono text-red-400">{totaisFiltrados.custo.toFixed(2)}€</span>
                         </div>
                       </div>
                     </div>
+
+                    {/* CABEÇALHO PARA O PDF (Oculto no ecrã) */}
+                    <div className="hidden print:block text-sm font-bold text-black border-b border-black pb-2 mb-4">
+                      <div className="flex justify-between items-end">
+                        <span>Categoria Filtrada: {filtroCategoriaProduto.toUpperCase()}</span>
+                        <span className="font-mono text-xs">
+                          Qtd: {totaisFiltrados.quantidade} | Custo: {totaisFiltrados.custo.toFixed(2)}€ | Faturado: {totaisFiltrados.faturacao.toFixed(2)}€
+                        </span>
+                      </div>
+                    </div>
                     
-                    {produtosVendidosFiltrados.length === 0 ? <p className="text-xs text-zinc-500 italic print:text-black">Sem vendas para esta categoria no período.</p> : (
+                    {produtosVendidosFiltrados.length === 0 ? (
+                      <p className="text-xs text-zinc-500 italic print:text-black">Sem vendas para esta categoria no período.</p>
+                    ) : (
                       <div className="space-y-3 overflow-y-auto custom-scrollbar pr-2 flex-1 pb-4 print:overflow-visible print:pr-0">
                         {produtosVendidosFiltrados.map((prod, idx) => (
-                          <div key={idx} className="flex flex-col sm:flex-row sm:justify-between sm:items-center bg-zinc-950 p-4 rounded-2xl border border-zinc-800/80 hover:border-orange-500/30 transition-colors print:bg-white print:border-b print:border-gray-300 print:rounded-none print:p-2 gap-2">
-                            <div className="flex flex-col gap-1 w-full sm:w-1/2">
+                          <div key={idx} className="flex flex-col sm:flex-row sm:items-center justify-between bg-zinc-950 p-4 rounded-2xl border border-zinc-800 hover:border-zinc-700 transition-colors gap-3 print:bg-white print:border-b print:border-gray-300 print:rounded-none print:p-2">
+                            
+                            <div className="flex flex-col flex-1">
                               <span className="font-bold text-sm text-white leading-tight capitalize print:text-black">{prod.nome}</span>
-                              <span className="text-[9px] text-zinc-500 font-bold uppercase tracking-widest self-start print:text-gray-500">{prod.categoria}</span>
+                              <span className="text-[10px] text-zinc-500 font-bold uppercase tracking-widest mt-0.5 print:text-gray-500">{prod.categoria}</span>
                             </div>
                             
-                            <div className="flex justify-between sm:justify-end gap-6 w-full sm:w-1/2 border-t border-zinc-800/50 pt-2 sm:pt-0 sm:border-0">
-                              <div className="text-center sm:text-right flex flex-col justify-center print:hidden">
-                                <span className="text-[9px] text-zinc-500 font-mono uppercase print:text-gray-600">Faturado</span>
-                                <span className="font-mono font-bold text-green-400 text-sm print:text-green-600">{prod.faturacao.toFixed(2)}€</span>
+                            <div className="flex items-center gap-4 sm:gap-6 justify-between sm:justify-end border-t border-zinc-800/50 pt-3 sm:pt-0 sm:border-0 print:border-0 print:pt-0">
+                              
+                              <div className="text-left flex flex-col justify-center">
+                                <span className="text-[9px] text-zinc-500 uppercase tracking-widest print:text-gray-600">Custo Un./Tot.</span>
+                                <span className="font-mono font-bold text-red-400 text-sm print:text-red-600">
+                                  {prod.custoUnitario.toFixed(2)}€ <span className="text-zinc-600 font-normal print:text-gray-400">/ {prod.custoTotal.toFixed(2)}€</span>
+                                </span>
                               </div>
-                              <div className="text-right flex flex-col justify-center min-w-[2rem]">
-                                <span className="text-[9px] text-zinc-500 font-mono uppercase print:text-gray-600">Qtd</span>
+                              
+                              <div className="text-right flex flex-col justify-center print:hidden">
+                                <span className="text-[9px] text-zinc-500 uppercase tracking-widest">Faturado</span>
+                                <span className="font-mono font-bold text-green-400 text-sm">{prod.faturacao.toFixed(2)}€</span>
+                              </div>
+                              
+                              <div className="text-center flex flex-col justify-center min-w-[2.5rem]">
+                                <span className="text-[9px] text-zinc-500 uppercase tracking-widest print:text-gray-600">Qtd</span>
                                 <span className="font-black text-lg text-white print:text-black">{prod.quantidade}</span>
                               </div>
+                              
                             </div>
                           </div>
                         ))}
