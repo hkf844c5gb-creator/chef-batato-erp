@@ -85,7 +85,7 @@ export default function CentralRelatorios() {
   const [ordenacao, setOrdenacao] = useState<'recente' | 'antigo' | 'az' | 'za'>('za');
   const [pedidoExpandidoId, setPedidoExpandidoId] = useState<string | null>(null);
   
-  // NOVO: Filtro Específico para Categorias de Produtos
+  // Filtro Específico para Categorias de Produtos
   const [filtroCategoriaProduto, setFiltroCategoriaProduto] = useState<string>('todas');
 
   const [modalEdicaoAberto, setModalEdicaoAberto] = useState(false);
@@ -201,7 +201,6 @@ export default function CentralRelatorios() {
       mapaCustos[nomeLower] = Number(prod.custo_unitario || 0);
     });
 
-    // Função Inteligente para Auto-Categorizar o Item
     const determinarCategoria = (nomeItem: string) => {
       const n = nomeItem.toLowerCase();
       if (n.includes('brownie') || n.includes('mousse') || n.includes('pudim') || n.includes('sobremesa') || n.includes('sensação') || n.includes('fudge') || n.includes('brigadeiro')) return 'sobremesa';
@@ -217,7 +216,6 @@ export default function CentralRelatorios() {
       
       const chave = cleanName.toLowerCase().trim();
       
-      // Encontrar Custo
       let custoUnitario = 0;
       if (mapaCustos[chave]) {
         custoUnitario = mapaCustos[chave];
@@ -344,7 +342,6 @@ export default function CentralRelatorios() {
   const totalPendente = pedidosFiltrados.filter(p => !p.pago).reduce((acc, p) => acc + Number(p.total_geral || 0), 0);
   const totalTaxasEntrega = pedidosFiltrados.reduce((acc, p) => acc + Number(p.taxa_entrega || 0), 0);
   
-  // O TOTAL DE ITENS (Sem filtros)
   const totalItensVendidosGeral = useMemo(() => {
     return topProdutosVendas.reduce((acc, p) => acc + p.quantidade, 0);
   }, [topProdutosVendas]);
@@ -429,19 +426,68 @@ export default function CentralRelatorios() {
     } catch (err: any) { alert(`Erro: ${err.message}`); }
   };
 
-  // Função Mágica de Impressão
+  // Exportação Inteligente NATIVA para Excel (Via CSV Ponto e Vírgula - Sem erros no código)
+  const exportarExcelCSV = () => {
+    let csv = '\uFEFF'; // BOM tag garante leitura perfeita de acentos e cê-cedilhas no Excel
+    const fmtEuros = (valor: number) => valor.toFixed(2).replace('.', ','); // Troca para formato Europeu
+
+    // 1. Resumo
+    csv += "=== RESUMO GERAL ===\n";
+    csv += "Métrica;Valor\n";
+    csv += `Nº Pedidos;${pedidosFiltrados.length}\n`;
+    csv += `Itens Totais ${labelPeriodo};${totalItensVendidosGeral}\n`;
+    csv += `Faturado Bruto (€);${fmtEuros(totalFaturadoBruto)}\n`;
+    csv += `Caixa Realizado (€);${fmtEuros(totalRecebido)}\n`;
+    csv += `Fiado Pendente (€);${fmtEuros(totalPendente)}\n`;
+    csv += `Custos Entrega (€);${fmtEuros(totalTaxasEntrega)}\n\n`;
+
+    // 2. Produtos
+    csv += `=== PRODUTOS PRODUZIDOS / VENDIDOS (Filtro: ${filtroCategoriaProduto.toUpperCase()}) ===\n`;
+    csv += "Categoria;Produto;Quantidade;Custo Unitário (€);Custo Total (€);Faturado (€)\n";
+    produtosVendidosFiltrados.forEach(p => {
+      csv += `${p.categoria.toUpperCase()};${p.nome};${p.quantidade};${fmtEuros(p.custoUnitario)};${fmtEuros(p.custoTotal)};${fmtEuros(p.faturacao)}\n`;
+    });
+    csv += `TOTAIS FILTRADOS;-;${totaisFiltrados.quantidade};-;${fmtEuros(totaisFiltrados.custo)};${fmtEuros(totaisFiltrados.faturacao)}\n\n`;
+
+    // 3. Pedidos
+    csv += "=== LANÇAMENTOS DE PEDIDOS ===\n";
+    csv += "Data;Hora;Pedido;Cliente;Canal;Pagamento;Estado;Total (€)\n";
+    pedidosFiltrados.forEach(p => {
+      const d = new Date(obterDataEfetiva(p));
+      csv += `${d.toLocaleDateString('pt-PT')};${d.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })};${p.numero_pedido || 'S/N'};${limparNomePedido(p.cliente)};${p.canal};${p.forma_pagamento};${p.pago ? 'Pago' : 'Pendente'};${fmtEuros(p.total_geral)}\n`;
+    });
+    csv += "\n";
+
+    // 4. Caixa
+    csv += "=== AUDITORIA DE CAIXA ===\n";
+    csv += "Data;Abertura (€);Entradas (€);Saídas (€);Saldo Esperado (€);Contado Gaveta (€);Diferença (€)\n";
+    relatorioDias.forEach(dia => {
+      const pendente = dia.fechamento === null;
+      csv += `${new Date(dia.data).toLocaleDateString('pt-PT')};${fmtEuros(dia.abertura)};${fmtEuros(dia.entradas)};${fmtEuros(dia.saidas)};${fmtEuros(dia.esperado)};${pendente ? 'Em Aberto' : fmtEuros(dia.fechamento!)};${pendente ? '---' : fmtEuros(dia.diferenca!)}\n`;
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    const periodoStr = tipoIntervalo === 'dia' ? dataUnica : tipoIntervalo === 'personalizado' ? `${dataInicio}_a_${dataFim}` : 'Relatorio';
+    link.setAttribute("download", `ChefBatato_Export_${periodoStr}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   const exportarPDF = () => {
     window.print();
   };
 
-  // Label dinâmico para o card "Itens Totais"
   const labelPeriodo = tipoIntervalo === 'dia' ? '(Dia)' : 
                        tipoIntervalo === 'mes' ? '(Mês)' : 
                        tipoIntervalo === 'ano' ? '(Ano)' : '(Período)';
 
   return (
     <>
-      {/* ESTILOS DE IMPRESSÃO (PDF) */}
       <style dangerouslySetInnerHTML={{__html: `
         @media print {
           body, html { background-color: white !important; color: black !important; }
@@ -457,7 +503,7 @@ export default function CentralRelatorios() {
 
       <div className="min-h-screen bg-zinc-950 text-white font-sans flex flex-col pb-24 selection:bg-orange-500/30 print:bg-white print:text-black">
         
-        {/* CABEÇALHO */}
+        {/* CABEÇALHO COM NOVOS BOTÕES */}
         <header className="sticky top-0 z-20 bg-zinc-950/80 backdrop-blur-xl border-b border-zinc-800/60 px-5 py-4 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 print:hidden">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-700 flex items-center justify-center shadow-lg shadow-blue-900/40">
@@ -470,7 +516,6 @@ export default function CentralRelatorios() {
           </div>
 
           <div className="flex items-center gap-4 w-full xl:w-auto">
-            {/* NAVEGAÇÃO DE ABAS */}
             <div className="flex bg-zinc-900 p-1 rounded-2xl border border-zinc-800 overflow-x-auto custom-scrollbar flex-1 xl:flex-none">
               <button onClick={() => setAbaAtiva('geral')} className={`px-5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${abaAtiva === 'geral' ? 'bg-blue-600 text-white shadow-lg' : 'text-zinc-400 hover:text-white'}`}>
                 📋 Faturação Geral
@@ -480,14 +525,18 @@ export default function CentralRelatorios() {
               </button>
             </div>
             
-            {/* BOTÃO EXPORTAR PDF */}
-            <button onClick={exportarPDF} className="bg-white hover:bg-zinc-200 text-zinc-900 px-4 py-2 rounded-xl text-xs font-black transition-all shadow-md flex items-center gap-2 whitespace-nowrap">
-              🖨️ Exportar PDF
-            </button>
+            <div className="flex gap-2">
+              <button onClick={exportarExcelCSV} className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-xl text-xs font-black transition-all shadow-md flex items-center gap-2 whitespace-nowrap">
+                📊 Exportar Excel
+              </button>
+              <button onClick={exportarPDF} className="bg-white hover:bg-zinc-200 text-zinc-900 px-4 py-2 rounded-xl text-xs font-black transition-all shadow-md flex items-center gap-2 whitespace-nowrap">
+                🖨️ Exportar PDF
+              </button>
+            </div>
           </div>
         </header>
 
-        {/* CABEÇALHO EXCLUSIVO PARA IMPRESSÃO PDF */}
+        {/* CABEÇALHO PDF */}
         <div className="hidden print:block mb-8 border-b-2 border-black pb-4 mt-8 px-8">
           <h1 className="text-3xl font-black text-black uppercase tracking-widest">Relatório Chef Batatô</h1>
           <p className="text-sm font-bold text-gray-600">
@@ -507,7 +556,7 @@ export default function CentralRelatorios() {
 
         <main className="flex-1 p-5 space-y-6 max-w-7xl mx-auto w-full print:p-0 print:max-w-full">
           
-          {/* BARRA DE FILTROS SUPERIOR */}
+          {/* BARRA DE FILTROS */}
           <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-3xl flex flex-col lg:flex-row justify-between items-center gap-4 print:hidden">
             <div className="flex flex-wrap bg-zinc-950 p-1 rounded-2xl border border-zinc-800 w-full lg:w-auto justify-center">
               <button onClick={() => setTipoIntervalo('dia')} className={`flex-1 lg:flex-initial px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${tipoIntervalo === 'dia' ? 'bg-zinc-700 text-white shadow' : 'text-zinc-400 hover:text-white'}`}>Por Dia</button>
@@ -548,7 +597,6 @@ export default function CentralRelatorios() {
             </div>
           </div>
 
-          {/* ---------------- ABA 1: FATURAÇÃO GERAL ---------------- */}
           {abaAtiva === 'geral' && (
             <div className="space-y-6 animate-in fade-in duration-300 print:space-y-8">
               
@@ -557,7 +605,6 @@ export default function CentralRelatorios() {
                   <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest print:text-gray-500">Nº Pedidos</span>
                   <span className="text-3xl font-black text-white font-mono mt-2 print:text-black">{pedidosFiltrados.length}</span>
                 </div>
-                {/* O Título agora muda consoante o período escolhido */}
                 <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between print:bg-white print:border-gray-300 print:shadow-none print:rounded-lg">
                   <span className="text-[10px] font-bold text-purple-400 uppercase tracking-widest print:text-gray-500">Itens Totais {labelPeriodo}</span>
                   <span className="text-3xl font-black text-white font-mono mt-2 print:text-black">{totalItensVendidosGeral}</span>
@@ -602,7 +649,7 @@ export default function CentralRelatorios() {
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 print:grid-cols-1 print:gap-8">
                 
-                {/* LADO ESQUERDO: LISTA DE FATURAS (Lançamentos) */}
+                {/* LADO ESQUERDO: LISTA DE FATURAS */}
                 <div className="lg:col-span-2 space-y-3 print:hidden">
                   <h3 className="text-sm font-black uppercase text-zinc-300 tracking-wider">📦 Lançamentos Brutos ({pedidosFiltrados.length})</h3>
                   {loading ? <div className="text-center p-10 text-zinc-500">A processar...</div> : pedidosFiltrados.length === 0 ? (
@@ -655,11 +702,10 @@ export default function CentralRelatorios() {
                   )}
                 </div>
 
-                {/* LADO DIREITO: LISTA COMPLETA DE PRODUTOS VENDIDOS DESCONSTRUÍDOS (Visível no PDF) */}
+                {/* LADO DIREITO: LISTA DE PRODUTOS */}
                 <div className="space-y-6 print:col-span-full">
                   <div className="bg-[#111113] border border-zinc-800 rounded-[32px] p-6 shadow-xl flex flex-col h-[700px] print:bg-white print:border-none print:shadow-none print:p-0 print:h-auto print:overflow-visible">
                     
-                    {/* CABEÇALHO DO PAINEL DE PRODUTOS */}
                     <div className="flex items-center gap-2 mb-6">
                       <span className="text-xl">🔥</span>
                       <h3 className="text-lg font-black uppercase tracking-wider text-orange-500 print:text-black">
@@ -667,7 +713,6 @@ export default function CentralRelatorios() {
                       </h3>
                     </div>
                     
-                    {/* BARRA DE FILTRO E TOTAIS (ESTILO DASHBOARD DA IMAGEM) */}
                     <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 mb-4 flex flex-col gap-4 print:hidden">
                       <div>
                         <label className="block text-[10px] text-zinc-500 font-bold uppercase tracking-widest mb-2">Filtrar Categoria:</label>
@@ -685,7 +730,6 @@ export default function CentralRelatorios() {
                         </select>
                       </div>
 
-                      {/* TOTAIS DO FILTRO SELECIONADO */}
                       <div className="flex gap-2 overflow-x-auto custom-scrollbar">
                         <div className="flex-1 bg-[#1a1a1c] p-3 rounded-xl border border-zinc-800/80 min-w-[100px]">
                           <span className="block text-[9px] text-zinc-500 uppercase font-bold tracking-widest mb-1">QTD Total</span>
@@ -702,7 +746,6 @@ export default function CentralRelatorios() {
                       </div>
                     </div>
 
-                    {/* CABEÇALHO PARA O PDF (Oculto no ecrã) */}
                     <div className="hidden print:block text-sm font-bold text-black border-b border-black pb-2 mb-4">
                       <div className="flex justify-between items-end">
                         <span>Categoria Filtrada: {filtroCategoriaProduto.toUpperCase()}</span>
