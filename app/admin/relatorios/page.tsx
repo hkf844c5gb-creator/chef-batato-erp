@@ -59,7 +59,6 @@ export default function CentralRelatorios() {
   // ESTADOS - DADOS BRUTOS
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [caixaBruta, setCaixaBruta] = useState<MovimentoCaixa[]>([]);
-  const [produtosCatalogo, setProdutosCatalogo] = useState<any[]>([]);
 
   // ESTADOS - UI E FILTROS globais
   const [loading, setLoading] = useState(true);
@@ -139,10 +138,6 @@ export default function CentralRelatorios() {
       const { data: itensData, error: errItens } = await supabase.from('itens_pedido').select('*');
       if (errItens) throw new Error(`Falha na tabela 'itens_pedido': ${errItens.message}`);
 
-      const { data: prodData, error: errProd } = await supabase.from('produtos').select('nome, custo_unitario');
-      if (errProd) throw new Error(`Falha na tabela 'produtos': ${errProd.message}`);
-      setProdutosCatalogo(prodData || []);
-
       const pedidosMapeados = (pedidosData || []).map((p: any) => ({
         ...p,
         itens_pedido: (itensData || []).filter((i: any) => i.pedido_id === p.id)
@@ -192,15 +187,8 @@ export default function CentralRelatorios() {
 
   // --- MOTOR MATEMÁTICO: DESCONSTRUÇÃO E AGRUPAMENTO DE PRODUTOS ---
   const topProdutosVendas = useMemo(() => {
-    const mapa: Record<string, { nome: string; quantidade: number; faturacao: number; custoTotal: number; custoUnitario: number; categoria: string }> = {};
+    const mapa: Record<string, { nome: string; quantidade: number; faturacao: number; categoria: string }> = {};
     
-    // Mapear custos do catálogo
-    const mapaCustos: Record<string, number> = {};
-    produtosCatalogo.forEach(prod => {
-      const nomeLower = (prod.nome || '').toLowerCase().trim();
-      mapaCustos[nomeLower] = Number(prod.custo_unitario || 0);
-    });
-
     // Função Inteligente para Auto-Categorizar o Item
     const determinarCategoria = (nomeItem: string) => {
       const n = nomeItem.toLowerCase();
@@ -217,29 +205,17 @@ export default function CentralRelatorios() {
       
       const chave = cleanName.toLowerCase().trim();
       
-      // Encontrar Custo
-      let custoUnitario = 0;
-      if (mapaCustos[chave]) {
-        custoUnitario = mapaCustos[chave];
-      } else {
-        const matchKey = Object.keys(mapaCustos).find(k => chave.includes(k) || k.includes(chave));
-        if (matchKey) custoUnitario = mapaCustos[matchKey];
-      }
-
       if (!mapa[chave]) {
         const nomeBonito = cleanName.charAt(0).toUpperCase() + cleanName.slice(1);
         mapa[chave] = { 
           nome: nomeBonito, 
           quantidade: 0, 
           faturacao: 0,
-          custoTotal: 0,
-          custoUnitario: custoUnitario,
           categoria: determinarCategoria(cleanName) 
         };
       }
       mapa[chave].quantidade += quantidade;
       mapa[chave].faturacao += faturacaoAdicional;
-      mapa[chave].custoTotal += (quantidade * custoUnitario);
     };
 
     pedidosFiltrados.forEach(p => {
@@ -320,30 +296,25 @@ export default function CentralRelatorios() {
     });
 
     return Object.values(mapa).sort((a, b) => b.quantidade - a.quantidade);
-  }, [pedidosFiltrados, produtosCatalogo]);
+  }, [pedidosFiltrados]);
 
-  // APLICA O FILTRO DA UI NA LISTA DE PRODUTOS
+  // APLICA O FILTRO DA UI NA LISTA DE PRODUTOS (Para a lista detalhada)
   const produtosVendidosFiltrados = useMemo(() => {
     if (filtroCategoriaProduto === 'todas') return topProdutosVendas;
     return topProdutosVendas.filter(p => p.categoria === filtroCategoriaProduto);
   }, [topProdutosVendas, filtroCategoriaProduto]);
-
-  // CÁLCULO DOS TOTAIS ESPECÍFICOS DA CATEGORIA FILTRADA
-  const totaisFiltrados = useMemo(() => {
-    return produtosVendidosFiltrados.reduce((acc, item) => {
-      acc.quantidade += item.quantidade;
-      acc.faturacao += item.faturacao;
-      acc.custo += item.custoTotal;
-      return acc;
-    }, { quantidade: 0, faturacao: 0, custo: 0 });
-  }, [produtosVendidosFiltrados]);
 
   // --- TOTAIS RIGOROSOS DA FATURAÇÃO GERAL ---
   const totalFaturadoBruto = pedidosFiltrados.reduce((acc, p) => acc + Number(p.total_geral || 0), 0);
   const totalRecebido = pedidosFiltrados.filter(p => p.pago).reduce((acc, p) => acc + Number(p.total_geral || 0), 0);
   const totalPendente = pedidosFiltrados.filter(p => !p.pago).reduce((acc, p) => acc + Number(p.total_geral || 0), 0);
   const totalTaxasEntrega = pedidosFiltrados.reduce((acc, p) => acc + Number(p.taxa_entrega || 0), 0);
-  const totalItensVendidosGeral = topProdutosVendas.reduce((acc, p) => acc + p.quantidade, 0);
+  
+  // TOTAIS DE ITENS VENDIDOS: Este valor usa a lista GERAL SEM FILTRO DE CATEGORIA, 
+  // garantindo que os cards do topo não são afetados pelo filtro das categorias lá em baixo.
+  const totalItensVendidosGeral = useMemo(() => {
+    return topProdutosVendas.reduce((acc, p) => acc + p.quantidade, 0);
+  }, [topProdutosVendas]);
 
   // --- PROCESSAMENTO: CAIXA ---
   useEffect(() => {
@@ -429,6 +400,11 @@ export default function CentralRelatorios() {
   const exportarPDF = () => {
     window.print();
   };
+
+  // Label dinâmico para o card "Itens Totais"
+  const labelPeriodo = tipoIntervalo === 'dia' ? '(Dia)' : 
+                       tipoIntervalo === 'mes' ? '(Mês)' : 
+                       tipoIntervalo === 'ano' ? '(Ano)' : '(Período)';
 
   return (
     <>
@@ -548,8 +524,9 @@ export default function CentralRelatorios() {
                   <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest print:text-gray-500">Nº Pedidos</span>
                   <span className="text-3xl font-black text-white font-mono mt-2 print:text-black">{pedidosFiltrados.length}</span>
                 </div>
+                {/* O Título agora muda consoante o período escolhido (Dia, Mês, Ano, Período) */}
                 <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between print:bg-white print:border-gray-300 print:shadow-none print:rounded-lg">
-                  <span className="text-[10px] font-bold text-purple-400 uppercase tracking-widest print:text-gray-500">Itens Totais (Mês)</span>
+                  <span className="text-[10px] font-bold text-purple-400 uppercase tracking-widest print:text-gray-500">Itens Totais {labelPeriodo}</span>
                   <span className="text-3xl font-black text-white font-mono mt-2 print:text-black">{totalItensVendidosGeral}</span>
                 </div>
                 <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-3xl shadow-xl flex flex-col justify-between print:bg-white print:border-gray-300 print:shadow-none print:rounded-lg">
@@ -669,29 +646,11 @@ export default function CentralRelatorios() {
                             <option value="outros">📦 Outros</option>
                           </select>
                         </div>
-                        
-                        <div className="flex flex-wrap items-center gap-2">
-                          <div className="bg-zinc-900 border border-zinc-800 px-3 py-1.5 rounded-lg flex flex-col items-center min-w-[70px]">
-                            <span className="text-[8px] text-zinc-500 uppercase tracking-widest">Qtd Total</span>
-                            <span className="font-mono font-black text-white text-sm">{totaisFiltrados.quantidade}</span>
-                          </div>
-                          <div className="bg-red-950/30 border border-red-900/50 px-3 py-1.5 rounded-lg flex flex-col items-center min-w-[80px]">
-                            <span className="text-[8px] text-red-500/70 uppercase tracking-widest">Custo Total</span>
-                            <span className="font-mono font-black text-red-400 text-sm">{totaisFiltrados.custo.toFixed(2)}€</span>
-                          </div>
-                          <div className="bg-green-950/30 border border-green-900/50 px-3 py-1.5 rounded-lg flex flex-col items-center min-w-[80px]">
-                            <span className="text-[8px] text-green-500/70 uppercase tracking-widest">Faturado</span>
-                            <span className="font-mono font-black text-green-400 text-sm">{totaisFiltrados.faturacao.toFixed(2)}€</span>
-                          </div>
-                        </div>
                       </div>
 
                       <div className="hidden print:block text-sm font-bold text-black border-b border-black pb-2">
                         <div className="flex justify-between items-end">
                           <span>Categoria Filtrada: {filtroCategoriaProduto.toUpperCase()}</span>
-                          <span className="font-mono text-xs">
-                            Qtd: {totaisFiltrados.quantidade} | Custo: {totaisFiltrados.custo.toFixed(2)}€ | Faturado: {totaisFiltrados.faturacao.toFixed(2)}€
-                          </span>
                         </div>
                       </div>
                     </div>
@@ -706,12 +665,7 @@ export default function CentralRelatorios() {
                             </div>
                             
                             <div className="flex justify-between sm:justify-end gap-6 w-full sm:w-1/2 border-t border-zinc-800/50 pt-2 sm:pt-0 sm:border-0">
-                              <div className="text-left sm:text-right flex flex-col justify-center">
-                                <span className="text-[9px] text-zinc-500 font-mono uppercase print:text-gray-600">Custo Total</span>
-                                <span className="font-mono font-bold text-red-400 text-sm print:text-red-600">{prod.custoTotal.toFixed(2)}€</span>
-                                <span className="text-[8px] text-zinc-600 font-mono print:text-gray-400">({prod.custoUnitario.toFixed(2)}€/un)</span>
-                              </div>
-                              <div className="text-center sm:text-right flex flex-col justify-center">
+                              <div className="text-center sm:text-right flex flex-col justify-center print:hidden">
                                 <span className="text-[9px] text-zinc-500 font-mono uppercase print:text-gray-600">Faturado</span>
                                 <span className="font-mono font-bold text-green-400 text-sm print:text-green-600">{prod.faturacao.toFixed(2)}€</span>
                               </div>
