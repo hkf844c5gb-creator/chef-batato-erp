@@ -200,11 +200,15 @@ export default function CentralRelatorios() {
 
     const determinarCategoria = (nomeItem: string) => {
       const n = nomeItem.toLowerCase();
+      
+      // Reconhecimento Rigoroso (Inclui seven up agora)
       if (n.includes('brownie')) return 'brownie';
       if (n.includes('mousse') || n.includes('pudim') || n.includes('sobremesa') || n.includes('sensação') || n.includes('fudge') || n.includes('brigadeiro')) return 'sobremesa';
-      if (n.includes('coca') || n.includes('água') || n.includes('agua') || n.includes('sumo') || n.includes('fanta') || n.includes('guaran') || n.includes('sprite') || n.includes('7up') || n.includes('nestea') || n.includes('ice tea') || n.includes('compal') || n.includes('bebida') || n.includes('cerveja')) return 'bebida';
-      if (n.includes('calabresa') || n.includes('costela') || n.includes('frango') || n.includes('gratinado') || n.includes('strogonoff') || n.includes('misto') || n.includes('batata') || n.includes('camarão') || n.includes('camarao') || n.includes('carne') || n.includes('bolonhesa')) return 'batata';
-      if (n.includes('combo') || n.includes('para dois') || n.includes('duplo') || n.includes('batatô10') || n.includes('batato10') || n.includes('batatô 10')) return 'combo';
+      if (n.includes('coca') || n.includes('água') || n.includes('agua') || n.includes('sumo') || n.includes('fanta') || n.includes('guaran') || n.includes('sprite') || n.includes('7up') || n.includes('7 up') || n.includes('seven up') || n.includes('sevenup') || n.includes('nestea') || n.includes('ice tea') || n.includes('compal') || n.includes('bebida') || n.includes('cerveja')) return 'bebida';
+      if (n.includes('combo') || n.includes('para dois') || n.includes('duplo') || n.includes('batatô10') || n.includes('batato10') || n.includes('batatô 10') || n.includes('batato 10')) return 'combo';
+      if (n.includes('calabresa') || n.includes('costela') || n.includes('frango') || n.includes('gratinado') || n.includes('strogonoff') || n.includes('misto') || n.includes('batata') || n.includes('camarão') || n.includes('camarao') || n.includes('carne') || n.includes('bolonhesa') || n.includes('supreme') || n.includes('delícia') || n.includes('delicia') || n.includes('bbq')) return 'batata';
+      
+      // Mantemos o "outros" como rede de segurança de sistema, mas retirado do menu visual
       return 'outros';
     };
 
@@ -314,7 +318,7 @@ export default function CentralRelatorios() {
   const totalItensVendidosGeral = topProdutosVendas.reduce((acc, p) => acc + p.quantidade, 0);
   const ticketMedio = pedidosFiltrados.length > 0 ? (totalFaturadoBruto / pedidosFiltrados.length) : 0;
 
-  // --- AGRUPAMENTOS PARA OS GRÁFICOS ---
+  // --- AGRUPAMENTOS PARA OS GRÁFICOS (Web e PDF) ---
   const canaisMap: Record<string, number> = {};
   const pagamentosMap: Record<string, number> = {};
   const categoriasGraficoMap: Record<string, number> = {};
@@ -546,7 +550,7 @@ export default function CentralRelatorios() {
               <span className="text-2xl font-black text-orange-700">{topProdutosVendas.reduce((acc, p) => acc + p.custoTotal, 0).toFixed(2)}€</span>
             </div>
             <div className="text-right border-l border-gray-300 pl-4">
-              <span className="block text-[10px] uppercase font-bold text-gray-500 mb-1">Custos Entrega (Taxas)</span>
+              <span className="block text-[10px] uppercase font-bold text-gray-500 mb-1">Custos Entrega (Taxas Estafeta)</span>
               <span className="text-2xl font-black text-orange-700">{totalTaxasEntrega.toFixed(2)}€</span>
             </div>
           </div>
@@ -872,7 +876,7 @@ export default function CentralRelatorios() {
 
                 <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-[24px] shadow-xl">
                   <h3 className="text-xs font-black uppercase text-zinc-500 mb-4 tracking-widest flex items-center gap-2">
-                    <span className="text-blue-500">💳</span> Por Pagamento
+                    <span className="text-blue-500">💳</span> Por Método Pagamento
                   </h3>
                   <div className="space-y-4">
                     {pagamentosArray.length === 0 ? <p className="text-xs text-zinc-600">Sem dados.</p> : pagamentosArray.map(p => (
