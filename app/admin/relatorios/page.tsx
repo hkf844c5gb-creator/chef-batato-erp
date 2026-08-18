@@ -314,7 +314,7 @@ export default function CentralRelatorios() {
   const totalItensVendidosGeral = topProdutosVendas.reduce((acc, p) => acc + p.quantidade, 0);
   const ticketMedio = pedidosFiltrados.length > 0 ? (totalFaturadoBruto / pedidosFiltrados.length) : 0;
 
-  // --- AGRUPAMENTOS PARA OS GRÁFICOS DO PDF ---
+  // --- AGRUPAMENTOS PARA OS GRÁFICOS (Web e PDF) ---
   const canaisMap: Record<string, number> = {};
   const pagamentosMap: Record<string, number> = {};
   const categoriasGraficoMap: Record<string, number> = {};
@@ -542,7 +542,7 @@ export default function CentralRelatorios() {
           </div>
           <div className="p-4 border border-gray-300 rounded-xl bg-orange-50 col-span-2 flex justify-between items-center">
             <div>
-              <span className="block text-[10px] uppercase font-bold text-gray-500 mb-1">Custos Ingredientes (Estimados)</span>
+              <span className="block text-[10px] uppercase font-bold text-gray-500 mb-1">Custos Produção (Ingredientes Estimados)</span>
               <span className="text-2xl font-black text-orange-700">{topProdutosVendas.reduce((acc, p) => acc + p.custoTotal, 0).toFixed(2)}€</span>
             </div>
             <div className="text-right border-l border-gray-300 pl-4">
@@ -552,68 +552,48 @@ export default function CentralRelatorios() {
           </div>
         </div>
 
-        {/* --- GRÁFICOS FINANCEIROS COMPLETOS --- */}
-        <h3 className="text-lg font-black uppercase tracking-wider mb-4 border-b border-gray-300 pb-1 no-break">Visão Geral de Faturação</h3>
-        <div className="grid grid-cols-3 gap-6 mb-8 no-break">
-          {/* Gráfico de Canais */}
+        <div className="grid grid-cols-2 gap-8 mb-8 no-break">
           <div>
-            <h4 className="text-xs font-bold uppercase text-gray-500 mb-3">Por Canal de Venda</h4>
+            <h3 className="text-md font-black uppercase tracking-wider mb-4 border-b border-gray-300 pb-1">Faturação por Canal</h3>
             <div className="space-y-3">
-              {canaisArray.length === 0 ? <p className="text-xs text-gray-400">Sem dados.</p> : canaisArray.map(c => (
+              {canaisArray.length === 0 ? <p className="text-xs text-gray-500">Sem dados.</p> : canaisArray.map(c => (
                 <div key={c.nome}>
-                  <div className="flex justify-between text-[10px] font-bold mb-1">
+                  <div className="flex justify-between text-xs font-bold mb-1">
                     <span>{c.nome}</span><span>{c.valor.toFixed(2)}€</span>
                   </div>
-                  <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden"><div className="bg-orange-500 h-full" style={{ width: `${(c.valor / maxCanal) * 100}%` }}></div></div>
+                  <div className="w-full bg-gray-200 h-3 rounded-full overflow-hidden"><div className="bg-orange-500 h-full" style={{ width: `${(c.valor / maxCanal) * 100}%` }}></div></div>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Gráfico de Pagamentos */}
           <div>
-            <h4 className="text-xs font-bold uppercase text-gray-500 mb-3">Por Método Pagamento</h4>
+            <h3 className="text-md font-black uppercase tracking-wider mb-4 border-b border-gray-300 pb-1">Faturação por Pagamento</h3>
             <div className="space-y-3">
-              {pagamentosArray.length === 0 ? <p className="text-xs text-gray-400">Sem dados.</p> : pagamentosArray.map(p => (
+              {pagamentosArray.length === 0 ? <p className="text-xs text-gray-500">Sem dados.</p> : pagamentosArray.map(p => (
                 <div key={p.nome}>
-                  <div className="flex justify-between text-[10px] font-bold mb-1">
+                  <div className="flex justify-between text-xs font-bold mb-1">
                     <span>{p.nome}</span><span>{p.valor.toFixed(2)}€</span>
                   </div>
-                  <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden"><div className="bg-blue-500 h-full" style={{ width: `${(p.valor / maxPagamento) * 100}%` }}></div></div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Gráfico de Categorias */}
-          <div>
-            <h4 className="text-xs font-bold uppercase text-gray-500 mb-3">Por Categoria de Item</h4>
-            <div className="space-y-3">
-              {categoriasGraficoArray.length === 0 ? <p className="text-xs text-gray-400">Sem dados.</p> : categoriasGraficoArray.map(c => (
-                <div key={c.nome}>
-                  <div className="flex justify-between text-[10px] font-bold mb-1 uppercase">
-                    <span>{c.nome}</span><span>{c.valor.toFixed(2)}€</span>
-                  </div>
-                  <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden"><div className="bg-green-600 h-full" style={{ width: `${(c.valor / maxCategoriaGrafico) * 100}%` }}></div></div>
+                  <div className="w-full bg-gray-200 h-3 rounded-full overflow-hidden"><div className="bg-blue-500 h-full" style={{ width: `${(p.valor / maxPagamento) * 100}%` }}></div></div>
                 </div>
               ))}
             </div>
           </div>
         </div>
 
-        {/* --- GRÁFICO DE VOLUME (TOP 10) --- */}
         <div className="mb-8 no-break">
           <h3 className="text-md font-black uppercase tracking-wider mb-4 border-b border-gray-300 pb-1">Top 10 Itens Vendidos (Volume)</h3>
-          <div className="grid grid-cols-2 gap-x-8 gap-y-2">
+          <div className="space-y-2">
             {topProdutosVendas.slice(0, 10).map((prod, idx) => (
-              <div key={idx} className="flex items-center gap-3 text-[11px] font-bold">
-                <span className="w-4 text-gray-400 text-right">{idx + 1}º</span>
+              <div key={idx} className="flex items-center gap-4 text-xs font-bold">
+                <span className="w-4 text-gray-400">{idx + 1}º</span>
                 <div className="flex-1">
                   <div className="flex justify-between mb-0.5">
-                    <span className="truncate pr-2">{prod.nome} <span className="text-[8px] font-normal text-gray-500 uppercase">({prod.categoria})</span></span>
+                    <span>{prod.nome} <span className="text-[9px] font-normal text-gray-500">({prod.categoria})</span></span>
                     <span>{prod.quantidade} un.</span>
                   </div>
-                  <div className="w-full bg-gray-200 h-1.5 rounded-full overflow-hidden"><div className="bg-gray-800 h-full" style={{ width: `${(prod.quantidade / maxProduto) * 100}%` }}></div></div>
+                  <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden"><div className="bg-green-500 h-full" style={{ width: `${(prod.quantidade / maxProduto) * 100}%` }}></div></div>
                 </div>
               </div>
             ))}
@@ -622,7 +602,6 @@ export default function CentralRelatorios() {
 
         <div className="page-break-before"></div>
 
-        {/* Secção 4: Tabela Completa de Itens */}
         <div className="mb-8">
           <div className="flex justify-between items-end border-b-2 border-black pb-2 mb-4">
             <h3 className="text-lg font-black uppercase tracking-wider">Detalhamento Geral de Itens Vendidos</h3>
@@ -654,7 +633,6 @@ export default function CentralRelatorios() {
           </table>
         </div>
 
-        {/* Secção 5: Extrato Diário do Caixa */}
         {relatorioDias.length > 0 && (
           <div className="mb-8 no-break">
             <h3 className="text-lg font-black uppercase tracking-wider border-b-2 border-black pb-2 mb-4">Auditoria de Caixa Diária</h3>
@@ -816,6 +794,85 @@ export default function CentralRelatorios() {
                 </div>
               </div>
 
+              {/* GRÁFICOS WEB */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-[24px] shadow-xl">
+                  <h3 className="text-xs font-black uppercase text-zinc-500 mb-4 tracking-widest flex items-center gap-2">
+                    <span className="text-orange-500">📈</span> Por Canal
+                  </h3>
+                  <div className="space-y-4">
+                    {canaisArray.length === 0 ? <p className="text-xs text-zinc-600">Sem dados.</p> : canaisArray.map(c => (
+                      <div key={c.nome}>
+                        <div className="flex justify-between text-[11px] font-bold text-zinc-300 mb-1">
+                          <span>{c.nome}</span><span className="text-white font-mono">{c.valor.toFixed(2)}€</span>
+                        </div>
+                        <div className="w-full bg-zinc-950 border border-zinc-800 h-2 rounded-full overflow-hidden">
+                          <div className="bg-orange-500 h-full rounded-full" style={{ width: `${(c.valor / maxCanal) * 100}%` }}></div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-[24px] shadow-xl">
+                  <h3 className="text-xs font-black uppercase text-zinc-500 mb-4 tracking-widest flex items-center gap-2">
+                    <span className="text-blue-500">💳</span> Por Método Pagamento
+                  </h3>
+                  <div className="space-y-4">
+                    {pagamentosArray.length === 0 ? <p className="text-xs text-zinc-600">Sem dados.</p> : pagamentosArray.map(p => (
+                      <div key={p.nome}>
+                        <div className="flex justify-between text-[11px] font-bold text-zinc-300 mb-1">
+                          <span>{p.nome}</span><span className="text-white font-mono">{p.valor.toFixed(2)}€</span>
+                        </div>
+                        <div className="w-full bg-zinc-950 border border-zinc-800 h-2 rounded-full overflow-hidden">
+                          <div className="bg-blue-500 h-full rounded-full" style={{ width: `${(p.valor / maxPagamento) * 100}%` }}></div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-[24px] shadow-xl">
+                  <h3 className="text-xs font-black uppercase text-zinc-500 mb-4 tracking-widest flex items-center gap-2">
+                    <span className="text-green-500">📦</span> Por Categoria
+                  </h3>
+                  <div className="space-y-4">
+                    {categoriasGraficoArray.length === 0 ? <p className="text-xs text-zinc-600">Sem dados.</p> : categoriasGraficoArray.map(c => (
+                      <div key={c.nome}>
+                        <div className="flex justify-between text-[11px] font-bold text-zinc-300 mb-1 uppercase">
+                          <span>{c.nome}</span><span className="text-white font-mono">{c.valor.toFixed(2)}€</span>
+                        </div>
+                        <div className="w-full bg-zinc-950 border border-zinc-800 h-2 rounded-full overflow-hidden">
+                          <div className="bg-green-600 h-full rounded-full" style={{ width: `${(c.valor / maxCategoriaGrafico) * 100}%` }}></div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-[24px] shadow-xl">
+                <h3 className="text-xs font-black uppercase text-zinc-500 mb-4 tracking-widest flex items-center gap-2">
+                  <span className="text-yellow-500">🏆</span> Top 10 Itens Mais Vendidos (Volume)
+                </h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
+                  {topProdutosVendas.slice(0, 10).map((prod, idx) => (
+                    <div key={idx} className="flex items-center gap-4 text-xs font-bold">
+                      <span className="w-4 text-zinc-500 text-right">{idx + 1}º</span>
+                      <div className="flex-1">
+                        <div className="flex justify-between mb-1">
+                          <span className="text-zinc-200">{prod.nome} <span className="text-[9px] font-normal text-zinc-500 uppercase">({prod.categoria})</span></span>
+                          <span className="text-white">{prod.quantidade} un.</span>
+                        </div>
+                        <div className="w-full bg-zinc-950 border border-zinc-800 h-1.5 rounded-full overflow-hidden">
+                          <div className="bg-zinc-400 h-full" style={{ width: `${(prod.quantidade / maxProduto) * 100}%` }}></div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
               <div className="bg-zinc-900/40 p-5 rounded-3xl border border-zinc-800/60 space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
@@ -838,6 +895,7 @@ export default function CentralRelatorios() {
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 
+                {/* LADO ESQUERDO: LISTA DE FATURAS */}
                 <div className="lg:col-span-2 space-y-3">
                   <h3 className="text-sm font-black uppercase text-zinc-300 tracking-wider">📦 Lançamentos Brutos ({pedidosFiltrados.length})</h3>
                   {loading ? <div className="text-center p-10 text-zinc-500">A processar...</div> : pedidosFiltrados.length === 0 ? (
@@ -919,7 +977,7 @@ export default function CentralRelatorios() {
                         </select>
                       </div>
 
-                      <div className="flex gap-2 overflow-x-auto custom-scrollbar">
+                      <div className="flex gap-2 overflow-x-auto custom-scrollbar pb-2">
                         <div className="flex-1 bg-[#1a1a1c] p-3 rounded-xl border border-zinc-800/80 min-w-[100px]">
                           <span className="block text-[9px] text-zinc-500 uppercase font-bold tracking-widest mb-1">QTD Total</span>
                           <span className="text-xl font-black text-white">{totaisFiltrados.quantidade}</span>
