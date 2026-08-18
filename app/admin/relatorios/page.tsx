@@ -314,32 +314,6 @@ export default function CentralRelatorios() {
   const totalItensVendidosGeral = topProdutosVendas.reduce((acc, p) => acc + p.quantidade, 0);
   const ticketMedio = pedidosFiltrados.length > 0 ? (totalFaturadoBruto / pedidosFiltrados.length) : 0;
 
-  // --- AGRUPAMENTOS PARA OS GRÁFICOS (Web e PDF) ---
-  const canaisMap: Record<string, number> = {};
-  const pagamentosMap: Record<string, number> = {};
-  const categoriasGraficoMap: Record<string, number> = {};
-
-  pedidosFiltrados.forEach(p => {
-    const canal = p.canal || 'Outros';
-    const pag = p.forma_pagamento || 'Outros';
-    canaisMap[canal] = (canaisMap[canal] || 0) + Number(p.total_geral);
-    pagamentosMap[pag] = (pagamentosMap[pag] || 0) + Number(p.total_geral);
-  });
-
-  topProdutosVendas.forEach(p => {
-    const cat = p.categoria || 'Outros';
-    categoriasGraficoMap[cat] = (categoriasGraficoMap[cat] || 0) + p.faturacao;
-  });
-  
-  const canaisArray = Object.entries(canaisMap).map(([nome, valor]) => ({nome, valor})).sort((a,b) => b.valor - a.valor);
-  const pagamentosArray = Object.entries(pagamentosMap).map(([nome, valor]) => ({nome, valor})).sort((a,b) => b.valor - a.valor);
-  const categoriasGraficoArray = Object.entries(categoriasGraficoMap).map(([nome, valor]) => ({nome, valor})).sort((a,b) => b.valor - a.valor);
-
-  const maxCanal = canaisArray.length > 0 ? Math.max(...canaisArray.map(c => c.valor)) : 0;
-  const maxPagamento = pagamentosArray.length > 0 ? Math.max(...pagamentosArray.map(p => p.valor)) : 0;
-  const maxCategoriaGrafico = categoriasGraficoArray.length > 0 ? Math.max(...categoriasGraficoArray.map(c => c.valor)) : 0;
-  const maxProduto = topProdutosVendas.length > 0 ? topProdutosVendas[0].quantidade : 0;
-
   // --- PROCESSAMENTO: CAIXA ---
   useEffect(() => {
     const movimentosManuais = caixaBruta.filter(c => validarIntervaloData(c.data_dia)).map(m => ({ ...m, valor: Number(m.valor) }));
@@ -409,7 +383,7 @@ export default function CentralRelatorios() {
     csv += `Fiado Pendente (€);${fmtEuros(totalPendente)}\n`;
     csv += `Custos Entrega (€);${fmtEuros(totalTaxasEntrega)}\n\n`;
 
-    csv += `=== ITENS VENDIDOS (Filtro: ${filtroCategoriaProduto.toUpperCase()}) ===\n`;
+    csv += `=== ITENS PRODUZIDOS / VENDIDOS (Filtro: ${filtroCategoriaProduto.toUpperCase()}) ===\n`;
     csv += "Categoria;Produto;Quantidade;Custo Unitário (€);Custo Total (€);Faturado (€)\n";
     produtosVendidosFiltrados.forEach(p => {
       csv += `${p.categoria.toUpperCase()};${p.nome};${p.quantidade};${fmtEuros(p.custoUnitario)};${fmtEuros(p.custoTotal)};${fmtEuros(p.faturacao)}\n`;
@@ -552,60 +526,10 @@ export default function CentralRelatorios() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-8 mb-8 no-break">
-          <div>
-            <h3 className="text-md font-black uppercase tracking-wider mb-4 border-b border-gray-300 pb-1">Faturação por Canal</h3>
-            <div className="space-y-3">
-              {canaisArray.length === 0 ? <p className="text-xs text-gray-500">Sem dados.</p> : canaisArray.map(c => (
-                <div key={c.nome}>
-                  <div className="flex justify-between text-xs font-bold mb-1">
-                    <span>{c.nome}</span><span>{c.valor.toFixed(2)}€</span>
-                  </div>
-                  <div className="w-full bg-gray-200 h-3 rounded-full overflow-hidden"><div className="bg-orange-500 h-full" style={{ width: `${(c.valor / maxCanal) * 100}%` }}></div></div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <h3 className="text-md font-black uppercase tracking-wider mb-4 border-b border-gray-300 pb-1">Faturação por Pagamento</h3>
-            <div className="space-y-3">
-              {pagamentosArray.length === 0 ? <p className="text-xs text-gray-500">Sem dados.</p> : pagamentosArray.map(p => (
-                <div key={p.nome}>
-                  <div className="flex justify-between text-xs font-bold mb-1">
-                    <span>{p.nome}</span><span>{p.valor.toFixed(2)}€</span>
-                  </div>
-                  <div className="w-full bg-gray-200 h-3 rounded-full overflow-hidden"><div className="bg-blue-500 h-full" style={{ width: `${(p.valor / maxPagamento) * 100}%` }}></div></div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="mb-8 no-break">
-          <h3 className="text-md font-black uppercase tracking-wider mb-4 border-b border-gray-300 pb-1">Top 10 Itens Vendidos (Volume)</h3>
-          <div className="space-y-2">
-            {topProdutosVendas.slice(0, 10).map((prod, idx) => (
-              <div key={idx} className="flex items-center gap-4 text-xs font-bold">
-                <span className="w-4 text-gray-400">{idx + 1}º</span>
-                <div className="flex-1">
-                  <div className="flex justify-between mb-0.5">
-                    <span>{prod.nome} <span className="text-[9px] font-normal text-gray-500">({prod.categoria})</span></span>
-                    <span>{prod.quantidade} un.</span>
-                  </div>
-                  <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden"><div className="bg-green-500 h-full" style={{ width: `${(prod.quantidade / maxProduto) * 100}%` }}></div></div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="page-break-before"></div>
-
         <div className="mb-8">
           <div className="flex justify-between items-end border-b-2 border-black pb-2 mb-4">
-            <h3 className="text-lg font-black uppercase tracking-wider">Detalhamento Geral de Itens Vendidos</h3>
-            <span className="text-xs font-bold text-gray-500">Todos os {topProdutosVendas.length} itens únicos faturados</span>
+            <h3 className="text-lg font-black uppercase tracking-wider">Detalhamento Geral de Produção</h3>
+            <span className="text-xs font-bold text-gray-500">Todos os {topProdutosVendas.length} itens únicos produzidos/faturados</span>
           </div>
           <table className="w-full text-left text-xs border-collapse border border-gray-300">
             <thead>
@@ -794,85 +718,6 @@ export default function CentralRelatorios() {
                 </div>
               </div>
 
-              {/* GRÁFICOS WEB */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-[24px] shadow-xl">
-                  <h3 className="text-xs font-black uppercase text-zinc-500 mb-4 tracking-widest flex items-center gap-2">
-                    <span className="text-orange-500">📈</span> Por Canal
-                  </h3>
-                  <div className="space-y-4">
-                    {canaisArray.length === 0 ? <p className="text-xs text-zinc-600">Sem dados.</p> : canaisArray.map(c => (
-                      <div key={c.nome}>
-                        <div className="flex justify-between text-[11px] font-bold text-zinc-300 mb-1">
-                          <span>{c.nome}</span><span className="text-white font-mono">{c.valor.toFixed(2)}€</span>
-                        </div>
-                        <div className="w-full bg-zinc-950 border border-zinc-800 h-2 rounded-full overflow-hidden">
-                          <div className="bg-orange-500 h-full rounded-full" style={{ width: `${(c.valor / maxCanal) * 100}%` }}></div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-[24px] shadow-xl">
-                  <h3 className="text-xs font-black uppercase text-zinc-500 mb-4 tracking-widest flex items-center gap-2">
-                    <span className="text-blue-500">💳</span> Por Método Pagamento
-                  </h3>
-                  <div className="space-y-4">
-                    {pagamentosArray.length === 0 ? <p className="text-xs text-zinc-600">Sem dados.</p> : pagamentosArray.map(p => (
-                      <div key={p.nome}>
-                        <div className="flex justify-between text-[11px] font-bold text-zinc-300 mb-1">
-                          <span>{p.nome}</span><span className="text-white font-mono">{p.valor.toFixed(2)}€</span>
-                        </div>
-                        <div className="w-full bg-zinc-950 border border-zinc-800 h-2 rounded-full overflow-hidden">
-                          <div className="bg-blue-500 h-full rounded-full" style={{ width: `${(p.valor / maxPagamento) * 100}%` }}></div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-[24px] shadow-xl">
-                  <h3 className="text-xs font-black uppercase text-zinc-500 mb-4 tracking-widest flex items-center gap-2">
-                    <span className="text-green-500">📦</span> Por Categoria
-                  </h3>
-                  <div className="space-y-4">
-                    {categoriasGraficoArray.length === 0 ? <p className="text-xs text-zinc-600">Sem dados.</p> : categoriasGraficoArray.map(c => (
-                      <div key={c.nome}>
-                        <div className="flex justify-between text-[11px] font-bold text-zinc-300 mb-1 uppercase">
-                          <span>{c.nome}</span><span className="text-white font-mono">{c.valor.toFixed(2)}€</span>
-                        </div>
-                        <div className="w-full bg-zinc-950 border border-zinc-800 h-2 rounded-full overflow-hidden">
-                          <div className="bg-green-600 h-full rounded-full" style={{ width: `${(c.valor / maxCategoriaGrafico) * 100}%` }}></div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-[24px] shadow-xl">
-                <h3 className="text-xs font-black uppercase text-zinc-500 mb-4 tracking-widest flex items-center gap-2">
-                  <span className="text-yellow-500">🏆</span> Top 10 Itens Mais Vendidos (Volume)
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
-                  {topProdutosVendas.slice(0, 10).map((prod, idx) => (
-                    <div key={idx} className="flex items-center gap-4 text-xs font-bold">
-                      <span className="w-4 text-zinc-500 text-right">{idx + 1}º</span>
-                      <div className="flex-1">
-                        <div className="flex justify-between mb-1">
-                          <span className="text-zinc-200">{prod.nome} <span className="text-[9px] font-normal text-zinc-500 uppercase">({prod.categoria})</span></span>
-                          <span className="text-white">{prod.quantidade} un.</span>
-                        </div>
-                        <div className="w-full bg-zinc-950 border border-zinc-800 h-1.5 rounded-full overflow-hidden">
-                          <div className="bg-zinc-400 h-full" style={{ width: `${(prod.quantidade / maxProduto) * 100}%` }}></div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
               <div className="bg-zinc-900/40 p-5 rounded-3xl border border-zinc-800/60 space-y-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
@@ -895,7 +740,6 @@ export default function CentralRelatorios() {
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 
-                {/* LADO ESQUERDO: LISTA DE FATURAS */}
                 <div className="lg:col-span-2 space-y-3">
                   <h3 className="text-sm font-black uppercase text-zinc-300 tracking-wider">📦 Lançamentos Brutos ({pedidosFiltrados.length})</h3>
                   {loading ? <div className="text-center p-10 text-zinc-500">A processar...</div> : pedidosFiltrados.length === 0 ? (
@@ -955,7 +799,7 @@ export default function CentralRelatorios() {
                     <div className="flex items-center gap-2 mb-6">
                       <span className="text-xl">🔥</span>
                       <h3 className="text-base sm:text-lg font-black uppercase tracking-wider text-orange-500 whitespace-nowrap">
-                        Itens Vendidos
+                        Itens Produzidos / Vendidos
                       </h3>
                     </div>
                     
