@@ -314,7 +314,7 @@ export default function CentralRelatorios() {
   const totalItensVendidosGeral = topProdutosVendas.reduce((acc, p) => acc + p.quantidade, 0);
   const ticketMedio = pedidosFiltrados.length > 0 ? (totalFaturadoBruto / pedidosFiltrados.length) : 0;
 
-  // --- AGRUPAMENTOS PARA OS GRÁFICOS (Web e PDF) ---
+  // --- AGRUPAMENTOS PARA OS GRÁFICOS ---
   const canaisMap: Record<string, number> = {};
   const pagamentosMap: Record<string, number> = {};
   const categoriasGraficoMap: Record<string, number> = {};
@@ -542,40 +542,56 @@ export default function CentralRelatorios() {
           </div>
           <div className="p-4 border border-gray-300 rounded-xl bg-orange-50 col-span-2 flex justify-between items-center">
             <div>
-              <span className="block text-[10px] uppercase font-bold text-gray-500 mb-1">Custos Produção (Ingredientes Estimados)</span>
+              <span className="block text-[10px] uppercase font-bold text-gray-500 mb-1">Custos Base (Ingredientes)</span>
               <span className="text-2xl font-black text-orange-700">{topProdutosVendas.reduce((acc, p) => acc + p.custoTotal, 0).toFixed(2)}€</span>
             </div>
             <div className="text-right border-l border-gray-300 pl-4">
-              <span className="block text-[10px] uppercase font-bold text-gray-500 mb-1">Custos Entrega (Taxas Estafeta)</span>
+              <span className="block text-[10px] uppercase font-bold text-gray-500 mb-1">Custos Entrega (Taxas)</span>
               <span className="text-2xl font-black text-orange-700">{totalTaxasEntrega.toFixed(2)}€</span>
             </div>
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-8 mb-8 no-break">
+        {/* --- GRÁFICOS NO PDF --- */}
+        <h3 className="text-lg font-black uppercase tracking-wider mb-4 border-b border-gray-300 pb-1 no-break">Análise Gráfica</h3>
+        <div className="grid grid-cols-3 gap-6 mb-8 no-break">
           <div>
-            <h3 className="text-md font-black uppercase tracking-wider mb-4 border-b border-gray-300 pb-1">Faturação por Canal</h3>
+            <h4 className="text-xs font-bold uppercase text-gray-500 mb-3">Faturação por Canal</h4>
             <div className="space-y-3">
-              {canaisArray.length === 0 ? <p className="text-xs text-gray-500">Sem dados.</p> : canaisArray.map(c => (
+              {canaisArray.length === 0 ? <p className="text-xs text-gray-400">Sem dados.</p> : canaisArray.map(c => (
                 <div key={c.nome}>
-                  <div className="flex justify-between text-xs font-bold mb-1">
+                  <div className="flex justify-between text-[10px] font-bold mb-1">
                     <span>{c.nome}</span><span>{c.valor.toFixed(2)}€</span>
                   </div>
-                  <div className="w-full bg-gray-200 h-3 rounded-full overflow-hidden"><div className="bg-orange-500 h-full" style={{ width: `${(c.valor / maxCanal) * 100}%` }}></div></div>
+                  <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden"><div className="bg-orange-500 h-full" style={{ width: `${(c.valor / maxCanal) * 100}%` }}></div></div>
                 </div>
               ))}
             </div>
           </div>
 
           <div>
-            <h3 className="text-md font-black uppercase tracking-wider mb-4 border-b border-gray-300 pb-1">Faturação por Pagamento</h3>
+            <h4 className="text-xs font-bold uppercase text-gray-500 mb-3">Faturação por Pagamento</h4>
             <div className="space-y-3">
-              {pagamentosArray.length === 0 ? <p className="text-xs text-gray-500">Sem dados.</p> : pagamentosArray.map(p => (
+              {pagamentosArray.length === 0 ? <p className="text-xs text-gray-400">Sem dados.</p> : pagamentosArray.map(p => (
                 <div key={p.nome}>
-                  <div className="flex justify-between text-xs font-bold mb-1">
+                  <div className="flex justify-between text-[10px] font-bold mb-1">
                     <span>{p.nome}</span><span>{p.valor.toFixed(2)}€</span>
                   </div>
-                  <div className="w-full bg-gray-200 h-3 rounded-full overflow-hidden"><div className="bg-blue-500 h-full" style={{ width: `${(p.valor / maxPagamento) * 100}%` }}></div></div>
+                  <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden"><div className="bg-blue-500 h-full" style={{ width: `${(p.valor / maxPagamento) * 100}%` }}></div></div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <h4 className="text-xs font-bold uppercase text-gray-500 mb-3">Faturação por Categoria</h4>
+            <div className="space-y-3">
+              {categoriasGraficoArray.length === 0 ? <p className="text-xs text-gray-400">Sem dados.</p> : categoriasGraficoArray.map(c => (
+                <div key={c.nome}>
+                  <div className="flex justify-between text-[10px] font-bold mb-1 uppercase">
+                    <span>{c.nome}</span><span>{c.valor.toFixed(2)}€</span>
+                  </div>
+                  <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden"><div className="bg-green-600 h-full" style={{ width: `${(c.valor / maxCategoriaGrafico) * 100}%` }}></div></div>
                 </div>
               ))}
             </div>
@@ -583,17 +599,17 @@ export default function CentralRelatorios() {
         </div>
 
         <div className="mb-8 no-break">
-          <h3 className="text-md font-black uppercase tracking-wider mb-4 border-b border-gray-300 pb-1">Top 10 Itens Vendidos (Volume)</h3>
-          <div className="space-y-2">
+          <h4 className="text-xs font-bold uppercase text-gray-500 mb-3">Top 10 Itens Vendidos (Volume)</h4>
+          <div className="grid grid-cols-2 gap-x-8 gap-y-2">
             {topProdutosVendas.slice(0, 10).map((prod, idx) => (
-              <div key={idx} className="flex items-center gap-4 text-xs font-bold">
-                <span className="w-4 text-gray-400">{idx + 1}º</span>
+              <div key={idx} className="flex items-center gap-3 text-[11px] font-bold">
+                <span className="w-4 text-gray-400 text-right">{idx + 1}º</span>
                 <div className="flex-1">
                   <div className="flex justify-between mb-0.5">
-                    <span>{prod.nome} <span className="text-[9px] font-normal text-gray-500">({prod.categoria})</span></span>
+                    <span className="truncate pr-2">{prod.nome} <span className="text-[8px] font-normal text-gray-500 uppercase">({prod.categoria})</span></span>
                     <span>{prod.quantidade} un.</span>
                   </div>
-                  <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden"><div className="bg-green-500 h-full" style={{ width: `${(prod.quantidade / maxProduto) * 100}%` }}></div></div>
+                  <div className="w-full bg-gray-200 h-1.5 rounded-full overflow-hidden"><div className="bg-gray-800 h-full" style={{ width: `${(prod.quantidade / maxProduto) * 100}%` }}></div></div>
                 </div>
               </div>
             ))}
@@ -602,16 +618,56 @@ export default function CentralRelatorios() {
 
         <div className="page-break-before"></div>
 
+        {/* --- SECÇÃO ITENS VENDIDOS (FILTRADOS) --- */}
+        <div className="mb-8 no-break">
+          <div className="flex justify-between items-end border-b-2 border-black pb-2 mb-4">
+            <h3 className="text-lg font-black uppercase tracking-wider">Itens Vendidos (Filtro: {filtroCategoriaProduto.toUpperCase()})</h3>
+            <span className="font-mono text-xs font-bold bg-gray-100 px-3 py-1.5 rounded">
+              QTD Total: {totaisFiltrados.quantidade} &nbsp;|&nbsp; Custo Total: {totaisFiltrados.custo.toFixed(2)}€ &nbsp;|&nbsp; Faturado: {totaisFiltrados.faturacao.toFixed(2)}€
+            </span>
+          </div>
+          {produtosVendidosFiltrados.length === 0 ? (
+            <p className="text-xs text-gray-500 italic">Nenhum item vendido nesta categoria no período selecionado.</p>
+          ) : (
+            <table className="w-full text-left text-xs border-collapse border border-gray-300">
+              <thead>
+                <tr className="bg-gray-100 border-b-2 border-gray-300 uppercase tracking-widest text-[9px] text-gray-600">
+                  <th className="py-2 px-2 border-r border-gray-300">Categoria</th>
+                  <th className="py-2 px-2 border-r border-gray-300">Produto</th>
+                  <th className="py-2 px-2 text-right border-r border-gray-300">QTD</th>
+                  <th className="py-2 px-2 text-right border-r border-gray-300">Custo Un.</th>
+                  <th className="py-2 px-2 text-right border-r border-gray-300 text-red-700">Custo Total</th>
+                  <th className="py-2 px-2 text-right text-green-700">Faturado</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-200">
+                {produtosVendidosFiltrados.map((prod, idx) => (
+                  <tr key={idx} className="hover:bg-gray-50">
+                    <td className="py-1.5 px-2 text-[9px] uppercase font-bold text-gray-500 border-r border-gray-300">{prod.categoria}</td>
+                    <td className="py-1.5 px-2 font-bold text-black border-r border-gray-300">{prod.nome}</td>
+                    <td className="py-1.5 px-2 text-right font-black text-black border-r border-gray-300">{prod.quantidade}</td>
+                    <td className="py-1.5 px-2 text-right text-gray-500 border-r border-gray-300">{prod.custoUnitario.toFixed(2)}€</td>
+                    <td className="py-1.5 px-2 text-right text-red-700 font-bold border-r border-gray-300">{prod.custoTotal.toFixed(2)}€</td>
+                    <td className="py-1.5 px-2 text-right text-green-700 font-bold">{prod.faturacao.toFixed(2)}€</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <div className="page-break-before"></div>
+
         <div className="mb-8">
           <div className="flex justify-between items-end border-b-2 border-black pb-2 mb-4">
-            <h3 className="text-lg font-black uppercase tracking-wider">Detalhamento Geral de Itens Vendidos</h3>
+            <h3 className="text-lg font-black uppercase tracking-wider">Detalhamento Geral de Itens</h3>
             <span className="text-xs font-bold text-gray-500">Todos os {topProdutosVendas.length} itens únicos faturados</span>
           </div>
           <table className="w-full text-left text-xs border-collapse border border-gray-300">
             <thead>
               <tr className="bg-gray-100 border-b-2 border-gray-300 uppercase tracking-widest text-[9px] text-gray-600">
                 <th className="py-2 px-2 border-r border-gray-300">Categoria</th>
-                <th className="py-2 px-2 border-r border-gray-300">Produto (Combos Desconstruídos)</th>
+                <th className="py-2 px-2 border-r border-gray-300">Produto</th>
                 <th className="py-2 px-2 text-right border-r border-gray-300">QTD</th>
                 <th className="py-2 px-2 text-right border-r border-gray-300">Custo Un.</th>
                 <th className="py-2 px-2 text-right border-r border-gray-300 text-red-700">Custo Total</th>
@@ -816,7 +872,7 @@ export default function CentralRelatorios() {
 
                 <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-[24px] shadow-xl">
                   <h3 className="text-xs font-black uppercase text-zinc-500 mb-4 tracking-widest flex items-center gap-2">
-                    <span className="text-blue-500">💳</span> Por Método Pagamento
+                    <span className="text-blue-500">💳</span> Por Pagamento
                   </h3>
                   <div className="space-y-4">
                     {pagamentosArray.length === 0 ? <p className="text-xs text-zinc-600">Sem dados.</p> : pagamentosArray.map(p => (
@@ -977,18 +1033,18 @@ export default function CentralRelatorios() {
                         </select>
                       </div>
 
-                      <div className="flex gap-2 overflow-x-auto custom-scrollbar pb-2">
-                        <div className="flex-1 bg-[#1a1a1c] p-3 rounded-xl border border-zinc-800/80 min-w-[100px]">
-                          <span className="block text-[9px] text-zinc-500 uppercase font-bold tracking-widest mb-1">QTD Total</span>
-                          <span className="text-xl font-black text-white">{totaisFiltrados.quantidade}</span>
+                      <div className="grid grid-cols-3 gap-2 pb-2">
+                        <div className="bg-[#1a1a1c] p-2 sm:p-3 rounded-xl border border-zinc-800/80 flex flex-col justify-center">
+                          <span className="block text-[8px] sm:text-[9px] text-zinc-500 uppercase font-bold tracking-widest mb-1">QTD Total</span>
+                          <span className="text-lg sm:text-xl font-black text-white">{totaisFiltrados.quantidade}</span>
                         </div>
-                        <div className="flex-1 bg-green-950/20 p-3 rounded-xl border border-green-900/30 min-w-[120px]">
-                          <span className="block text-[9px] text-green-500/70 uppercase font-bold tracking-widest mb-1">Faturado</span>
-                          <span className="text-xl font-black font-mono text-green-400">{totaisFiltrados.faturacao.toFixed(2)}€</span>
+                        <div className="bg-green-950/20 p-2 sm:p-3 rounded-xl border border-green-900/30 flex flex-col justify-center">
+                          <span className="block text-[8px] sm:text-[9px] text-green-500/70 uppercase font-bold tracking-widest mb-1">Faturado</span>
+                          <span className="text-lg sm:text-xl font-black font-mono text-green-400">{totaisFiltrados.faturacao.toFixed(2)}€</span>
                         </div>
-                        <div className="flex-1 bg-red-950/20 p-3 rounded-xl border border-red-900/30 min-w-[120px]">
-                          <span className="block text-[9px] text-red-500/70 uppercase font-bold tracking-widest mb-1">Custo Total</span>
-                          <span className="text-xl font-black font-mono text-red-400">{totaisFiltrados.custo.toFixed(2)}€</span>
+                        <div className="bg-red-950/20 p-2 sm:p-3 rounded-xl border border-red-900/30 flex flex-col justify-center">
+                          <span className="block text-[8px] sm:text-[9px] text-red-500/70 uppercase font-bold tracking-widest mb-1">Custo Total</span>
+                          <span className="text-lg sm:text-xl font-black font-mono text-red-400">{totaisFiltrados.custo.toFixed(2)}€</span>
                         </div>
                       </div>
                     </div>
