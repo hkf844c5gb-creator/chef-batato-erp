@@ -200,7 +200,10 @@ export default function CentralRelatorios() {
 
     const determinarCategoria = (nomeItem: string) => {
       const n = nomeItem.toLowerCase();
-      if (n.includes('brownie') || n.includes('mousse') || n.includes('pudim') || n.includes('sobremesa') || n.includes('sensação') || n.includes('fudge') || n.includes('brigadeiro')) return 'sobremesa';
+      // NOVA LÓGICA DE SEPARAÇÃO BROWNIE VS SOBREMESA
+      if (n.includes('brownie')) return 'brownie';
+      if (n.includes('mousse') || n.includes('pudim') || n.includes('sobremesa') || n.includes('sensação') || n.includes('fudge') || n.includes('brigadeiro')) return 'sobremesa';
+      
       if (n.includes('coca') || n.includes('água') || n.includes('agua') || n.includes('sumo') || n.includes('fanta') || n.includes('guaran') || n.includes('sprite') || n.includes('7up') || n.includes('nestea') || n.includes('ice tea') || n.includes('compal') || n.includes('bebida') || n.includes('cerveja')) return 'bebida';
       if (n.includes('calabresa') || n.includes('costela') || n.includes('frango') || n.includes('gratinado') || n.includes('strogonoff') || n.includes('misto') || n.includes('batata') || n.includes('camarão') || n.includes('camarao') || n.includes('carne') || n.includes('bolonhesa')) return 'batata';
       if (n.includes('combo') || n.includes('para dois') || n.includes('duplo') || n.includes('batatô10') || n.includes('batato10') || n.includes('batatô 10')) return 'combo';
@@ -291,13 +294,11 @@ export default function CentralRelatorios() {
     return Object.values(mapa).sort((a, b) => b.quantidade - a.quantidade);
   }, [pedidosFiltrados, produtosCatalogo]);
 
-  // APLICA O FILTRO DA UI NA LISTA DE PRODUTOS
   const produtosVendidosFiltrados = useMemo(() => {
     if (filtroCategoriaProduto === 'todas') return topProdutosVendas;
     return topProdutosVendas.filter(p => p.categoria === filtroCategoriaProduto);
   }, [topProdutosVendas, filtroCategoriaProduto]);
 
-  // CÁLCULO DOS TOTAIS ESPECÍFICOS DA CATEGORIA FILTRADA
   const totaisFiltrados = useMemo(() => {
     return produtosVendidosFiltrados.reduce((acc, item) => {
       acc.quantidade += item.quantidade;
@@ -318,60 +319,41 @@ export default function CentralRelatorios() {
   // --- AGRUPAMENTOS PARA OS GRÁFICOS DO PDF ---
   const canaisMap: Record<string, number> = {};
   const pagamentosMap: Record<string, number> = {};
-  
   pedidosFiltrados.forEach(p => {
     const canal = p.canal || 'Outros';
     const pag = p.forma_pagamento || 'Outros';
     canaisMap[canal] = (canaisMap[canal] || 0) + Number(p.total_geral);
     pagamentosMap[pag] = (pagamentosMap[pag] || 0) + Number(p.total_geral);
   });
-  
   const canaisArray = Object.entries(canaisMap).map(([nome, valor]) => ({nome, valor})).sort((a,b) => b.valor - a.valor);
   const pagamentosArray = Object.entries(pagamentosMap).map(([nome, valor]) => ({nome, valor})).sort((a,b) => b.valor - a.valor);
-
   const maxCanal = canaisArray.length > 0 ? Math.max(...canaisArray.map(c => c.valor)) : 0;
   const maxPagamento = pagamentosArray.length > 0 ? Math.max(...pagamentosArray.map(p => p.valor)) : 0;
   const maxProduto = topProdutosVendas.length > 0 ? topProdutosVendas[0].quantidade : 0;
 
   // --- PROCESSAMENTO: CAIXA ---
   useEffect(() => {
-    const movimentosManuais = caixaBruta.filter(c => validarIntervaloData(c.data_dia)).map(m => ({
-      ...m, valor: Number(m.valor)
-    }));
-
-    const movimentosPDV = pedidos.filter(p => 
-      validarIntervaloData(obterDataEfetiva(p)) && 
-      p.pago && (p.forma_pagamento === 'Dinheiro' || p.forma_pagamento === 'Dinheiro Glovo')
+    const movimentosManuais = caixaBruta.filter(c => validarIntervaloData(c.data_dia)).map(m => ({ ...m, valor: Number(m.valor) }));
+    const movimentosPDV = pedidos.filter(p => validarIntervaloData(obterDataEfetiva(p)) && p.pago && (p.forma_pagamento === 'Dinheiro' || p.forma_pagamento === 'Dinheiro Glovo')
     ).map(p => ({
-      id: p.id,
-      created_at: obterDataEfetiva(p),
-      data_dia: obterDataEfetiva(p).substring(0, 10),
-      tipo: 'Entrada' as const,
-      descricao: `Venda PDV #${p.numero_pedido || 'S/N'} (${p.canal}) - ${p.forma_pagamento}`,
-      valor: Number(p.total_geral)
+      id: p.id, created_at: obterDataEfetiva(p), data_dia: obterDataEfetiva(p).substring(0, 10), tipo: 'Entrada' as const, descricao: `Venda PDV #${p.numero_pedido || 'S/N'} (${p.canal}) - ${p.forma_pagamento}`, valor: Number(p.total_geral)
     }));
-
     const caixaUnificada = [...movimentosManuais, ...movimentosPDV];
     const diasMap = new Map<string, ResumoDia>();
     caixaUnificada.forEach(mov => {
-      if (!diasMap.has(mov.data_dia)) {
-        diasMap.set(mov.data_dia, { data: mov.data_dia, abertura: 0, entradas: 0, saidas: 0, esperado: 0, fechamento: null, diferenca: null, movimentos: [] });
-      }
+      if (!diasMap.has(mov.data_dia)) diasMap.set(mov.data_dia, { data: mov.data_dia, abertura: 0, entradas: 0, saidas: 0, esperado: 0, fechamento: null, diferenca: null, movimentos: [] });
       const dia = diasMap.get(mov.data_dia)!;
       dia.movimentos.push(mov);
-
       if (mov.tipo === 'Abertura') dia.abertura += mov.valor;
       else if (mov.tipo === 'Entrada') dia.entradas += mov.valor;
       else if (mov.tipo === 'Saida') dia.saidas += mov.valor;
       else if (mov.tipo === 'Fechamento') dia.fechamento = mov.valor;
     });
-
     const arrayFinal = Array.from(diasMap.values()).map(dia => {
       const esperado = dia.abertura + dia.entradas - dia.saidas;
       const diferenca = dia.fechamento !== null ? dia.fechamento - esperado : null;
       return { ...dia, esperado, diferenca };
     });
-
     arrayFinal.sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime());
     setRelatorioDias(arrayFinal);
   }, [caixaBruta, pedidos, tipoIntervalo, dataUnica, dataInicio, dataFim, mesSelecionado, anoSelecionado]);
@@ -382,21 +364,15 @@ export default function CentralRelatorios() {
 
   // --- ACÇÕES E EVENTOS ---
   const abrirModalEdicao = (pedido: Pedido) => {
-    setPedidoSendoEditado(pedido);
-    setEditCliente(pedido.cliente || ''); 
-    setEditTotal(pedido.total_geral);
-    setModalEdicaoAberto(true);
+    setPedidoSendoEditado(pedido); setEditCliente(pedido.cliente || ''); setEditTotal(pedido.total_geral); setModalEdicaoAberto(true);
   };
 
   const salvarAlteracoesFinanceiras = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!pedidoSendoEditado) return;
+    e.preventDefault(); if (!pedidoSendoEditado) return;
     try {
       const { error } = await supabase.from('pedidos').update({ cliente: editCliente, total_geral: Number(editTotal) }).eq('id', pedidoSendoEditado.id);
       if (error) throw error;
-      alert('Atualizado com sucesso!');
-      setModalEdicaoAberto(false);
-      carregarRelatorios();
+      alert('Atualizado com sucesso!'); setModalEdicaoAberto(false); carregarRelatorios();
     } catch (err: any) { alert(`Erro: ${err.message}`); }
   };
 
@@ -405,44 +381,121 @@ export default function CentralRelatorios() {
     try {
       const { error } = await supabase.from('pedidos').delete().eq('id', id);
       if (error) throw error;
-      setPedidoExpandidoId(null);
-      carregarRelatorios();
+      setPedidoExpandidoId(null); carregarRelatorios();
     } catch (err: any) { alert(`Erro: ${err.message}`); }
   };
 
-  const exportarPDF = () => {
-    window.print();
+  const exportarPDF = () => { window.print(); };
+
+  const exportarExcelCSV = () => {
+    let csv = '\uFEFF';
+    const fmtEuros = (valor: number) => valor.toFixed(2).replace('.', ',');
+
+    csv += "=== RESUMO GERAL ===\n";
+    csv += "Métrica;Valor\n";
+    csv += `Nº Pedidos;${pedidosFiltrados.length}\n`;
+    csv += `Itens Totais ${labelPeriodo};${totalItensVendidosGeral}\n`;
+    csv += `Faturado Bruto (€);${fmtEuros(totalFaturadoBruto)}\n`;
+    csv += `Caixa Realizado (€);${fmtEuros(totalRecebido)}\n`;
+    csv += `Fiado Pendente (€);${fmtEuros(totalPendente)}\n`;
+    csv += `Custos Entrega (€);${fmtEuros(totalTaxasEntrega)}\n\n`;
+
+    csv += `=== PRODUTOS PRODUZIDOS / VENDIDOS (Filtro: ${filtroCategoriaProduto.toUpperCase()}) ===\n`;
+    csv += "Categoria;Produto;Quantidade;Custo Unitário (€);Custo Total (€);Faturado (€)\n";
+    produtosVendidosFiltrados.forEach(p => {
+      csv += `${p.categoria.toUpperCase()};${p.nome};${p.quantidade};${fmtEuros(p.custoUnitario)};${fmtEuros(p.custoTotal)};${fmtEuros(p.faturacao)}\n`;
+    });
+    csv += `TOTAIS FILTRADOS;-;${totaisFiltrados.quantidade};-;${fmtEuros(totaisFiltrados.custo)};${fmtEuros(totaisFiltrados.faturacao)}\n\n`;
+
+    csv += "=== LANÇAMENTOS DE PEDIDOS ===\n";
+    csv += "Data;Hora;Pedido;Cliente;Canal;Pagamento;Estado;Total (€)\n";
+    pedidosFiltrados.forEach(p => {
+      const d = new Date(obterDataEfetiva(p));
+      csv += `${d.toLocaleDateString('pt-PT')};${d.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })};${p.numero_pedido || 'S/N'};${limparNomePedido(p.cliente)};${p.canal};${p.forma_pagamento};${p.pago ? 'Pago' : 'Pendente'};${fmtEuros(p.total_geral)}\n`;
+    });
+    csv += "\n";
+
+    csv += "=== AUDITORIA DE CAIXA ===\n";
+    csv += "Data;Abertura (€);Entradas (€);Saídas (€);Saldo Esperado (€);Contado Gaveta (€);Diferença (€)\n";
+    relatorioDias.forEach(dia => {
+      const pendente = dia.fechamento === null;
+      csv += `${new Date(dia.data).toLocaleDateString('pt-PT')};${fmtEuros(dia.abertura)};${fmtEuros(dia.entradas)};${fmtEuros(dia.saidas)};${fmtEuros(dia.esperado)};${pendente ? 'Em Aberto' : fmtEuros(dia.fechamento!)};${pendente ? '---' : fmtEuros(dia.diferenca!)}\n`;
+    });
+
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement("a");
+    const url = URL.createObjectURL(blob);
+    link.setAttribute("href", url);
+    const periodoStr = tipoIntervalo === 'dia' ? dataUnica : tipoIntervalo === 'personalizado' ? `${dataInicio}_a_${dataFim}` : 'Relatorio';
+    link.setAttribute("download", `ChefBatato_Export_${periodoStr}.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const labelPeriodo = tipoIntervalo === 'dia' ? '(Dia)' : tipoIntervalo === 'mes' ? '(Mês)' : tipoIntervalo === 'ano' ? '(Ano)' : '(Período)';
-  
   const textoPeriodoPDF = tipoIntervalo === 'dia' ? new Date(dataUnica).toLocaleDateString('pt-PT') : 
                           tipoIntervalo === 'personalizado' ? `${new Date(dataInicio).toLocaleDateString('pt-PT')} a ${new Date(dataFim).toLocaleDateString('pt-PT')}` : 
                           'Filtro Aplicado';
 
   return (
     <>
-      {/* ESTILOS ESPECÍFICOS PARA O PDF - Torna os gráficos coloridos e visíveis na impressão */}
+      {/* ========================================================================= */}
+      {/* 🚀 SUPER MOTOR DE IMPRESSÃO (INVISÍVEL NO ECRÃ, MAS PERFEITO NO PDF) 🚀 */}
+      {/* ========================================================================= */}
       <style dangerouslySetInnerHTML={{__html: `
+        #pdf-view { display: none; }
+        
         @media print {
-          @page { size: A4 portrait; margin: 10mm; }
-          body { background-color: white !important; color: black !important; font-family: sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-          .print\\:hidden { display: none !important; }
-          .print\\:block { display: block !important; }
-          .print\\:flex { display: flex !important; }
-          .print\\:grid { display: grid !important; }
+          @page { size: A4 portrait; margin: 12mm; }
+          
+          aside, nav, header, button { display: none !important; }
+          #web-view { display: none !important; }
+          
+          html, body, main, div, section {
+            height: auto !important;
+            max-height: none !important;
+            overflow: visible !important;
+            position: static !important;
+          }
+
+          body { background-color: white !important; }
+
+          #pdf-view {
+            display: block !important;
+            position: absolute !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 100vw !important;
+            min-height: 100vh !important;
+            background-color: white !important;
+            color: black !important;
+            z-index: 999999 !important;
+            padding: 0 !important;
+            margin: 0 !important;
+          }
+
+          #pdf-view * { color: black !important; font-family: sans-serif; }
+          #pdf-view .text-red-700 { color: #b91c1c !important; }
+          #pdf-view .text-green-700 { color: #15803d !important; }
+          #pdf-view .text-orange-700 { color: #c2410c !important; }
+          #pdf-view .text-blue-800 { color: #1e40af !important; }
+          #pdf-view .bg-gray-50 { background-color: #f9fafb !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+          #pdf-view .bg-gray-100 { background-color: #f3f4f6 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+
           .page-break-before { page-break-before: always; }
-          .page-break-inside-avoid { page-break-inside: avoid; }
+          .no-break, tr, td, th { page-break-inside: avoid; }
         }
       `}} />
 
-      {/* =========== RELATÓRIO PDF (Oculto no Ecrã, Visível na Impressão) =========== */}
-      <div className="hidden print:block w-full bg-white text-black p-4">
-        
-        {/* Cabeçalho do PDF */}
+      {/* ========================================================================= */}
+      {/* 📄 DOCUMENTO PDF OFICIAL (CRIADO DINAMICAMENTE PARA A IMPRESSÃO)        */}
+      {/* ========================================================================= */}
+      <div id="pdf-view">
         <div className="border-b-2 border-black pb-4 mb-6 flex justify-between items-end">
           <div>
-            <h1 className="text-3xl font-black uppercase tracking-widest text-black">Chef Batatô</h1>
+            <h1 className="text-3xl font-black uppercase tracking-widest">Chef Batatô</h1>
             <h2 className="text-xl font-bold text-gray-700 mt-1">Relatório de Gestão Integrada</h2>
             <p className="text-sm font-bold text-gray-500 mt-2">Período: <span className="text-black">{textoPeriodoPDF}</span></p>
           </div>
@@ -452,7 +505,6 @@ export default function CentralRelatorios() {
           </div>
         </div>
 
-        {/* Secção 1: Resumo Financeiro */}
         <h3 className="text-lg font-black uppercase tracking-wider mb-4 border-b border-gray-300 pb-1">Resumo Financeiro e Operacional</h3>
         <div className="grid grid-cols-4 gap-4 mb-8">
           <div className="p-4 border border-gray-300 rounded-xl bg-gray-50">
@@ -481,57 +533,47 @@ export default function CentralRelatorios() {
           </div>
           <div className="p-4 border border-gray-300 rounded-xl bg-orange-50 col-span-2 flex justify-between items-center">
             <div>
-              <span className="block text-[10px] uppercase font-bold text-gray-500 mb-1">Custos Totais Base (Ingredientes Estimados)</span>
+              <span className="block text-[10px] uppercase font-bold text-gray-500 mb-1">Custos Produção (Ingredientes Estimados)</span>
               <span className="text-2xl font-black text-orange-700">{topProdutosVendas.reduce((acc, p) => acc + p.custoTotal, 0).toFixed(2)}€</span>
             </div>
-            <div className="text-right">
-              <span className="block text-[10px] uppercase font-bold text-gray-500 mb-1">Custos de Entrega (Taxas)</span>
+            <div className="text-right border-l border-gray-300 pl-4">
+              <span className="block text-[10px] uppercase font-bold text-gray-500 mb-1">Custos Entrega (Taxas Estafeta)</span>
               <span className="text-2xl font-black text-orange-700">{totalTaxasEntrega.toFixed(2)}€</span>
             </div>
           </div>
         </div>
 
-        {/* Secção 2: Gráficos de Vendas */}
-        <div className="grid grid-cols-2 gap-8 mb-8 page-break-inside-avoid">
-          {/* Gráfico de Canais */}
+        <div className="grid grid-cols-2 gap-8 mb-8 no-break">
           <div>
             <h3 className="text-md font-black uppercase tracking-wider mb-4 border-b border-gray-300 pb-1">Faturação por Canal</h3>
             <div className="space-y-3">
               {canaisArray.length === 0 ? <p className="text-xs text-gray-500">Sem dados.</p> : canaisArray.map(c => (
                 <div key={c.nome}>
                   <div className="flex justify-between text-xs font-bold mb-1">
-                    <span>{c.nome}</span>
-                    <span>{c.valor.toFixed(2)}€</span>
+                    <span>{c.nome}</span><span>{c.valor.toFixed(2)}€</span>
                   </div>
-                  <div className="w-full bg-gray-200 h-3 rounded-full overflow-hidden">
-                    <div className="bg-orange-500 h-full" style={{ width: `${(c.valor / maxCanal) * 100}%` }}></div>
-                  </div>
+                  <div className="w-full bg-gray-200 h-3 rounded-full overflow-hidden"><div className="bg-orange-500 h-full" style={{ width: `${(c.valor / maxCanal) * 100}%` }}></div></div>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Gráfico de Pagamentos */}
           <div>
             <h3 className="text-md font-black uppercase tracking-wider mb-4 border-b border-gray-300 pb-1">Faturação por Pagamento</h3>
             <div className="space-y-3">
               {pagamentosArray.length === 0 ? <p className="text-xs text-gray-500">Sem dados.</p> : pagamentosArray.map(p => (
                 <div key={p.nome}>
                   <div className="flex justify-between text-xs font-bold mb-1">
-                    <span>{p.nome}</span>
-                    <span>{p.valor.toFixed(2)}€</span>
+                    <span>{p.nome}</span><span>{p.valor.toFixed(2)}€</span>
                   </div>
-                  <div className="w-full bg-gray-200 h-3 rounded-full overflow-hidden">
-                    <div className="bg-blue-500 h-full" style={{ width: `${(p.valor / maxPagamento) * 100}%` }}></div>
-                  </div>
+                  <div className="w-full bg-gray-200 h-3 rounded-full overflow-hidden"><div className="bg-blue-500 h-full" style={{ width: `${(p.valor / maxPagamento) * 100}%` }}></div></div>
                 </div>
               ))}
             </div>
           </div>
         </div>
 
-        {/* Secção 3: Top 10 Produtos Visual */}
-        <div className="mb-8 page-break-inside-avoid">
+        <div className="mb-8 no-break">
           <h3 className="text-md font-black uppercase tracking-wider mb-4 border-b border-gray-300 pb-1">Top 10 Produtos Mais Produzidos</h3>
           <div className="space-y-2">
             {topProdutosVendas.slice(0, 10).map((prod, idx) => (
@@ -542,9 +584,7 @@ export default function CentralRelatorios() {
                     <span>{prod.nome} <span className="text-[9px] font-normal text-gray-500">({prod.categoria})</span></span>
                     <span>{prod.quantidade} un.</span>
                   </div>
-                  <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden">
-                    <div className="bg-green-500 h-full" style={{ width: `${(prod.quantidade / maxProduto) * 100}%` }}></div>
-                  </div>
+                  <div className="w-full bg-gray-200 h-2 rounded-full overflow-hidden"><div className="bg-green-500 h-full" style={{ width: `${(prod.quantidade / maxProduto) * 100}%` }}></div></div>
                 </div>
               </div>
             ))}
@@ -553,53 +593,50 @@ export default function CentralRelatorios() {
 
         <div className="page-break-before"></div>
 
-        {/* Secção 4: Tabela Completa de Produtos */}
         <div className="mb-8">
           <div className="flex justify-between items-end border-b-2 border-black pb-2 mb-4">
             <h3 className="text-lg font-black uppercase tracking-wider">Detalhamento Geral de Produção</h3>
-            <span className="text-xs font-bold text-gray-500">Todos os {topProdutosVendas.length} itens únicos faturados</span>
+            <span className="text-xs font-bold text-gray-500">Todos os {topProdutosVendas.length} itens únicos produzidos/faturados</span>
           </div>
-          
-          <table className="w-full text-left text-xs border-collapse">
+          <table className="w-full text-left text-xs border-collapse border border-gray-300">
             <thead>
               <tr className="bg-gray-100 border-b-2 border-gray-300 uppercase tracking-widest text-[9px] text-gray-600">
-                <th className="py-2 px-1">Categoria</th>
-                <th className="py-2 px-1">Produto (Combos Desconstruídos)</th>
-                <th className="py-2 px-1 text-right">QTD</th>
-                <th className="py-2 px-1 text-right">Custo Un.</th>
-                <th className="py-2 px-1 text-right">Custo Total</th>
-                <th className="py-2 px-1 text-right">Faturado</th>
+                <th className="py-2 px-2 border-r border-gray-300">Categoria</th>
+                <th className="py-2 px-2 border-r border-gray-300">Produto (Combos Desconstruídos)</th>
+                <th className="py-2 px-2 text-right border-r border-gray-300">QTD</th>
+                <th className="py-2 px-2 text-right border-r border-gray-300">Custo Un.</th>
+                <th className="py-2 px-2 text-right border-r border-gray-300 text-red-700">Custo Total</th>
+                <th className="py-2 px-2 text-right text-green-700">Faturado</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200">
               {topProdutosVendas.map((prod, idx) => (
                 <tr key={idx} className="hover:bg-gray-50">
-                  <td className="py-1.5 px-1 text-[9px] uppercase font-bold text-gray-500">{prod.categoria}</td>
-                  <td className="py-1.5 px-1 font-bold text-black">{prod.nome}</td>
-                  <td className="py-1.5 px-1 text-right font-black text-black">{prod.quantidade}</td>
-                  <td className="py-1.5 px-1 text-right text-gray-500">{prod.custoUnitario.toFixed(2)}€</td>
-                  <td className="py-1.5 px-1 text-right text-red-600 font-bold">{prod.custoTotal.toFixed(2)}€</td>
-                  <td className="py-1.5 px-1 text-right text-green-700 font-bold">{prod.faturacao.toFixed(2)}€</td>
+                  <td className="py-1.5 px-2 text-[9px] uppercase font-bold text-gray-500 border-r border-gray-300">{prod.categoria}</td>
+                  <td className="py-1.5 px-2 font-bold text-black border-r border-gray-300">{prod.nome}</td>
+                  <td className="py-1.5 px-2 text-right font-black text-black border-r border-gray-300">{prod.quantidade}</td>
+                  <td className="py-1.5 px-2 text-right text-gray-500 border-r border-gray-300">{prod.custoUnitario.toFixed(2)}€</td>
+                  <td className="py-1.5 px-2 text-right text-red-700 font-bold border-r border-gray-300">{prod.custoTotal.toFixed(2)}€</td>
+                  <td className="py-1.5 px-2 text-right text-green-700 font-bold">{prod.faturacao.toFixed(2)}€</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
 
-        {/* Secção 5: Extrato Diário do Caixa */}
         {relatorioDias.length > 0 && (
-          <div className="mb-8 page-break-inside-avoid">
+          <div className="mb-8 no-break">
             <h3 className="text-lg font-black uppercase tracking-wider border-b-2 border-black pb-2 mb-4">Auditoria de Caixa Diária</h3>
-            <table className="w-full text-left text-xs border-collapse">
+            <table className="w-full text-left text-xs border-collapse border border-gray-300">
               <thead>
                 <tr className="bg-gray-100 border-b-2 border-gray-300 uppercase tracking-widest text-[9px] text-gray-600">
-                  <th className="py-2 px-1">Data</th>
-                  <th className="py-2 px-1 text-right">Abertura</th>
-                  <th className="py-2 px-1 text-right">Entradas</th>
-                  <th className="py-2 px-1 text-right">Saídas</th>
-                  <th className="py-2 px-1 text-right bg-blue-50 text-blue-800">Esperado</th>
-                  <th className="py-2 px-1 text-right font-black">Gaveta Real</th>
-                  <th className="py-2 px-1 text-right">Diferença</th>
+                  <th className="py-2 px-2 border-r border-gray-300">Data</th>
+                  <th className="py-2 px-2 text-right border-r border-gray-300">Abertura</th>
+                  <th className="py-2 px-2 text-right border-r border-gray-300">Entradas</th>
+                  <th className="py-2 px-2 text-right border-r border-gray-300">Saídas</th>
+                  <th className="py-2 px-2 text-right bg-blue-50 text-blue-800 border-r border-gray-300">Esperado</th>
+                  <th className="py-2 px-2 text-right font-black border-r border-gray-300">Gaveta Real</th>
+                  <th className="py-2 px-2 text-right">Diferença</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200 font-medium">
@@ -608,13 +645,13 @@ export default function CentralRelatorios() {
                   const quebra = !pendente && dia.diferenca! < 0;
                   return (
                     <tr key={dia.data}>
-                      <td className="py-1.5 px-1 font-bold">{new Date(dia.data).toLocaleDateString('pt-PT')}</td>
-                      <td className="py-1.5 px-1 text-right text-gray-600">{dia.abertura.toFixed(2)}€</td>
-                      <td className="py-1.5 px-1 text-right text-green-600">{dia.entradas.toFixed(2)}€</td>
-                      <td className="py-1.5 px-1 text-right text-red-600">{dia.saidas.toFixed(2)}€</td>
-                      <td className="py-1.5 px-1 text-right font-bold text-blue-800 bg-blue-50">{dia.esperado.toFixed(2)}€</td>
-                      <td className="py-1.5 px-1 text-right font-black">{pendente ? 'Em Aberto' : `${dia.fechamento?.toFixed(2)}€`}</td>
-                      <td className={`py-1.5 px-1 text-right font-black ${pendente ? 'text-gray-400' : quebra ? 'text-red-600' : dia.diferenca === 0 ? 'text-green-600' : 'text-emerald-600'}`}>
+                      <td className="py-1.5 px-2 font-bold border-r border-gray-300">{new Date(dia.data).toLocaleDateString('pt-PT')}</td>
+                      <td className="py-1.5 px-2 text-right text-gray-600 border-r border-gray-300">{dia.abertura.toFixed(2)}€</td>
+                      <td className="py-1.5 px-2 text-right text-green-700 border-r border-gray-300">{dia.entradas.toFixed(2)}€</td>
+                      <td className="py-1.5 px-2 text-right text-red-700 border-r border-gray-300">{dia.saidas.toFixed(2)}€</td>
+                      <td className="py-1.5 px-2 text-right font-bold text-blue-800 bg-blue-50 border-r border-gray-300">{dia.esperado.toFixed(2)}€</td>
+                      <td className="py-1.5 px-2 text-right font-black border-r border-gray-300">{pendente ? 'Em Aberto' : `${dia.fechamento?.toFixed(2)}€`}</td>
+                      <td className={`py-1.5 px-2 text-right font-black ${pendente ? 'text-gray-400' : quebra ? 'text-red-700' : dia.diferenca === 0 ? 'text-green-700' : 'text-blue-800'}`}>
                         {pendente ? '---' : dia.diferenca === 0 ? 'Exato' : `${dia.diferenca! > 0 ? '+' : ''}${dia.diferenca?.toFixed(2)}€`}
                       </td>
                     </tr>
@@ -632,10 +669,11 @@ export default function CentralRelatorios() {
       {/* ========================================================================= */}
 
 
-      {/* ======================= UI NORMAL (SISTEMA WEB) ======================= */}
-      <div className="min-h-screen bg-zinc-950 text-white font-sans flex flex-col pb-24 selection:bg-orange-500/30 print:hidden">
+      {/* ========================================================================= */}
+      {/* 💻 SISTEMA WEB VISUAL (FUNDO ESCURO - Oculto no PDF)                      */}
+      {/* ========================================================================= */}
+      <div id="web-view" className="min-h-screen bg-zinc-950 text-white font-sans flex flex-col pb-24 selection:bg-orange-500/30">
         
-        {/* CABEÇALHO */}
         <header className="sticky top-0 z-20 bg-zinc-950/80 backdrop-blur-xl border-b border-zinc-800/60 px-5 py-4 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-700 flex items-center justify-center shadow-lg shadow-blue-900/40">
@@ -648,7 +686,6 @@ export default function CentralRelatorios() {
           </div>
 
           <div className="flex items-center gap-4 w-full xl:w-auto">
-            {/* NAVEGAÇÃO DE ABAS */}
             <div className="flex bg-zinc-900 p-1 rounded-2xl border border-zinc-800 overflow-x-auto custom-scrollbar flex-1 xl:flex-none">
               <button onClick={() => setAbaAtiva('geral')} className={`px-5 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${abaAtiva === 'geral' ? 'bg-blue-600 text-white shadow-lg' : 'text-zinc-400 hover:text-white'}`}>
                 📋 Faturação Geral
@@ -658,10 +695,14 @@ export default function CentralRelatorios() {
               </button>
             </div>
             
-            {/* BOTÃO EXPORTAR PDF */}
-            <button onClick={exportarPDF} className="bg-white hover:bg-zinc-200 text-zinc-900 px-4 py-2 rounded-xl text-xs font-black transition-all shadow-md flex items-center gap-2 whitespace-nowrap">
-              🖨️ Exportar PDF Completo
-            </button>
+            <div className="flex gap-2">
+              <button onClick={exportarExcelCSV} className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded-xl text-xs font-black transition-all shadow-md flex items-center gap-2 whitespace-nowrap">
+                📊 Excel
+              </button>
+              <button onClick={exportarPDF} className="bg-white hover:bg-zinc-200 text-zinc-900 px-4 py-2 rounded-xl text-xs font-black transition-all shadow-md flex items-center gap-2 whitespace-nowrap">
+                🖨️ PDF Completo
+              </button>
+            </div>
           </div>
         </header>
 
@@ -674,7 +715,6 @@ export default function CentralRelatorios() {
 
         <main className="flex-1 p-5 space-y-6 max-w-7xl mx-auto w-full">
           
-          {/* BARRA DE FILTROS SUPERIOR */}
           <div className="bg-zinc-900 border border-zinc-800 p-4 rounded-3xl flex flex-col lg:flex-row justify-between items-center gap-4">
             <div className="flex flex-wrap bg-zinc-950 p-1 rounded-2xl border border-zinc-800 w-full lg:w-auto justify-center">
               <button onClick={() => setTipoIntervalo('dia')} className={`flex-1 lg:flex-initial px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all ${tipoIntervalo === 'dia' ? 'bg-zinc-700 text-white shadow' : 'text-zinc-400 hover:text-white'}`}>Por Dia</button>
@@ -715,7 +755,6 @@ export default function CentralRelatorios() {
             </div>
           </div>
 
-          {/* ---------------- ABA 1: FATURAÇÃO GERAL ---------------- */}
           {abaAtiva === 'geral' && (
             <div className="space-y-6 animate-in fade-in duration-300">
               
@@ -768,9 +807,8 @@ export default function CentralRelatorios() {
 
               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 
-                {/* LADO ESQUERDO: LISTA DE FATURAS */}
                 <div className="lg:col-span-2 space-y-3">
-                  <h3 className="text-sm font-black uppercase text-zinc-300 tracking-wider">📦 Lançamentos ({pedidosFiltrados.length})</h3>
+                  <h3 className="text-sm font-black uppercase text-zinc-300 tracking-wider">📦 Lançamentos Brutos ({pedidosFiltrados.length})</h3>
                   {loading ? <div className="text-center p-10 text-zinc-500">A processar...</div> : pedidosFiltrados.length === 0 ? (
                     <div className="text-center p-10 bg-zinc-900/30 rounded-3xl border border-zinc-800 text-zinc-500 text-sm">Nenhuma venda encontrada.</div>
                   ) : (
@@ -827,7 +865,7 @@ export default function CentralRelatorios() {
                     
                     <div className="flex items-center gap-2 mb-6">
                       <span className="text-xl">🔥</span>
-                      <h3 className="text-lg font-black uppercase tracking-wider text-orange-500">
+                      <h3 className="text-base sm:text-lg font-black uppercase tracking-wider text-orange-500 whitespace-nowrap">
                         Itens Produzidos / Vendidos
                       </h3>
                     </div>
@@ -842,7 +880,8 @@ export default function CentralRelatorios() {
                         >
                           <option value="todas">Todas as Categorias</option>
                           <option value="batata">🥔 Batatas / Recheios</option>
-                          <option value="sobremesa">🍫 Sobremesas</option>
+                          <option value="brownie">🍫 Brownies</option>
+                          <option value="sobremesa">🍮 Sobremesas</option>
                           <option value="bebida">🥤 Bebidas</option>
                           <option value="combo">🎁 Combos (Capas)</option>
                           <option value="outros">📦 Outros</option>
@@ -975,7 +1014,7 @@ export default function CentralRelatorios() {
 
         {/* MODAIS */}
         {modalEdicaoAberto && (
-          <div className="fixed inset-0 bg-zinc-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4 print:hidden">
+          <div className="fixed inset-0 bg-zinc-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
             <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-[32px] p-6 shadow-2xl space-y-4">
               <h2 className="text-lg font-black text-white">Corrigir Lançamento</h2>
               <form onSubmit={salvarAlteracoesFinanceiras} className="space-y-4 text-sm">
@@ -998,7 +1037,7 @@ export default function CentralRelatorios() {
 
         {/* MODAL DE EXTRATO DE CAIXA */}
         {diaSelecionado && (
-          <div className="fixed inset-0 bg-zinc-950/80 backdrop-blur-md z-[60] flex flex-col justify-end md:justify-center items-center p-0 md:p-4 animate-in fade-in duration-200 print:hidden">
+          <div className="fixed inset-0 bg-zinc-950/80 backdrop-blur-md z-[60] flex flex-col justify-end md:justify-center items-center p-0 md:p-4 animate-in fade-in duration-200">
             <div className="bg-zinc-900 w-full md:max-w-2xl rounded-t-[32px] md:rounded-[32px] flex flex-col overflow-hidden shadow-[0_-20px_50px_rgba(0,0,0,0.5)] border border-zinc-800 max-h-[90vh]">
               <div className="p-6 border-b border-zinc-800 flex justify-between items-center bg-zinc-950/50">
                 <div>
