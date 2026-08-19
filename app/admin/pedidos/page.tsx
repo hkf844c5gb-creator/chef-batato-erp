@@ -3,6 +3,127 @@
 import { useState, useEffect, useMemo } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
+// ============================================================================
+// 🖨️ MOTOR DE IMPRESSÃO TÉRMICA (CHEF BATATÔ) - Adapta-se a 58mm ou 80mm
+// ============================================================================
+export const imprimirReciboTermico = (pedido: any) => {
+  const iframe = document.createElement('iframe');
+  iframe.style.display = 'none';
+  document.body.appendChild(iframe);
+
+  const subtotal = (pedido.total_geral || 0) - (pedido.taxa_entrega || 0) + (pedido.desconto || 0);
+  
+  // Na página de gestão os itens estão em "pedido.itens"
+  const itensDoPedido = pedido.itens || pedido.itens_pedido || [];
+
+  const linhasItens = itensDoPedido.map((item: any) => `
+    <tr>
+      <td style="width: 25px; vertical-align: top; font-weight: bold; font-size: 13px;">${item.quantidade}x</td>
+      <td style="vertical-align: top; padding-bottom: 6px; padding-right: 4px; font-size: 13px; line-height: 1.1;">${item.nome_produto}</td>
+      <td style="vertical-align: top; text-align: right; white-space: nowrap; font-size: 13px; font-weight: bold;">
+        ${((item.quantidade || 0) * (item.preco_unitario || 0)).toFixed(2).replace('.', ',')} €
+      </td>
+    </tr>
+  `).join('') || '';
+
+  const html = `
+    <html>
+      <head>
+        <title>Recibo #${pedido.numero_pedido || '---'}</title>
+        <style>
+          @media print {
+            @page { margin: 0; }
+            body { 
+              margin: 0; 
+              padding: 3mm; 
+              width: 100%; 
+              max-width: 80mm;
+              font-family: 'Courier New', Courier, monospace; 
+              color: black; 
+              background: white;
+            }
+          }
+          .text-center { text-align: center; }
+          .font-bold { font-weight: bold; }
+          .font-black { font-weight: 900; }
+          .uppercase { text-transform: uppercase; }
+          .border-b { border-bottom: 2px solid black; padding-bottom: 4px; margin-bottom: 8px; }
+          .border-b-dashed { border-bottom: 1px dashed black; padding-bottom: 6px; margin-bottom: 6px; }
+          table { width: 100%; border-collapse: collapse; }
+          .flex-between { display: flex; justify-content: space-between; align-items: end; }
+        </style>
+      </head>
+      <body>
+        <div class="text-center border-b">
+          <h1 class="font-black uppercase" style="font-size: 22px; margin: 0;">CHEF BATATÔ</h1>
+        </div>
+        
+        <h2 class="text-center font-black" style="font-size: 36px; margin: 0; line-height: 1;">#${pedido.numero_pedido || '---'}</h2>
+        <h3 class="text-center font-bold" style="font-size: 18px; margin: 0; margin-top: 4px;">CONFERENCIA</h3>
+        
+        <p class="text-center uppercase font-bold" style="font-size: 12px; margin-top: 4px; margin-bottom: 16px;">
+          ${pedido.canal} - ${new Date().toLocaleDateString('pt-PT')} ${new Date().toLocaleTimeString('pt-PT', {hour: '2-digit', minute:'2-digit'})}
+        </p>
+
+        <div style="font-size: 13px; line-height: 1.3; margin-bottom: 12px;">
+          <div class="font-bold" style="font-size: 15px;">${pedido.cliente || 'Consumidor Final'}</div>
+          ${pedido.contacto_cliente ? `<div>${pedido.contacto_cliente}</div>` : ''}
+          ${pedido.endereco || pedido.morada ? `<div>${pedido.endereco || pedido.morada}</div>` : ''}
+        </div>
+
+        <div class="border-b-dashed"></div>
+
+        <table style="margin-bottom: 8px;">
+          ${linhasItens}
+        </table>
+
+        <div class="border-b-dashed"></div>
+
+        <div class="flex-between font-bold" style="font-size: 13px; margin-bottom: 4px;">
+          <span>Subtotal</span>
+          <span>${subtotal.toFixed(2).replace('.', ',')} €</span>
+        </div>
+        ${(pedido.desconto > 0) ? `
+        <div class="flex-between font-bold" style="font-size: 13px; margin-bottom: 4px; color: #555;">
+          <span>Desconto</span>
+          <span>-${Number(pedido.desconto).toFixed(2).replace('.', ',')} €</span>
+        </div>
+        ` : ''}
+        ${(pedido.taxa_entrega > 0) ? `
+        <div class="flex-between font-bold" style="font-size: 13px; margin-bottom: 8px;">
+          <span>Entrega</span>
+          <span>${Number(pedido.taxa_entrega).toFixed(2).replace('.', ',')} €</span>
+        </div>
+        ` : ''}
+
+        <div class="flex-between" style="margin-top: 8px; margin-bottom: 16px;">
+          <span class="font-black" style="font-size: 26px;">TOTAL</span>
+          <span class="font-black" style="font-size: 24px;">${Number(pedido.total_geral).toFixed(2).replace('.', ',')} €</span>
+        </div>
+
+        <div class="font-bold" style="border-top: 2px solid black; padding-top: 8px; font-size: 13px;">
+          Pagamento: ${pedido.forma_pagamento} (${pedido.pago ? 'Pago' : 'Pendente'})
+        </div>
+        
+        <div style="height: 40px;">.</div>
+      </body>
+    </html>
+  `;
+
+  const doc = iframe.contentWindow?.document;
+  if (doc) {
+    doc.open();
+    doc.write(html);
+    doc.close();
+    iframe.onload = () => {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+      setTimeout(() => document.body.removeChild(iframe), 2000);
+    };
+  }
+};
+// ============================================================================
+
 interface ItemPedido {
   id?: string;
   produto_id?: string;
@@ -645,12 +766,14 @@ export default function GestaoPedidos() {
             {pedidosFiltrados.map((ped) => (
               <div key={ped.id} className="bg-zinc-900 border border-zinc-800/80 rounded-2xl p-4 flex flex-col justify-between shadow-md hover:border-zinc-700/60 transition-all relative group">
                 <div className="absolute top-3 right-3 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {/* NOVO BOTÃO DE IMPRIMIR 2ª VIA */}
+                  <button onClick={() => imprimirReciboTermico(ped)} className="w-7 h-7 bg-zinc-800 hover:bg-green-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Imprimir 2ª Via (Talão)">🖨️</button>
                   <button onClick={() => abrirEdicao(ped)} className="w-7 h-7 bg-zinc-800 hover:bg-blue-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Editar Informações e Itens/Combos">✏️</button>
                   <button onClick={() => excluirPedido(ped.numero_pedido, ped.ids_fragmentados!)} className="w-7 h-7 bg-zinc-800 hover:bg-red-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Excluir Pedido">🗑️</button>
                 </div>
 
                 <div>
-                  <div className="flex justify-between items-start gap-2 border-b border-zinc-800/60 pb-3 mb-3 pr-16">
+                  <div className="flex justify-between items-start gap-2 border-b border-zinc-800/60 pb-3 mb-3 pr-24">
                     <div>
                       <span className="text-[10px] font-mono text-zinc-500">#{ped.numero_pedido} · {ped.data_pedido}</span>
                       <h3 className="font-bold text-zinc-100 text-sm mt-0.5">{ped.cliente || 'Cliente Anónimo'}</h3>
