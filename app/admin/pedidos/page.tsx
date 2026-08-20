@@ -101,9 +101,7 @@ body { width: 80mm; margin: 0; padding: 0; background: #ffffff; color: #000000; 
 .valor-forte { font-weight: 900; }
 .total { margin: 2mm 0; display: flex; justify-content: space-between; font-size: 19px; font-weight: 900; }
 .pagamento { padding: 1.5mm 0 0 0; border-top: 1px solid #000000; font-size: 11px; font-weight: 800; }
-
-/* TRUQUE DO PONTO INVISÍVEL AUMENTADO PARA 55mm (+2cm) */
-.puxar-papel { margin-top: 55mm; color: #ffffff; text-align: center; font-size: 10px; }
+.espaco-corte { height: 40mm; width: 100%; display: block; clear: both; } 
 </style>
 </head>
 <body>
@@ -124,9 +122,7 @@ body { width: 80mm; margin: 0; padding: 0; background: #ffffff; color: #000000; 
   ${taxaEntrega > 0 ? `<div class="valor"><span class="valor-forte">Entrega</span><span class="valor-forte">${moeda(taxaEntrega)} &#8364;</span></div>` : ''}
   <div class="total"><span>TOTAL</span><span>${moeda(totalGeral)} &#8364;</span></div>
   <div class="pagamento">Pagamento: ${escaparHtml(pedido.forma_pagamento || 'Não informado')} (${pedido.pago ? 'Pago' : 'Pendente'})</div>
-  
-  <!-- OBRIGA O ROLO A SUBIR -->
-  <div class="puxar-papel">.</div>
+  <div class="espaco-corte"></div>
 </main>
 </body>
 </html>
