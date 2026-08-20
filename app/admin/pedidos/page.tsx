@@ -16,13 +16,11 @@ export const imprimirReciboTermico = (pedido: any) => {
       0
     );
 
-
   const desconto =
     Number(
       pedido.desconto ||
       0
     );
-
 
   const totalGeral =
     Number(
@@ -30,12 +28,10 @@ export const imprimirReciboTermico = (pedido: any) => {
       0
     );
 
-
   const subtotal =
     totalGeral -
     taxaEntrega +
     desconto;
-
 
   const itensDoPedido =
     pedido.itens ||
@@ -44,58 +40,37 @@ export const imprimirReciboTermico = (pedido: any) => {
 
 
   // ==========================================================================
-  // FORMATAÇÃO DE MOEDA
+  // FORMATAÇÃO
   // ==========================================================================
 
-  const moeda =
-    (
-      valor: number
-    ) =>
+  const moeda = (valor: number) => {
 
-      Number(
-        valor ||
-        0
-      )
-        .toFixed(2)
-        .replace(
-          '.',
-          ','
-        );
+    return Number(
+      valor ||
+      0
+    )
+      .toFixed(2)
+      .replace(
+        '.',
+        ','
+      );
+
+  };
 
 
-  // ==========================================================================
-  // PROTEÇÃO DO HTML
-  // ==========================================================================
+  const escaparHtml = (texto: any) => {
 
-  const escaparHtml =
-    (
-      texto: any
-    ) =>
+    return String(
+      texto ??
+      ''
+    )
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
 
-      String(
-        texto ??
-        ''
-      )
-        .replace(
-          /&/g,
-          '&amp;'
-        )
-        .replace(
-          /</g,
-          '&lt;'
-        )
-        .replace(
-          />/g,
-          '&gt;'
-        )
-        .replace(
-          /"/g,
-          '&quot;'
-        )
-        .replace(
-          /'/g,
-          '&#039;'
-        );
+  };
 
 
   // ==========================================================================
@@ -105,9 +80,7 @@ export const imprimirReciboTermico = (pedido: any) => {
   const linhasItens =
     itensDoPedido
       .map(
-        (
-          item: any
-        ) => {
+        (item: any) => {
 
           const quantidade =
             Number(
@@ -115,18 +88,15 @@ export const imprimirReciboTermico = (pedido: any) => {
               1
             );
 
-
           const precoUnitario =
             Number(
               item.preco_unitario ||
               0
             );
 
-
           const precoTotal =
             quantidade *
             precoUnitario;
-
 
           const nomeOriginal =
             String(
@@ -136,12 +106,9 @@ export const imprimirReciboTermico = (pedido: any) => {
 
 
           const ehCombo =
-
             item.codigo_produto ===
               'COMBO'
-
             ||
-
             nomeOriginal
               .toLowerCase()
               .includes(
@@ -170,47 +137,32 @@ export const imprimirReciboTermico = (pedido: any) => {
             const componentes =
               match &&
               match[2]
-
                 ? match[2]
                     .split(',')
                     .map(
-                      (
-                        nome: string
-                      ) =>
+                      (nome: string) =>
                         nome.trim()
                     )
-                    .filter(
-                      Boolean
-                    )
-
+                    .filter(Boolean)
                 : [];
 
 
             const componentesHtml =
               componentes
                 .map(
-                  (
-                    nome: string
-                  ) => `
+                  (nome: string) => `
 
-                    <tr class="subitem">
+                    <div class="subitem">
 
-                      <td class="sub-vazio"></td>
+                      <span class="sub-qtd">
+                        1x
+                      </span>
 
-                      <td
-                        colspan="2"
-                        class="sub-descricao"
-                      >
-
-                        <span class="sub-qtd">
-                          1x
-                        </span>
-
+                      <span class="sub-nome">
                         ${escaparHtml(nome)}
+                      </span>
 
-                      </td>
-
-                    </tr>
+                    </div>
 
                   `
                 )
@@ -219,32 +171,27 @@ export const imprimirReciboTermico = (pedido: any) => {
 
             return `
 
-              <tr class="item-principal">
+              <div class="produto">
 
-                <td class="qtd">
+                <div class="linha-produto">
 
-                  ${quantidade}x
+                  <div class="qtd">
+                    ${quantidade}x
+                  </div>
 
-                </td>
+                  <div class="descricao">
+                    ${escaparHtml(nomeCombo)}
+                  </div>
 
+                  <div class="preco">
+                    ${moeda(precoTotal)} €
+                  </div>
 
-                <td class="descricao">
+                </div>
 
-                  ${escaparHtml(nomeCombo)}
+                ${componentesHtml}
 
-                </td>
-
-
-                <td class="preco">
-
-                  ${moeda(precoTotal)} €
-
-                </td>
-
-              </tr>
-
-
-              ${componentesHtml}
+              </div>
 
             `;
 
@@ -257,33 +204,25 @@ export const imprimirReciboTermico = (pedido: any) => {
 
           return `
 
-            <tr class="item-principal">
+            <div class="produto">
 
-              <td class="qtd">
+              <div class="linha-produto">
 
-                ${quantidade}x
+                <div class="qtd">
+                  ${quantidade}x
+                </div>
 
-              </td>
+                <div class="descricao">
+                  ${escaparHtml(nomeOriginal)}
+                </div>
 
+                <div class="preco">
+                  ${moeda(precoTotal)} €
+                </div>
 
-              <td class="descricao">
+              </div>
 
-                ${escaparHtml(
-                  nomeOriginal
-                )}
-
-              </td>
-
-
-              <td class="preco">
-
-                ${moeda(
-                  precoTotal
-                )} €
-
-              </td>
-
-            </tr>
+            </div>
 
           `;
 
@@ -293,16 +232,14 @@ export const imprimirReciboTermico = (pedido: any) => {
 
 
   // ==========================================================================
-  // DATA ORIGINAL DO PEDIDO
+  // DATA
   // ==========================================================================
 
   let dataPedido =
     pedido.data_pedido
-
       ? new Date(
           pedido.data_pedido
         )
-
       : new Date();
 
 
@@ -319,44 +256,32 @@ export const imprimirReciboTermico = (pedido: any) => {
 
 
   const dataFormatada =
-    dataPedido
-      .toLocaleDateString(
+    dataPedido.toLocaleDateString(
+      'pt-PT',
+      {
+        day:
+          '2-digit',
 
-        'pt-PT',
+        month:
+          '2-digit',
 
-        {
-
-          day:
-            '2-digit',
-
-          month:
-            '2-digit',
-
-          year:
-            'numeric'
-
-        }
-
-      );
+        year:
+          'numeric'
+      }
+    );
 
 
   const horaFormatada =
-    dataPedido
-      .toLocaleTimeString(
+    dataPedido.toLocaleTimeString(
+      'pt-PT',
+      {
+        hour:
+          '2-digit',
 
-        'pt-PT',
-
-        {
-
-          hour:
-            '2-digit',
-
-          minute:
-            '2-digit'
-
-        }
-
-      );
+        minute:
+          '2-digit'
+      }
+    );
 
 
   // ==========================================================================
@@ -369,79 +294,58 @@ export const imprimirReciboTermico = (pedido: any) => {
 
 <html lang="pt-PT">
 
-
 <head>
 
-
 <meta charset="UTF-8">
-
 
 <meta
   http-equiv="Content-Type"
   content="text/html; charset=UTF-8"
 />
 
-
 <meta
   name="viewport"
   content="width=device-width, initial-scale=1"
 />
 
-
 <title>
-
   Talão #${pedido.numero_pedido || '---'}
-
 </title>
 
 
 <style>
 
-
 @page {
 
-  margin: 0;
+  margin:
+    0;
 
 }
 
 
-html {
-
-  width: 80mm;
-
-  height: auto;
-
-  min-height: 0;
-
-  margin: 0;
-
-  padding: 0;
-
-  background: #ffffff;
-
-}
-
-
+html,
 body {
 
-  width: 80mm;
+  width:
+    80mm;
 
-  height: auto;
+  margin:
+    0;
 
-  min-height: 0;
+  padding:
+    0;
 
-  margin: 0;
+  background:
+    #ffffff;
 
-  padding: 0;
+  color:
+    #000000;
 
-  background: #ffffff;
+  -webkit-print-color-adjust:
+    exact;
 
-  color: #000000;
-
-  font-family:
-    Arial,
-    Helvetica,
-    sans-serif;
+  print-color-adjust:
+    exact;
 
 }
 
@@ -460,21 +364,31 @@ body {
 
 #recibo {
 
-  width: 80mm;
+  width:
+    80mm;
 
-  height: auto;
+  margin:
+    0;
 
-  margin: 0;
+  /*
+   * IMPORTANTE:
+   *
+   * ZERO espaço extra no topo.
+   *
+   * Só usamos margem lateral.
+   */
 
   padding:
-    3mm
-    4mm
     0
-    4mm;
+    3mm
+    0
+    3mm;
 
-  background: #ffffff;
+  background:
+    #ffffff;
 
-  color: #000000;
+  color:
+    #000000;
 
   font-family:
     Arial,
@@ -482,32 +396,37 @@ body {
     sans-serif;
 
   font-size:
-    12px;
+    14px;
 
   line-height:
-    1.2;
+    1.25;
 
 }
 
 
 /* ==========================================================================
-   NÚMERO PEDIDO
+   CABEÇALHO
    ========================================================================== */
 
 .numero-pedido {
 
-  margin: 0;
+  width:
+    100%;
 
-  padding: 0;
+  margin:
+    0;
+
+  padding:
+    0;
 
   text-align:
     center;
 
   font-size:
-    25px;
+    30px;
 
   line-height:
-    27px;
+    32px;
 
   font-weight:
     900;
@@ -515,44 +434,45 @@ body {
 }
 
 
-/* ==========================================================================
-   CONFERÊNCIA
-   ========================================================================== */
-
 .conferencia {
 
-  margin-top:
-    0.5mm;
+  width:
+    100%;
 
-  margin-bottom:
+  margin:
+    0;
+
+  padding:
     0;
 
   text-align:
     center;
 
   font-size:
-    13px;
+    16px;
 
   line-height:
-    15px;
+    19px;
 
   font-weight:
-    800;
+    900;
 
 }
 
 
-/* ==========================================================================
-   CANAL E DATA
-   ========================================================================== */
-
 .canal-data {
 
-  margin-top:
-    0.7mm;
+  width:
+    100%;
 
-  margin-bottom:
-    3mm;
+  margin:
+    0
+    0
+    3mm
+    0;
+
+  padding:
+    0;
 
   text-align:
     center;
@@ -561,10 +481,10 @@ body {
     uppercase;
 
   font-size:
-    10px;
+    12px;
 
   line-height:
-    12px;
+    15px;
 
   font-weight:
     700;
@@ -578,15 +498,20 @@ body {
 
 .cliente {
 
-  margin: 0;
+  width:
+    100%;
 
-  padding: 0;
+  margin:
+    0;
+
+  padding:
+    0;
 
   font-size:
-    12px;
+    14px;
 
   line-height:
-    1.25;
+    18px;
 
 }
 
@@ -594,30 +519,36 @@ body {
 .nome-cliente {
 
   margin:
-    0
-    0
-    0.5mm
     0;
 
-  padding: 0;
+  padding:
+    0;
 
   font-size:
-    13px;
+    16px;
 
   line-height:
-    15px;
+    19px;
 
   font-weight:
-    800;
+    900;
 
 }
 
 
 .cliente-linha {
 
-  margin: 0;
+  margin:
+    0;
 
-  padding: 0;
+  padding:
+    0;
+
+  font-size:
+    14px;
+
+  line-height:
+    18px;
 
 }
 
@@ -628,15 +559,18 @@ body {
 
 .separador {
 
-  width: 100%;
+  width:
+    100%;
 
-  height: 0;
-
-  margin:
-    2mm
+  height:
     0;
 
-  padding: 0;
+  margin:
+    2.5mm
+    0;
+
+  padding:
+    0;
 
   border-top:
     1px
@@ -647,43 +581,22 @@ body {
 
 
 /* ==========================================================================
-   TABELA
+   PRODUTOS
    ========================================================================== */
 
-table {
+.produto {
 
-  width: 100%;
+  width:
+    100%;
 
-  margin: 0;
-
-  padding: 0;
-
-  border-collapse:
-    collapse;
-
-  border-spacing:
+  margin:
+    0
+    0
+    2mm
     0;
 
-  table-layout:
-    fixed;
-
-}
-
-
-tbody {
-
-  margin: 0;
-
-  padding: 0;
-
-}
-
-
-tr {
-
-  margin: 0;
-
-  padding: 0;
+  padding:
+    0;
 
   page-break-inside:
     avoid;
@@ -691,46 +604,38 @@ tr {
 }
 
 
-td {
+.linha-produto {
 
-  margin: 0;
+  width:
+    100%;
 
-  padding: 0;
+  display:
+    grid;
 
-}
+  grid-template-columns:
+    8mm
+    minmax(0, 1fr)
+    19mm;
 
-
-/* ==========================================================================
-   PRODUTO PRINCIPAL
-   ========================================================================== */
-
-.item-principal td {
-
-  vertical-align:
-    top;
-
-  padding-top:
+  column-gap:
     1mm;
 
-  padding-bottom:
-    1mm;
+  align-items:
+    start;
 
 }
 
 
 .qtd {
 
-  width:
-    8mm;
-
-  padding-right:
-    1mm !important;
-
   font-size:
-    12px;
+    14px;
+
+  line-height:
+    18px;
 
   font-weight:
-    800;
+    900;
 
   white-space:
     nowrap;
@@ -740,34 +645,37 @@ td {
 
 .descricao {
 
-  width:
-    auto;
-
-  padding-right:
-    1.5mm !important;
+  min-width:
+    0;
 
   font-size:
-    12px;
+    14px;
 
   line-height:
-    1.15;
+    18px;
 
   font-weight:
-    700;
-
-  white-space:
-    normal;
+    800;
 
   overflow-wrap:
     break-word;
+
+  word-break:
+    normal;
 
 }
 
 
 .preco {
 
-  width:
-    19mm;
+  font-size:
+    14px;
+
+  line-height:
+    18px;
+
+  font-weight:
+    900;
 
   text-align:
     right;
@@ -775,11 +683,51 @@ td {
   white-space:
     nowrap;
 
+}
+
+
+/* ==========================================================================
+   SUBITENS DOS COMBOS
+   ========================================================================== */
+
+.subitem {
+
+  width:
+    calc(
+      100% -
+      9mm
+    );
+
+  margin-left:
+    9mm;
+
+  margin-top:
+    0.5mm;
+
+  display:
+    flex;
+
+  align-items:
+    flex-start;
+
   font-size:
-    12px;
+    13px;
 
   line-height:
-    1.15;
+    17px;
+
+}
+
+
+.sub-qtd {
+
+  flex:
+    0
+    0
+    7mm;
+
+  width:
+    7mm;
 
   font-weight:
     800;
@@ -787,68 +735,16 @@ td {
 }
 
 
-/* ==========================================================================
-   COMPONENTES DO COMBO
-   ========================================================================== */
+.sub-nome {
 
-.subitem td {
+  flex:
+    1;
 
-  vertical-align:
-    top;
-
-  padding-top:
-    0.3mm;
-
-  padding-bottom:
-    0.3mm;
-
-  font-size:
-    11px;
-
-  line-height:
-    1.15;
-
-  font-weight:
-    400;
-
-}
-
-
-.sub-vazio {
-
-  width:
-    8mm;
-
-}
-
-
-.sub-descricao {
-
-  padding-left:
-    2mm !important;
-
-  padding-right:
-    1mm !important;
-
-  white-space:
-    normal;
+  min-width:
+    0;
 
   overflow-wrap:
     break-word;
-
-}
-
-
-.sub-qtd {
-
-  display:
-    inline-block;
-
-  width:
-    6mm;
-
-  font-weight:
-    700;
 
 }
 
@@ -859,11 +755,11 @@ td {
 
 .valor {
 
-  display:
-    flex;
-
   width:
     100%;
+
+  display:
+    flex;
 
   justify-content:
     space-between;
@@ -871,15 +767,17 @@ td {
   align-items:
     baseline;
 
-  margin: 0;
+  margin:
+    0;
 
-  padding: 0;
+  padding:
+    0;
 
   font-size:
-    12px;
+    14px;
 
   line-height:
-    16px;
+    19px;
 
 }
 
@@ -887,7 +785,7 @@ td {
 .valor-forte {
 
   font-weight:
-    800;
+    900;
 
 }
 
@@ -898,11 +796,11 @@ td {
 
 .total {
 
-  display:
-    flex;
-
   width:
     100%;
+
+  display:
+    flex;
 
   justify-content:
     space-between;
@@ -911,16 +809,17 @@ td {
     baseline;
 
   margin:
-    2mm
+    3mm
     0;
 
-  padding: 0;
+  padding:
+    0;
 
   font-size:
-    18px;
+    22px;
 
   line-height:
-    21px;
+    26px;
 
   font-weight:
     900;
@@ -937,10 +836,11 @@ td {
   width:
     100%;
 
-  margin: 0;
+  margin:
+    0;
 
   padding-top:
-    1.5mm;
+    2mm;
 
   padding-bottom:
     0;
@@ -951,47 +851,57 @@ td {
     #000000;
 
   font-size:
-    11px;
+    13px;
 
   line-height:
-    14px;
+    17px;
 
   font-weight:
-    700;
+    800;
 
 }
 
 
 /* ==========================================================================
-   AVANÇO DE PAPEL
+   ESPAÇO SOMENTE DEPOIS DA IMPRESSÃO
    ========================================================================== */
 
 /*
-   ESTA É A ÁREA BRANCA DEPOIS DA ÚLTIMA ESCRITA.
+ * Este espaço só aparece DEPOIS da última linha.
+ *
+ * Não existe nenhum espaço equivalente no topo.
+ *
+ * Usamos linhas reais para obrigar o driver
+ * a avançar o papel antes do corte.
+ */
 
-   Ela existe para a impressora avançar o papel
-   antes do corte.
-
-   15 mm dá aproximadamente 1,5 cm de folga.
-*/
-
-.espaco-corte {
+.avanco-corte {
 
   width:
     100%;
 
-  height:
-    15mm;
+  margin:
+    0;
 
-  margin: 0;
+  padding:
+    0;
 
-  padding: 0;
+  font-size:
+    1px;
+
+  line-height:
+    7mm;
+
+  font-weight:
+    normal;
+
+  color:
+    transparent;
 
 }
 
 
 </style>
-
 
 </head>
 
@@ -1003,16 +913,12 @@ td {
 
 
   <div class="numero-pedido">
-
     #${pedido.numero_pedido || '---'}
-
   </div>
 
 
   <div class="conferencia">
-
     CONFERÊNCIA
-
   </div>
 
 
@@ -1032,31 +938,21 @@ td {
   </div>
 
 
-  <!-- ======================================================================
-       CLIENTE
-       ====================================================================== -->
-
-
   <div class="cliente">
 
 
     <div class="nome-cliente">
 
       ${escaparHtml(
-
         pedido.cliente ||
-
         'Consumidor Final'
-
       )}
 
     </div>
 
 
     ${
-
       pedido.contacto_cliente
-
         ? `
 
           <div class="cliente-linha">
@@ -1068,256 +964,142 @@ td {
           </div>
 
         `
-
         : ''
-
     }
 
 
     ${
-
       pedido.endereco ||
-
       pedido.morada
-
         ? `
 
           <div class="cliente-linha">
 
             ${escaparHtml(
-
               pedido.endereco ||
-
               pedido.morada
-
             )}
 
           </div>
 
         `
-
         : ''
-
     }
 
 
   </div>
 
 
-  <!-- ======================================================================
-       SEPARADOR
-       ====================================================================== -->
-
-
   <div class="separador"></div>
 
 
-  <!-- ======================================================================
-       PRODUTOS
-       ====================================================================== -->
-
-
-  <table>
-
-
-    <tbody>
-
-
-      ${linhasItens}
-
-
-    </tbody>
-
-
-  </table>
-
-
-  <!-- ======================================================================
-       SEPARADOR
-       ====================================================================== -->
+  ${linhasItens}
 
 
   <div class="separador"></div>
-
-
-  <!-- ======================================================================
-       SUBTOTAL
-       ====================================================================== -->
 
 
   <div class="valor">
 
-
     <span class="valor-forte">
-
       Subtotal
-
     </span>
-
 
     <span class="valor-forte">
-
-      ${moeda(
-        subtotal
-      )} €
-
+      ${moeda(subtotal)} €
     </span>
-
 
   </div>
 
 
-  <!-- ======================================================================
-       DESCONTO
-       ====================================================================== -->
-
-
   ${
-
     desconto > 0
-
       ? `
 
         <div class="valor">
 
-
           <span>
-
             Desconto
-
           </span>
-
 
           <span>
-
-            -${moeda(
-              desconto
-            )} €
-
+            -${moeda(desconto)} €
           </span>
-
 
         </div>
 
       `
-
       : ''
-
   }
-
-
-  <!-- ======================================================================
-       ENTREGA
-       ====================================================================== -->
 
 
   ${
-
     taxaEntrega > 0
-
       ? `
 
         <div class="valor">
 
-
           <span class="valor-forte">
-
             Entrega
-
           </span>
-
 
           <span class="valor-forte">
-
-            ${moeda(
-              taxaEntrega
-            )} €
-
+            ${moeda(taxaEntrega)} €
           </span>
-
 
         </div>
 
       `
-
       : ''
-
   }
-
-
-  <!-- ======================================================================
-       TOTAL
-       ====================================================================== -->
 
 
   <div class="total">
 
-
     <span>
-
       TOTAL
-
     </span>
-
 
     <span>
-
-      ${moeda(
-        totalGeral
-      )} €
-
+      ${moeda(totalGeral)} €
     </span>
-
 
   </div>
-
-
-  <!-- ======================================================================
-       PAGAMENTO
-       ====================================================================== -->
 
 
   <div class="pagamento">
 
-
     Pagamento:
 
     ${escaparHtml(
-
       pedido.forma_pagamento ||
-
       'Não informado'
-
     )}
 
-
-    (
-
-      ${
-        pedido.pago
-          ? 'Pago'
-          : 'Pendente'
-      }
-
-    )
-
+    (${pedido.pago ? 'Pago' : 'Pendente'})
 
   </div>
 
 
   <!-- ======================================================================
-       ÁREA DE AVANÇO ANTES DO CORTE
+       ESPAÇO SOMENTE DEPOIS DA ÚLTIMA LINHA
        ====================================================================== -->
 
 
-  <div class="espaco-corte"></div>
+  <div class="avanco-corte">
+
+    &nbsp;<br>
+    &nbsp;<br>
+    &nbsp;<br>
+    &nbsp;<br>
+
+  </div>
 
 
 </main>
 
 
 </body>
-
 
 </html>
 
@@ -1329,22 +1111,17 @@ td {
   // ==========================================================================
 
   if (
-
     typeof window !==
       'undefined'
-
     &&
-
     (window as any)
       .imprimirSilencioso
-
   ) {
 
     (window as any)
       .imprimirSilencioso(
         html
       );
-
 
     return;
 
@@ -1356,50 +1133,40 @@ td {
   // ==========================================================================
 
   const iframe =
-    document
-      .createElement(
-        'iframe'
-      );
+    document.createElement(
+      'iframe'
+    );
 
 
   iframe.style.position =
     'fixed';
 
-
   iframe.style.right =
     '0';
-
 
   iframe.style.bottom =
     '0';
 
-
   iframe.style.width =
     '0';
-
 
   iframe.style.height =
     '0';
 
-
   iframe.style.border =
     '0';
-
 
   iframe.style.visibility =
     'hidden';
 
 
-  document.body
-    .appendChild(
-      iframe
-    );
+  document.body.appendChild(
+    iframe
+  );
 
 
   const doc =
-    iframe
-      .contentWindow
-      ?.document;
+    iframe.contentWindow?.document;
 
 
   if (doc) {
@@ -1413,46 +1180,38 @@ td {
     doc.close();
 
 
-    iframe.onload =
-      () => {
+    iframe.onload = () => {
 
-        iframe
-          .contentWindow
-          ?.focus();
-
-
-        iframe
-          .contentWindow
-          ?.print();
+      iframe
+        .contentWindow
+        ?.focus();
 
 
-        setTimeout(
+      iframe
+        .contentWindow
+        ?.print();
 
-          () => {
 
-            if (
+      setTimeout(
+        () => {
 
-              document.body
-                .contains(
-                  iframe
-                )
+          if (
+            document.body.contains(
+              iframe
+            )
+          ) {
 
-            ) {
+            document.body.removeChild(
+              iframe
+            );
 
-              document.body
-                .removeChild(
-                  iframe
-                );
+          }
 
-            }
+        },
+        2000
+      );
 
-          },
-
-          2000
-
-        );
-
-      };
+    };
 
   }
 
@@ -1522,12 +1281,9 @@ interface Combo {
   descricao: string;
 
   tipo_preco:
-    'fixo'
-    |
-    'desconto'
-    |
-    'desconto_fixo'
-    |
+    'fixo' |
+    'desconto' |
+    'desconto_fixo' |
     'item_gratis';
 
   preco_fixo:
@@ -1563,99 +1319,44 @@ interface Combo {
 
 export default function GestaoPedidos() {
 
-  const [
-    pedidos,
-    setPedidos
-  ] =
+  const [pedidos, setPedidos] =
     useState<Pedido[]>([]);
 
-
-  const [
-    produtosDB,
-    setProdutosDB
-  ] =
+  const [produtosDB, setProdutosDB] =
     useState<any[]>([]);
 
-
-  const [
-    combosDB,
-    setCombosDB
-  ] =
+  const [combosDB, setCombosDB] =
     useState<Combo[]>([]);
 
+  const [listaEstafetas, setListaEstafetas] =
+    useState<{ nome: string }[]>([]);
 
-  const [
-    listaEstafetas,
-    setListaEstafetas
-  ] =
-    useState<
-      {
-        nome: string
-      }[]
-    >([]);
-
-
-  const [
-    loading,
-    setLoading
-  ] =
+  const [loading, setLoading] =
     useState(true);
 
-
-  const [
-    dataInicio,
-    setDataInicio
-  ] =
+  const [dataInicio, setDataInicio] =
     useState('');
 
-
-  const [
-    dataFim,
-    setDataFim
-  ] =
+  const [dataFim, setDataFim] =
     useState('');
 
-
-  const [
-    termoPesquisa,
-    setTermoPesquisa
-  ] =
+  const [termoPesquisa, setTermoPesquisa] =
     useState('');
-
 
   const [
     ordemDirecao,
     setOrdemDirecao
   ] =
-    useState<
-      'desc' |
-      'asc'
-    >('desc');
+    useState<'desc' | 'asc'>('desc');
 
-
-  const [
-    modalEditar,
-    setModalEditar
-  ] =
+  const [modalEditar, setModalEditar] =
     useState(false);
 
+  const [pedidoEditando, setPedidoEditando] =
+    useState<Pedido | null>(null);
 
-  const [
-    pedidoEditando,
-    setPedidoEditando
-  ] =
-    useState<
-      Pedido |
-      null
-    >(null);
-
-
-  const [
-    salvando,
-    setSalvando
-  ] =
+  const [salvando, setSalvando] =
     useState(false);
-
 
   const [
     modalComboEdicao,
@@ -1663,36 +1364,25 @@ export default function GestaoPedidos() {
   ] =
     useState(false);
 
-
   const [
     comboSelecionadoParaMontar,
     setComboSelecionadoParaMontar
   ] =
-    useState<
-      Combo |
-      null
-    >(null);
-
+    useState<Combo | null>(null);
 
   const [
     selecoesComboEdicao,
     setSelecoesComboEdicao
   ] =
     useState<{
-      [grupoId: string]:
-        any[]
+      [grupoId: string]: any[]
     }>({});
 
 
   const supabase =
     createBrowserClient(
-
-      process.env
-        .NEXT_PUBLIC_SUPABASE_URL!,
-
-      process.env
-        .NEXT_PUBLIC_SUPABASE_ANON_KEY!
-
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
     );
 
 
@@ -1704,140 +1394,66 @@ export default function GestaoPedidos() {
 
     setLoading(true);
 
-
     try {
 
-      const {
-        data:
-          dataProds
-      } =
+      const { data: dataProds } =
         await supabase
-
-          .from(
-            'produtos'
-          )
-
+          .from('produtos')
           .select('*')
-
-          .eq(
-            'ativo',
-            true
-          );
-
+          .eq('ativo', true);
 
       if (dataProds) {
-
-        setProdutosDB(
-          dataProds
-        );
-
+        setProdutosDB(dataProds);
       }
 
 
-      const {
-        data:
-          dataEsts
-      } =
+      const { data: dataEsts } =
         await supabase
-
-          .from(
-            'estafetas'
-          )
-
-          .select(
-            'nome'
-          )
-
-          .eq(
-            'ativo',
-            true
-          )
-
+          .from('estafetas')
+          .select('nome')
+          .eq('ativo', true)
           .order(
             'nome',
             {
-              ascending:
-                true
+              ascending: true
             }
           );
 
-
       if (dataEsts) {
-
-        setListaEstafetas(
-          dataEsts
-        );
-
+        setListaEstafetas(dataEsts);
       }
 
 
-      const {
-        data:
-          dataCombos
-      } =
+      const { data: dataCombos } =
         await supabase
-
-          .from(
-            'combos'
-          )
-
+          .from('combos')
           .select(`
-
             *,
-
             combo_grupos (
-
               *,
-
               combo_grupo_produtos (
-
                 *,
-
                 produto:produtos (*)
-
               )
-
             )
-
           `)
-
-          .eq(
-            'ativo',
-            true
-          )
-
-          .eq(
-            'esgotado',
-            false
-          );
+          .eq('ativo', true)
+          .eq('esgotado', false);
 
 
       if (dataCombos) {
 
         const combosOrdenados =
-          dataCombos.map(
+          dataCombos.map(cb => ({
+            ...cb,
 
-            cb => ({
-
-              ...cb,
-
-              combo_grupos:
-                (
-                  cb.combo_grupos ||
-                  []
+            combo_grupos:
+              (cb.combo_grupos || [])
+                .sort(
+                  (a: any, b: any) =>
+                    a.ordem - b.ordem
                 )
-                  .sort(
-                    (
-                      a: any,
-                      b: any
-                    ) =>
-                      a.ordem -
-                      b.ordem
-                  )
-
-            })
-
-          );
+          }));
 
 
         setCombosDB(
@@ -1847,37 +1463,23 @@ export default function GestaoPedidos() {
       }
 
 
-      const {
-        data,
-        error
-      } =
+      const { data, error } =
         await supabase
-
-          .from(
-            'pedidos'
-          )
-
+          .from('pedidos')
           .select(`
-
             *,
-
             itens:itens_pedido (*)
-
           `)
-
           .order(
             'numero_pedido',
             {
-              ascending:
-                false
+              ascending: false
             }
           );
 
 
       if (error) {
-
         throw error;
-
       }
 
 
@@ -1887,310 +1489,246 @@ export default function GestaoPedidos() {
       ) {
 
         const agrupados =
-          new Map<
-            string,
-            Pedido
-          >();
+          new Map<string, Pedido>();
 
 
-        data.forEach(
-          (
-            linha: any
-          ) => {
+        data.forEach((linha: any) => {
 
-            const chaveNum =
-              String(
-                linha.numero_pedido
-              );
+          const chaveNum =
+            String(
+              linha.numero_pedido
+            );
 
 
-            const taxa =
-              Number(
-                linha.taxa_entrega ||
-                0
-              );
+          const taxa =
+            Number(
+              linha.taxa_entrega ||
+              0
+            );
 
 
-            const desconto =
-              Number(
-                linha.desconto ||
-                0
-              );
+          const descontoLinha =
+            Number(
+              linha.desconto ||
+              0
+            );
 
 
-            const dataReal =
-
-              linha.data_pedido ||
-
-              linha.data_venda ||
-
-              linha.criado_em ||
-
-              new Date()
-                .toISOString();
+          const dataReal =
+            linha.data_pedido ||
+            linha.data_venda ||
+            linha.criado_em ||
+            new Date().toISOString();
 
 
-            const itensDestaLinha =
-              (
-                linha.itens ||
-                []
-              )
-                .map(
-                  (
-                    item: any
-                  ) => {
+          const itensDestaLinha =
+            (linha.itens || [])
+              .map((item: any) => {
 
-                    let precoUnitarioCorreto =
-                      Number(
-                        item.preco_unitario ||
-                        0
-                      );
+                let precoUnitarioCorreto =
+                  Number(
+                    item.preco_unitario ||
+                    0
+                  );
 
 
-                    if (
-                      linha.canal ===
-                      'Revendedores'
-                    ) {
+                if (
+                  linha.canal ===
+                  'Revendedores'
+                ) {
 
-                      const nomeProduto =
-                        (
-                          item.nome_produto ||
-                          ''
-                        )
-                          .toLowerCase();
-
-
-                      if (
-
-                        nomeProduto
-                          .includes(
-                            'fudge'
-                          )
-
-                        ||
-
-                        nomeProduto
-                          .includes(
-                            'new york'
-                          )
-
-                      ) {
-
-                        precoUnitarioCorreto =
-                          1.70;
-
-                      } else {
-
-                        precoUnitarioCorreto =
-                          2.70;
-
-                      }
-
-                    }
+                  const nomeProduto =
+                    (
+                      item.nome_produto ||
+                      ''
+                    )
+                      .toLowerCase();
 
 
-                    return {
+                  if (
+                    nomeProduto.includes('fudge') ||
+                    nomeProduto.includes('new york')
+                  ) {
 
-                      id:
-                        item.id,
+                    precoUnitarioCorreto =
+                      1.70;
 
-                      produto_id:
-                        item.produto_id,
+                  } else {
 
-                      codigo_produto:
-                        item.codigo_produto ||
-                        '',
-
-                      nome_produto:
-                        item.nome_produto ||
-                        '',
-
-                      quantidade:
-                        Number(
-                          item.quantidade ||
-                          1
-                        ),
-
-                      preco_unitario:
-                        precoUnitarioCorreto
-
-                    };
+                    precoUnitarioCorreto =
+                      2.70;
 
                   }
-                );
-
-
-            if (
-              !agrupados.has(
-                chaveNum
-              )
-            ) {
-
-              agrupados.set(
-
-                chaveNum,
-
-                {
-
-                  ...linha,
-
-                  numero_pedido:
-                    Number(
-                      linha.numero_pedido
-                    ),
-
-                  data_pedido:
-                    dataReal,
-
-                  taxa_entrega:
-                    taxa,
-
-                  desconto:
-                    desconto,
-
-                  pago:
-                    linha.pago ===
-                    true,
-
-                  itens:
-                    [
-                      ...itensDestaLinha
-                    ],
-
-                  ids_fragmentados:
-                    [
-                      linha.id
-                    ]
 
                 }
 
+
+                return {
+
+                  id:
+                    item.id,
+
+                  produto_id:
+                    item.produto_id,
+
+                  codigo_produto:
+                    item.codigo_produto ||
+                    '',
+
+                  nome_produto:
+                    item.nome_produto ||
+                    '',
+
+                  quantidade:
+                    Number(
+                      item.quantidade ||
+                      1
+                    ),
+
+                  preco_unitario:
+                    precoUnitarioCorreto
+                };
+
+              });
+
+
+          if (
+            !agrupados.has(
+              chaveNum
+            )
+          ) {
+
+            agrupados.set(
+              chaveNum,
+              {
+                ...linha,
+
+                numero_pedido:
+                  Number(
+                    linha.numero_pedido
+                  ),
+
+                data_pedido:
+                  dataReal,
+
+                taxa_entrega:
+                  taxa,
+
+                desconto:
+                  descontoLinha,
+
+                pago:
+                  linha.pago === true,
+
+                itens:
+                  [...itensDestaLinha],
+
+                ids_fragmentados:
+                  [linha.id]
+              }
+            );
+
+          } else {
+
+            const existente =
+              agrupados.get(
+                chaveNum
+              )!;
+
+
+            existente.itens
+              ?.push(
+                ...itensDestaLinha
               );
 
-            } else {
 
-              const existente =
-                agrupados.get(
-                  chaveNum
-                )!;
-
-
-              existente.itens
-                ?.push(
-                  ...itensDestaLinha
-                );
+            existente.ids_fragmentados
+              ?.push(
+                linha.id
+              );
 
 
-              existente
-                .ids_fragmentados
-                ?.push(
-                  linha.id
-                );
+            if (
+              !existente.entregador &&
+              linha.entregador
+            ) {
 
-
-              if (
-
-                !existente.entregador &&
-
-                linha.entregador
-
-              ) {
-
-                existente.entregador =
-                  linha.entregador;
-
-              }
-
-
-              if (
-
-                !existente.cliente &&
-
-                linha.cliente
-
-              ) {
-
-                existente.cliente =
-                  linha.cliente;
-
-              }
-
-
-              if (
-                linha.pago ===
-                true
-              ) {
-
-                existente.pago =
-                  true;
-
-              }
-
-
-              existente.taxa_entrega =
-                Math.max(
-
-                  existente
-                    .taxa_entrega,
-
-                  taxa
-
-                );
-
-
-              existente.desconto =
-                Math.max(
-
-                  existente
-                    .desconto,
-
-                  desconto
-
-                );
+              existente.entregador =
+                linha.entregador;
 
             }
 
+
+            if (
+              !existente.cliente &&
+              linha.cliente
+            ) {
+
+              existente.cliente =
+                linha.cliente;
+
+            }
+
+
+            if (
+              linha.pago === true
+            ) {
+
+              existente.pago =
+                true;
+
+            }
+
+
+            existente.taxa_entrega =
+              Math.max(
+                existente.taxa_entrega,
+                taxa
+              );
+
+
+            existente.desconto =
+              Math.max(
+                existente.desconto,
+                descontoLinha
+              );
+
           }
-        );
+
+        });
 
 
         const pedidosFormatados =
-          Array
-            .from(
-              agrupados.values()
-            )
-            .map(
-              ped => {
+          Array.from(
+            agrupados.values()
+          )
+            .map(ped => {
 
-                const subtotalItens =
-                  (
-                    ped.itens ||
-                    []
-                  )
-                    .reduce(
+              const subtotalItens =
+                (ped.itens || [])
+                  .reduce(
+                    (
+                      acc,
+                      it
+                    ) =>
+                      acc +
                       (
-                        acc,
-                        it
-                      ) =>
-                        acc +
-                        (
-                          it.quantidade *
-                          it.preco_unitario
-                        ),
-
-                      0
-                    );
+                        it.quantidade *
+                        it.preco_unitario
+                      ),
+                    0
+                  );
 
 
-                ped.total_geral =
-                  subtotalItens +
-                  ped.taxa_entrega -
-                  ped.desconto;
+              ped.total_geral =
+                subtotalItens +
+                ped.taxa_entrega -
+                ped.desconto;
 
 
-                return ped;
+              return ped;
 
-              }
-            );
+            });
 
 
         setPedidos(
@@ -2202,7 +1740,6 @@ export default function GestaoPedidos() {
         setPedidos([]);
 
       }
-
 
     } catch (err) {
 
@@ -2221,7 +1758,7 @@ export default function GestaoPedidos() {
 
 
   // ==========================================================================
-  // CADERNINHO
+  // LIQUIDAR
   // ==========================================================================
 
   const liquidarCaderninho =
@@ -2231,20 +1768,12 @@ export default function GestaoPedidos() {
 
       try {
 
-        const {
-          error
-        } =
+        const { error } =
           await supabase
-
-            .from(
-              'pedidos'
-            )
-
+            .from('pedidos')
             .update({
-              pago:
-                true
+              pago: true
             })
-
             .eq(
               'numero_pedido',
               pedidoNum
@@ -2252,40 +1781,25 @@ export default function GestaoPedidos() {
 
 
         if (error) {
-
           throw error;
-
         }
 
 
-        setPedidos(
-
-          prev =>
-            prev.map(
-
-              p =>
-                p.numero_pedido ===
-                pedidoNum
-
-                  ? {
-                      ...p,
-                      pago:
-                        true
-                    }
-
-                  : p
-
-            )
-
+        setPedidos(prev =>
+          prev.map(p =>
+            p.numero_pedido ===
+            pedidoNum
+              ? {
+                  ...p,
+                  pago: true
+                }
+              : p
+          )
         );
-
 
       } catch (err) {
 
-        console.error(
-          err
-        );
-
+        console.error(err);
 
         alert(
           'Erro ao liquidar pagamento.'
@@ -2307,47 +1821,29 @@ export default function GestaoPedidos() {
     ) => {
 
       if (
-
         !confirm(
-
           `⚠️ Tem a certeza que deseja excluir definitivamente o pedido #${pedidoNum}?`
-
         )
-
       ) {
-
         return;
-
       }
 
 
       try {
 
         await supabase
-
-          .from(
-            'itens_pedido'
-          )
-
+          .from('itens_pedido')
           .delete()
-
           .in(
             'pedido_id',
             ids
           );
 
 
-        const {
-          error
-        } =
+        const { error } =
           await supabase
-
-            .from(
-              'pedidos'
-            )
-
+            .from('pedidos')
             .delete()
-
             .in(
               'id',
               ids
@@ -2355,34 +1851,22 @@ export default function GestaoPedidos() {
 
 
         if (error) {
-
           throw error;
-
         }
 
 
-        setPedidos(
-
-          prev =>
-            prev.filter(
-
-              p =>
-                p.numero_pedido !==
-                pedidoNum
-
-            )
-
+        setPedidos(prev =>
+          prev.filter(
+            p =>
+              p.numero_pedido !==
+              pedidoNum
+          )
         );
 
-
-      } catch (
-        err: any
-      ) {
+      } catch (err: any) {
 
         alert(
-
           `Erro ao excluir pedido: ${err.message}`
-
         );
 
       }
@@ -2391,7 +1875,7 @@ export default function GestaoPedidos() {
 
 
   // ==========================================================================
-  // PREÇO
+  // PREÇO POR CANAL
   // ==========================================================================
 
   const calcularPrecoPorCanalEProduto =
@@ -2404,8 +1888,7 @@ export default function GestaoPedidos() {
         (
           prod.nome ||
           ''
-        )
-          .toLowerCase();
+        ).toLowerCase();
 
 
       if (
@@ -2414,17 +1897,8 @@ export default function GestaoPedidos() {
       ) {
 
         if (
-
-          nome.includes(
-            'fudge'
-          )
-
-          ||
-
-          nome.includes(
-            'new york'
-          )
-
+          nome.includes('fudge') ||
+          nome.includes('new york')
         ) {
 
           return 1.70;
@@ -2443,78 +1917,50 @@ export default function GestaoPedidos() {
       ) {
 
         return Number(
-
           prod.preco_glovo ||
-
           prod.preco_cardapio ||
-
           0
-
         );
 
       }
 
 
       if (
-
-        canal ===
-          'WhatsApp'
-
-        ||
-
-        canal ===
-          'Palmbites'
-
-        ||
-
-        canal ===
-          'Balcão'
-
+        canal === 'WhatsApp' ||
+        canal === 'Palmbites' ||
+        canal === 'Balcão'
       ) {
 
         return Number(
-
           prod.preco_cardapio ||
-
           0
-
         );
 
       }
 
 
       return Number(
-
         prod.preco_cardapio ||
-
         0
-
       );
 
     };
 
 
   // ==========================================================================
-  // ABRIR EDIÇÃO
+  // EDIÇÃO
   // ==========================================================================
 
   const abrirEdicao =
-    (
-      pedido: Pedido
-    ) => {
+    (pedido: Pedido) => {
 
       setPedidoEditando(
-
         JSON.parse(
-
           JSON.stringify(
             pedido
           )
-
         )
-
       );
-
 
       setModalEditar(
         true
@@ -2529,169 +1975,80 @@ export default function GestaoPedidos() {
     ) => {
 
       if (!pedidoEditando) {
-
         return;
-
       }
 
 
       const itensAtualizados =
-        (
-          pedidoEditando.itens ||
-          []
-        )
-          .map(
-            item => {
+        (pedidoEditando.itens || [])
+          .map(item => {
 
-              if (
-                item.codigo_produto ===
-                'COMBO'
-              ) {
+            if (
+              item.codigo_produto ===
+              'COMBO'
+            ) {
 
-                const baseName =
-                  item.nome_produto
-                    .split(
-                      ' ('
-                    )[0];
+              const baseName =
+                item.nome_produto
+                  .split(' (')[0];
 
 
-                const comboRef =
-                  combosDB.find(
-
-                    c =>
-                      c.nome ===
-                      baseName
-
-                  );
-
-
-                if (
-                  comboRef
-                ) {
-
-                  if (
-                    comboRef.tipo_preco ===
-                    'fixo'
-                  ) {
-
-                    let novoPreco =
-                      Number(
-
-                        comboRef.preco_fixo ||
-
-                        0
-
-                      );
-
-
-                    if (
-                      novoCanal ===
-                      'Glovo'
-                    ) {
-
-                      novoPreco =
-                        Number(
-
-                          comboRef.preco_glovo ||
-
-                          comboRef.preco_fixo ||
-
-                          0
-
-                        );
-
-                    }
-
-
-                    if (
-
-                      novoCanal ===
-                        'WhatsApp'
-
-                      ||
-
-                      novoCanal ===
-                        'Balcão'
-
-                      ||
-
-                      novoCanal ===
-                        'Palmbites'
-
-                    ) {
-
-                      novoPreco =
-                        Number(
-
-                          comboRef.preco_whatsapp ||
-
-                          comboRef.preco_fixo ||
-
-                          0
-
-                        );
-
-                    }
-
-
-                    return {
-
-                      ...item,
-
-                      preco_unitario:
-                        novoPreco
-
-                    };
-
-                  }
-
-                }
-
-
-                return item;
-
-              }
-
-
-              const prod =
-                produtosDB.find(
-
-                  p =>
-
-                    p.id ===
-                      item.produto_id
-
-                    ||
-
-                    p.nome
-                      .toLowerCase() ===
-                      item.nome_produto
-                        .toLowerCase()
-
+              const comboRef =
+                combosDB.find(
+                  c =>
+                    c.nome ===
+                    baseName
                 );
 
 
               if (
-                prod
+                comboRef &&
+                comboRef.tipo_preco ===
+                'fixo'
               ) {
 
-                const novoPreco =
-                  calcularPrecoPorCanalEProduto(
-
-                    novoCanal,
-
-                    prod
-
+                let novoPreco =
+                  Number(
+                    comboRef.preco_fixo ||
+                    0
                   );
 
 
+                if (
+                  novoCanal ===
+                  'Glovo'
+                ) {
+
+                  novoPreco =
+                    Number(
+                      comboRef.preco_glovo ||
+                      comboRef.preco_fixo ||
+                      0
+                    );
+
+                }
+
+
+                if (
+                  novoCanal === 'WhatsApp' ||
+                  novoCanal === 'Balcão' ||
+                  novoCanal === 'Palmbites'
+                ) {
+
+                  novoPreco =
+                    Number(
+                      comboRef.preco_whatsapp ||
+                      comboRef.preco_fixo ||
+                      0
+                    );
+
+                }
+
+
                 return {
-
                   ...item,
-
                   preco_unitario:
                     novoPreco
-
                 };
 
               }
@@ -2700,49 +2057,71 @@ export default function GestaoPedidos() {
               return item;
 
             }
-          );
 
 
-      const subtotal =
-        itensAtualizados
-          .reduce(
+            const prod =
+              produtosDB.find(
+                p =>
+                  p.id ===
+                    item.produto_id ||
+                  p.nome
+                    .toLowerCase() ===
+                    item.nome_produto
+                      .toLowerCase()
+              );
 
+
+            if (prod) {
+
+              const novoPreco =
+                calcularPrecoPorCanalEProduto(
+                  novoCanal,
+                  prod
+                );
+
+
+              return {
+                ...item,
+                preco_unitario:
+                  novoPreco
+              };
+
+            }
+
+
+            return item;
+
+          });
+
+
+      const subtotalLocal =
+        itensAtualizados.reduce(
+          (
+            acc,
+            it
+          ) =>
+            acc +
             (
-              acc,
-              it
-            ) =>
-              acc +
-              (
-                it.quantidade *
-                it.preco_unitario
-              ),
-
-            0
-
-          );
+              it.quantidade *
+              it.preco_unitario
+            ),
+          0
+        );
 
 
       const novoTotal =
         Math.max(
-
           0,
-
-          subtotal +
-
-          pedidoEditando
-            .taxa_entrega -
-
+          subtotalLocal +
+          pedidoEditando.taxa_entrega -
           (
-            pedidoEditando
-              .desconto ||
+            pedidoEditando.desconto ||
             0
           )
-
         );
 
 
       setPedidoEditando({
-
         ...pedidoEditando,
 
         canal:
@@ -2753,7 +2132,6 @@ export default function GestaoPedidos() {
 
         total_geral:
           novoTotal
-
       });
 
     };
@@ -2766,15 +2144,10 @@ export default function GestaoPedidos() {
     ) => {
 
       if (
-
         !pedidoEditando ||
-
         !pedidoEditando.itens
-
       ) {
-
         return;
-
       }
 
 
@@ -2797,9 +2170,8 @@ export default function GestaoPedidos() {
         qtd;
 
 
-      const subtotal =
+      const subtotalLocal =
         novosItens.reduce(
-
           (
             acc,
             it
@@ -2809,33 +2181,23 @@ export default function GestaoPedidos() {
               it.quantidade *
               it.preco_unitario
             ),
-
           0
-
         );
 
 
       const novoTotal =
         Math.max(
-
           0,
-
-          subtotal +
-
-          pedidoEditando
-            .taxa_entrega -
-
+          subtotalLocal +
+          pedidoEditando.taxa_entrega -
           (
-            pedidoEditando
-              .desconto ||
+            pedidoEditando.desconto ||
             0
           )
-
         );
 
 
       setPedidoEditando({
-
         ...pedidoEditando,
 
         itens:
@@ -2843,7 +2205,6 @@ export default function GestaoPedidos() {
 
         total_geral:
           novoTotal
-
       });
 
     };
@@ -2855,35 +2216,27 @@ export default function GestaoPedidos() {
     ) => {
 
       if (
-
         !pedidoEditando ||
-
         !pedidoEditando.itens
-
       ) {
-
         return;
-
       }
 
 
       const novosItens =
         pedidoEditando.itens
           .filter(
-
             (
               _,
               i
             ) =>
               i !==
               index
-
           );
 
 
-      const subtotal =
+      const subtotalLocal =
         novosItens.reduce(
-
           (
             acc,
             it
@@ -2893,33 +2246,23 @@ export default function GestaoPedidos() {
               it.quantidade *
               it.preco_unitario
             ),
-
           0
-
         );
 
 
       const novoTotal =
         Math.max(
-
           0,
-
-          subtotal +
-
-          pedidoEditando
-            .taxa_entrega -
-
+          subtotalLocal +
+          pedidoEditando.taxa_entrega -
           (
-            pedidoEditando
-              .desconto ||
+            pedidoEditando.desconto ||
             0
           )
-
         );
 
 
       setPedidoEditando({
-
         ...pedidoEditando,
 
         itens:
@@ -2927,7 +2270,6 @@ export default function GestaoPedidos() {
 
         total_geral:
           novoTotal
-
       });
 
     };
@@ -2939,42 +2281,30 @@ export default function GestaoPedidos() {
     ) => {
 
       if (
-
         !pedidoEditando ||
-
         !produtoId
-
       ) {
-
         return;
-
       }
 
 
       const prod =
         produtosDB.find(
-
           p =>
             p.id ===
             produtoId
-
         );
 
 
       if (!prod) {
-
         return;
-
       }
 
 
       const precoUnit =
         calcularPrecoPorCanalEProduto(
-
           pedidoEditando.canal,
-
           prod
-
         );
 
 
@@ -2984,22 +2314,13 @@ export default function GestaoPedidos() {
 
 
       const existenteIndex =
-        itensAtuais
-          .findIndex(
-
-            it =>
-
-              it.produto_id ===
-                prod.id
-
-              &&
-
-              !it.nome_produto
-                .includes(
-                  '('
-                )
-
-          );
+        itensAtuais.findIndex(
+          it =>
+            it.produto_id ===
+              prod.id &&
+            !it.nome_produto
+              .includes('(')
+        );
 
 
       let novosItens =
@@ -3043,9 +2364,8 @@ export default function GestaoPedidos() {
       }
 
 
-      const subtotal =
+      const subtotalLocal =
         novosItens.reduce(
-
           (
             acc,
             it
@@ -3055,33 +2375,23 @@ export default function GestaoPedidos() {
               it.quantidade *
               it.preco_unitario
             ),
-
           0
-
         );
 
 
       const novoTotal =
         Math.max(
-
           0,
-
-          subtotal +
-
-          pedidoEditando
-            .taxa_entrega -
-
+          subtotalLocal +
+          pedidoEditando.taxa_entrega -
           (
-            pedidoEditando
-              .desconto ||
+            pedidoEditando.desconto ||
             0
           )
-
         );
 
 
       setPedidoEditando({
-
         ...pedidoEditando,
 
         itens:
@@ -3089,14 +2399,13 @@ export default function GestaoPedidos() {
 
         total_geral:
           novoTotal
-
       });
 
     };
 
 
   // ==========================================================================
-  // COMBO
+  // COMBOS
   // ==========================================================================
 
   const iniciarMontagemComboEdicao =
@@ -3105,26 +2414,20 @@ export default function GestaoPedidos() {
     ) => {
 
       if (!comboId) {
-
         return;
-
       }
 
 
       const combo =
         combosDB.find(
-
           c =>
             c.id ===
             comboId
-
         );
 
 
       if (!combo) {
-
         return;
-
       }
 
 
@@ -3132,11 +2435,7 @@ export default function GestaoPedidos() {
         combo
       );
 
-
-      setSelecoesComboEdicao(
-        {}
-      );
-
+      setSelecoesComboEdicao({});
 
       setModalComboEdicao(
         true
@@ -3152,7 +2451,6 @@ export default function GestaoPedidos() {
     ) => {
 
       setSelecoesComboEdicao(
-
         prev => {
 
           const selecoesGrupo =
@@ -3167,34 +2465,26 @@ export default function GestaoPedidos() {
 
 
           const indexExistente =
-            selecoesGrupo
-              .findIndex(
-
-                s =>
-                  s.produto_id ===
-                  itemVinculado
-                    .produto_id
-
-              );
+            selecoesGrupo.findIndex(
+              s =>
+                s.produto_id ===
+                itemVinculado.produto_id
+            );
 
 
           const totalSelecionadoNoGrupo =
-            selecoesGrupo
-              .reduce(
-
+            selecoesGrupo.reduce(
+              (
+                acc,
+                curr
+              ) =>
+                acc +
                 (
-                  acc,
-                  curr
-                ) =>
-                  acc +
-                  (
-                    curr.quantidade ||
-                    1
-                  ),
-
-                0
-
-              );
+                  curr.quantidade ||
+                  1
+                ),
+              0
+            );
 
 
           if (
@@ -3203,11 +2493,8 @@ export default function GestaoPedidos() {
           ) {
 
             if (
-
               totalSelecionadoNoGrupo <
-
               grupo.quantidade_maxima
-
             ) {
 
               selecoesGrupo[
@@ -3218,12 +2505,10 @@ export default function GestaoPedidos() {
             } else {
 
               if (
-
                 selecoesGrupo[
                   indexExistente
                 ].quantidade >
                 1
-
               ) {
 
                 selecoesGrupo[
@@ -3234,11 +2519,8 @@ export default function GestaoPedidos() {
               } else {
 
                 selecoesGrupo.splice(
-
                   indexExistente,
-
                   1
-
                 );
 
               }
@@ -3248,31 +2530,22 @@ export default function GestaoPedidos() {
           } else {
 
             if (
-
               totalSelecionadoNoGrupo <
-
               grupo.quantidade_maxima
-
             ) {
 
               selecoesGrupo.push({
-
                 ...itemVinculado,
-
                 quantidade:
                   1
-
               });
 
             } else if (
-
               grupo.quantidade_maxima ===
               1
-
             ) {
 
               return {
-
                 ...prev,
 
                 [grupo.id]:
@@ -3283,7 +2556,6 @@ export default function GestaoPedidos() {
                         1
                     }
                   ]
-
               };
 
             }
@@ -3292,16 +2564,13 @@ export default function GestaoPedidos() {
 
 
           return {
-
             ...prev,
 
             [grupo.id]:
               selecoesGrupo
-
           };
 
         }
-
       );
 
     };
@@ -3311,22 +2580,16 @@ export default function GestaoPedidos() {
     () => {
 
       if (
-
         !comboSelecionadoParaMontar ||
-
         !pedidoEditando
-
       ) {
-
         return;
-
       }
 
 
       for (
         const grupo of
-        comboSelecionadoParaMontar
-          .combo_grupos
+        comboSelecionadoParaMontar.combo_grupos
       ) {
 
         const selecoes =
@@ -3338,7 +2601,6 @@ export default function GestaoPedidos() {
 
         const totalGrupo =
           selecoes.reduce(
-
             (
               acc,
               s
@@ -3348,25 +2610,18 @@ export default function GestaoPedidos() {
                 s.quantidade ||
                 1
               ),
-
             0
-
           );
 
 
         if (
-
           grupo.obrigatorio &&
-
           totalGrupo <
           grupo.quantidade_minima
-
         ) {
 
           return alert(
-
             `O grupo "${grupo.nome}" exige no mínimo ${grupo.quantidade_minima} item(ns).`
-
           );
 
         }
@@ -3377,10 +2632,8 @@ export default function GestaoPedidos() {
       let somaPrecos =
         0;
 
-
       let somaAcrescimos =
         0;
-
 
       const detalhes:
         string[] =
@@ -3391,13 +2644,11 @@ export default function GestaoPedidos() {
         selecoesComboEdicao
       )
         .forEach(
-
           (
             selGrupo: any
           ) => {
 
             selGrupo.forEach(
-
               (
                 item: any
               ) => {
@@ -3408,24 +2659,17 @@ export default function GestaoPedidos() {
 
 
                 for (
-
                   let i =
                     0;
-
                   i <
-                  qtdItem;
-
+                    qtdItem;
                   i++
-
                 ) {
 
                   const precoItem =
                     calcularPrecoPorCanalEProduto(
-
                       pedidoEditando.canal,
-
                       item.produto
-
                     );
 
 
@@ -3435,28 +2679,21 @@ export default function GestaoPedidos() {
 
                   somaAcrescimos +=
                     Number(
-
                       item.acrescimo_preco ||
-
                       0
-
                     );
 
 
                   detalhes.push(
-
                     `${item.produto.nome}`
-
                   );
 
                 }
 
               }
-
             );
 
           }
-
         );
 
 
@@ -3465,11 +2702,8 @@ export default function GestaoPedidos() {
 
 
       if (
-
-        comboSelecionadoParaMontar
-          .tipo_preco ===
+        comboSelecionadoParaMontar.tipo_preco ===
         'fixo'
-
       ) {
 
         if (
@@ -3479,57 +2713,33 @@ export default function GestaoPedidos() {
 
           precoComboFinal =
             Number(
-
-              comboSelecionadoParaMontar
-                .preco_glovo ||
-
-              comboSelecionadoParaMontar
-                .preco_fixo ||
-
+              comboSelecionadoParaMontar.preco_glovo ||
+              comboSelecionadoParaMontar.preco_fixo ||
               0
-
             );
 
         } else if (
-
           pedidoEditando.canal ===
-            'WhatsApp'
-
-          ||
-
+            'WhatsApp' ||
           pedidoEditando.canal ===
-            'Balcão'
-
-          ||
-
+            'Balcão' ||
           pedidoEditando.canal ===
             'Palmbites'
-
         ) {
 
           precoComboFinal =
             Number(
-
-              comboSelecionadoParaMontar
-                .preco_whatsapp ||
-
-              comboSelecionadoParaMontar
-                .preco_fixo ||
-
+              comboSelecionadoParaMontar.preco_whatsapp ||
+              comboSelecionadoParaMontar.preco_fixo ||
               0
-
             );
 
         } else {
 
           precoComboFinal =
             Number(
-
-              comboSelecionadoParaMontar
-                .preco_fixo ||
-
+              comboSelecionadoParaMontar.preco_fixo ||
               0
-
             );
 
         }
@@ -3537,39 +2747,20 @@ export default function GestaoPedidos() {
       }
 
       else if (
-
-        comboSelecionadoParaMontar
-          .tipo_preco ===
-          'desconto'
-
-        ||
-
-        comboSelecionadoParaMontar
-          .nome
+        comboSelecionadoParaMontar.tipo_preco ===
+          'desconto' ||
+        comboSelecionadoParaMontar.nome
           .toLowerCase()
-          .includes(
-            'batatô10'
-          )
-
-        ||
-
-        comboSelecionadoParaMontar
-          .nome
+          .includes('batatô10') ||
+        comboSelecionadoParaMontar.nome
           .toLowerCase()
-          .includes(
-            'batato10'
-          )
-
+          .includes('batato10')
       ) {
 
         const perc =
           Number(
-
-            comboSelecionadoParaMontar
-              .desconto_percentual ||
-
+            comboSelecionadoParaMontar.desconto_percentual ||
             10
-
           );
 
 
@@ -3584,41 +2775,25 @@ export default function GestaoPedidos() {
       }
 
       else if (
-
-        comboSelecionadoParaMontar
-          .tipo_preco ===
-          'desconto_fixo'
-
-        ||
-
-        comboSelecionadoParaMontar
-          .nome
+        comboSelecionadoParaMontar.tipo_preco ===
+          'desconto_fixo' ||
+        comboSelecionadoParaMontar.nome
           .toLowerCase()
-          .includes(
-            'para dois'
-          )
-
+          .includes('para dois')
       ) {
 
         const desc =
           Number(
-
-            comboSelecionadoParaMontar
-              .desconto_absoluto ||
-
+            comboSelecionadoParaMontar.desconto_absoluto ||
             1.70
-
           );
 
 
         precoComboFinal =
           Math.max(
-
             0,
-
             somaPrecos -
             desc
-
           );
 
       }
@@ -3642,7 +2817,6 @@ export default function GestaoPedidos() {
           ),
 
           {
-
             produto_id:
               undefined,
 
@@ -3657,20 +2831,16 @@ export default function GestaoPedidos() {
 
             preco_unitario:
               Number(
-
                 precoFinalAplicado
                   .toFixed(2)
-
               )
-
           }
 
         ];
 
 
-      const subtotal =
+      const subtotalLocal =
         novosItens.reduce(
-
           (
             acc,
             it
@@ -3680,33 +2850,23 @@ export default function GestaoPedidos() {
               it.quantidade *
               it.preco_unitario
             ),
-
           0
-
         );
 
 
       const novoTotal =
         Math.max(
-
           0,
-
-          subtotal +
-
-          pedidoEditando
-            .taxa_entrega -
-
+          subtotalLocal +
+          pedidoEditando.taxa_entrega -
           (
-            pedidoEditando
-              .desconto ||
+            pedidoEditando.desconto ||
             0
           )
-
         );
 
 
       setPedidoEditando({
-
         ...pedidoEditando,
 
         itens:
@@ -3714,7 +2874,6 @@ export default function GestaoPedidos() {
 
         total_geral:
           novoTotal
-
       });
 
 
@@ -3742,12 +2901,8 @@ export default function GestaoPedidos() {
       e.preventDefault();
 
 
-      if (
-        !pedidoEditando
-      ) {
-
+      if (!pedidoEditando) {
         return;
-
       }
 
 
@@ -3761,7 +2916,6 @@ export default function GestaoPedidos() {
         const subtotalItens =
           pedidoEditando.itens
             ?.reduce(
-
               (
                 acc,
                 item
@@ -3771,41 +2925,29 @@ export default function GestaoPedidos() {
                   item.quantidade *
                   item.preco_unitario
                 ),
-
               0
-
             ) ||
           0;
 
 
         const novoTotal =
           Math.max(
-
             0,
-
             subtotalItens +
-
             Number(
-              pedidoEditando
-                .taxa_entrega
+              pedidoEditando.taxa_entrega
             ) -
-
             Number(
-              pedidoEditando
-                .desconto ||
+              pedidoEditando.desconto ||
               0
             )
-
           );
 
 
         const principalId =
-
           pedidoEditando
             .ids_fragmentados?.[0]
-
           ||
-
           pedidoEditando.id;
 
 
@@ -3814,48 +2956,34 @@ export default function GestaoPedidos() {
             erroPrincipal
         } =
           await supabase
-
-            .from(
-              'pedidos'
-            )
-
+            .from('pedidos')
             .update({
-
               cliente:
-                pedidoEditando
-                  .cliente,
+                pedidoEditando.cliente,
 
               canal:
-                pedidoEditando
-                  .canal,
+                pedidoEditando.canal,
 
               forma_pagamento:
-                pedidoEditando
-                  .forma_pagamento,
+                pedidoEditando.forma_pagamento,
 
               entregador:
-                pedidoEditando
-                  .entregador ||
+                pedidoEditando.entregador ||
                 null,
 
               taxa_entrega:
-                pedidoEditando
-                  .taxa_entrega,
+                pedidoEditando.taxa_entrega,
 
               desconto:
-                pedidoEditando
-                  .desconto ||
+                pedidoEditando.desconto ||
                 0,
 
               pago:
-                pedidoEditando
-                  .pago,
+                pedidoEditando.pago,
 
               total_geral:
                 novoTotal
-
             })
-
             .eq(
               'id',
               principalId
@@ -3865,32 +2993,22 @@ export default function GestaoPedidos() {
         if (
           erroPrincipal
         ) {
-
           throw erroPrincipal;
-
         }
 
 
         const idsRelacionados =
-
           pedidoEditando
             .ids_fragmentados
-
           ||
-
           [
             pedidoEditando.id
           ];
 
 
         await supabase
-
-          .from(
-            'itens_pedido'
-          )
-
+          .from('itens_pedido')
           .delete()
-
           .in(
             'pedido_id',
             idsRelacionados
@@ -3898,21 +3016,15 @@ export default function GestaoPedidos() {
 
 
         if (
-
           pedidoEditando.itens &&
-
-          pedidoEditando
-            .itens.length >
+          pedidoEditando.itens.length >
           0
-
         ) {
 
           const novosItensDB =
             pedidoEditando.itens
               .map(
-
                 item => ({
-
                   pedido_id:
                     principalId,
 
@@ -3931,9 +3043,7 @@ export default function GestaoPedidos() {
 
                   preco_unitario:
                     item.preco_unitario
-
                 })
-
               );
 
 
@@ -3942,11 +3052,7 @@ export default function GestaoPedidos() {
               erroItens
           } =
             await supabase
-
-              .from(
-                'itens_pedido'
-              )
-
+              .from('itens_pedido')
               .insert(
                 novosItensDB
               );
@@ -3955,9 +3061,7 @@ export default function GestaoPedidos() {
           if (
             erroItens
           ) {
-
             throw erroItens;
-
           }
 
         }
@@ -3970,15 +3074,12 @@ export default function GestaoPedidos() {
 
         carregarDadosIniciais();
 
-
       } catch (
         err: any
       ) {
 
         alert(
-
           `Erro ao salvar edição: ${err.message}`
-
         );
 
       } finally {
@@ -4004,17 +3105,12 @@ export default function GestaoPedidos() {
 
       const canalAtualizacao =
         supabase
-
           .channel(
             'schema-db-changes'
           )
-
           .on(
-
             'postgres_changes',
-
             {
-
               event:
                 '*',
 
@@ -4023,33 +3119,26 @@ export default function GestaoPedidos() {
 
               table:
                 'pedidos'
-
             },
-
             () => {
 
               carregarDadosIniciais();
 
             }
-
           )
-
           .subscribe();
 
 
       return () => {
 
-        supabase
-          .removeChannel(
-            canalAtualizacao
-          );
+        supabase.removeChannel(
+          canalAtualizacao
+        );
 
       };
 
     },
-
     []
-
   );
 
 
@@ -4063,24 +3152,18 @@ export default function GestaoPedidos() {
     ) => {
 
       if (!valor) {
-
         return '';
-
       }
 
 
       const match =
         valor.match(
-
           /(\d{4})-(\d{2})-(\d{2})/
-
         );
 
 
       return match
-
         ? `${match[1]}-${match[2]}-${match[3]}`
-
         : '';
 
     };
@@ -4091,17 +3174,9 @@ export default function GestaoPedidos() {
       () => {
 
         const temFiltroAtivo =
-
-          dataInicio !== ''
-
-          ||
-
-          dataFim !== ''
-
-          ||
-
-          termoPesquisa
-            .trim() !== '';
+          dataInicio !== '' ||
+          dataFim !== '' ||
+          termoPesquisa.trim() !== '';
 
 
         if (
@@ -4114,7 +3189,6 @@ export default function GestaoPedidos() {
 
 
         return pedidos
-
           .filter(
             pedido => {
 
@@ -4125,39 +3199,26 @@ export default function GestaoPedidos() {
 
 
               if (
-
                 dataInicio &&
-
                 dataPedidoFormatada <
                 dataInicio
-
               ) {
-
                 return false;
-
               }
 
 
               if (
-
                 dataFim &&
-
                 dataPedidoFormatada >
                 dataFim
-
               ) {
-
                 return false;
-
               }
 
 
               if (
-
-                termoPesquisa
-                  .trim() !==
+                termoPesquisa.trim() !==
                 ''
-
               ) {
 
                 const termo =
@@ -4193,15 +3254,10 @@ export default function GestaoPedidos() {
 
 
                 if (
-
                   !correspondeNome &&
-
                   !correspondeNumero
-
                 ) {
-
                   return false;
-
                 }
 
               }
@@ -4210,9 +3266,7 @@ export default function GestaoPedidos() {
               return true;
 
             }
-
           )
-
           .sort(
             (
               a,
@@ -4238,25 +3292,16 @@ export default function GestaoPedidos() {
               );
 
             }
-
           );
 
       },
-
       [
-
         pedidos,
-
         dataInicio,
-
         dataFim,
-
         termoPesquisa,
-
         ordemDirecao
-
       ]
-
     );
 
 
@@ -4264,9 +3309,7 @@ export default function GestaoPedidos() {
     () => {
 
       setDataInicio('');
-
       setDataFim('');
-
       setTermoPesquisa('');
 
     };
@@ -4278,9 +3321,7 @@ export default function GestaoPedidos() {
       const hojeIso =
         new Date()
           .toISOString()
-          .split(
-            'T'
-          )[0];
+          .split('T')[0];
 
 
       setDataInicio(
@@ -4296,56 +3337,43 @@ export default function GestaoPedidos() {
 
 
   const faturamentoTotal =
-    pedidosFiltrados
-      .reduce(
-
-        (
-          acc,
-          p
-        ) =>
-          acc +
-          p.total_geral,
-
-        0
-
-      );
+    pedidosFiltrados.reduce(
+      (
+        acc,
+        p
+      ) =>
+        acc +
+        p.total_geral,
+      0
+    );
 
 
   const totalDescontos =
-    pedidosFiltrados
-      .reduce(
-
-        (
-          acc,
-          p
-        ) =>
-          acc +
-          p.desconto,
-
-        0
-
-      );
+    pedidosFiltrados.reduce(
+      (
+        acc,
+        p
+      ) =>
+        acc +
+        p.desconto,
+      0
+    );
 
 
   const pendenteCaderninho =
     pedidosFiltrados
-
       .filter(
         p =>
           !p.pago
       )
-
       .reduce(
-
         (
           acc,
           p
         ) =>
           acc +
           p.total_geral,
-
         0
-
       );
 
 
@@ -4410,59 +3438,43 @@ export default function GestaoPedidos() {
 
       <header className="bg-zinc-900 border-b border-zinc-800 px-6 py-4 flex justify-between items-center shadow-lg">
 
-
         <div className="flex items-center gap-3">
 
-
           <span className="text-2xl">
-
             📓
-
           </span>
 
-
           <h1 className="text-xl font-bold tracking-wide">
-
             Registo e Controlo de Vendas
-
           </h1>
-
 
         </div>
 
 
         <button
-
           onClick={
             carregarDadosIniciais
           }
 
           className="bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold px-4 py-2 rounded-xl border border-zinc-700 transition-all"
-
         >
 
           🔄 Sincronizar Dados
 
         </button>
 
-
       </header>
 
 
       {/* PESQUISA */}
 
-
       <section className="px-6 pt-6">
-
 
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-4">
 
-
           <div className="flex flex-col md:flex-row gap-4 items-center">
 
-
             <div className="flex-1 w-full">
-
 
               <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">
 
@@ -4472,7 +3484,6 @@ export default function GestaoPedidos() {
 
 
               <input
-
                 type="text"
 
                 value={
@@ -4489,15 +3500,12 @@ export default function GestaoPedidos() {
                 placeholder="Pesquise por nome do cliente ou número do pedido..."
 
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-orange-500 outline-none"
-
               />
-
 
             </div>
 
 
             <div>
-
 
               <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">
 
@@ -4507,7 +3515,6 @@ export default function GestaoPedidos() {
 
 
               <select
-
                 value={
                   ordemDirecao
                 }
@@ -4522,51 +3529,34 @@ export default function GestaoPedidos() {
                 }
 
                 className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-orange-500 outline-none cursor-pointer"
-
               >
 
-
                 <option value="desc">
-
                   ⬇️ Decrescente (Mais Recentes)
-
                 </option>
-
 
                 <option value="asc">
-
                   ⬆️ Crescente (Mais Antigos)
-
                 </option>
-
 
               </select>
 
-
             </div>
-
 
           </div>
 
 
           <div className="flex flex-col xl:flex-row xl:items-end justify-between gap-4 pt-3 border-t border-zinc-800">
 
-
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full xl:w-auto">
-
 
               <div>
 
-
                 <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">
-
                   De (Data Inicial)
-
                 </label>
 
-
                 <input
-
                   type="date"
 
                   value={
@@ -4586,25 +3576,18 @@ export default function GestaoPedidos() {
                   }
 
                   className="w-full sm:w-48 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white focus:border-orange-500 outline-none [color-scheme:dark]"
-
                 />
-
 
               </div>
 
 
               <div>
 
-
                 <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">
-
                   Até (Data Final)
-
                 </label>
 
-
                 <input
-
                   type="date"
 
                   value={
@@ -4624,21 +3607,16 @@ export default function GestaoPedidos() {
                   }
 
                   className="w-full sm:w-48 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white focus:border-orange-500 outline-none [color-scheme:dark]"
-
                 />
 
-
               </div>
-
 
             </div>
 
 
             <div className="flex items-center gap-2">
 
-
               <button
-
                 type="button"
 
                 onClick={
@@ -4646,7 +3624,6 @@ export default function GestaoPedidos() {
                 }
 
                 className="bg-orange-600 hover:bg-orange-500 text-xs font-bold px-4 py-2.5 rounded-xl transition-all shadow-md"
-
               >
 
                 Hoje
@@ -4655,7 +3632,6 @@ export default function GestaoPedidos() {
 
 
               <button
-
                 type="button"
 
                 onClick={
@@ -4669,1481 +3645,1251 @@ export default function GestaoPedidos() {
                 }
 
                 className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-xs font-bold px-4 py-2.5 rounded-xl border border-zinc-700 transition-all"
-
               >
 
                 Limpar Filtros
 
               </button>
 
-
             </div>
-
 
           </div>
 
-
         </div>
-
 
       </section>
 
 
       {/* MÉTRICAS */}
 
-
       <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-4">
 
-
         <div className="bg-zinc-900 border border-zinc-800/60 p-4 rounded-xl flex justify-between items-center">
-
 
           <div>
 
             <span className="text-[10px] text-zinc-400 uppercase font-black">
-
               Faturamento Bruto
-
             </span>
-
 
             <p className="text-2xl font-black mt-1">
-
               {faturamentoTotal.toFixed(2)}€
-
             </p>
-
 
           </div>
 
-
           <span className="text-2xl">
-
             💰
-
           </span>
-
 
         </div>
 
 
         <div className="bg-zinc-900 border border-zinc-800/60 p-4 rounded-xl flex justify-between items-center">
 
-
           <div>
 
-
             <span className="text-[10px] text-zinc-400 uppercase font-black">
-
               Descontos Aplicados
-
             </span>
-
 
             <p className="text-2xl font-black mt-1 text-red-400">
-
               {totalDescontos.toFixed(2)}€
-
             </p>
-
 
           </div>
 
-
           <span className="text-2xl">
-
             🎟️
-
           </span>
-
 
         </div>
 
 
         <div className="bg-zinc-900 border border-zinc-800/60 p-4 rounded-xl flex justify-between items-center">
 
-
           <div>
 
-
             <span className="text-[10px] text-zinc-400 uppercase font-black">
-
               Em Falta (Caderninho)
-
             </span>
 
-
             <p className="text-2xl font-black mt-1 text-orange-400">
-
               {pendenteCaderninho.toFixed(2)}€
-
             </p>
-
 
           </div>
 
-
           <span className="text-2xl">
-
             ✏️
-
           </span>
 
-
         </div>
-
 
       </div>
 
 
       {/* PEDIDOS */}
 
-
       <main className="flex-1 px-6 pb-6 overflow-y-auto">
 
+        {loading ? (
 
-        {
-          loading
-            ? (
+          <div className="text-center text-zinc-500 py-24">
+            A carregar registos...
+          </div>
 
-              <div className="text-center text-zinc-500 py-24">
+        ) : pedidosFiltrados.length === 0 ? (
 
-                A carregar registos...
+          <div className="text-center text-zinc-500 py-24 bg-zinc-900/20 border border-dashed border-zinc-800 rounded-2xl max-w-xl mx-auto space-y-2">
 
-              </div>
+            <p className="text-base font-bold text-zinc-300">
+              Nenhum pedido para exibir
+            </p>
 
-            )
+            <p className="text-xs text-zinc-500">
+              Utilize os filtros de data ou pesquise pelo nome do cliente / número do pedido para visualizar os registos.
+            </p>
 
-            : pedidosFiltrados.length ===
-              0
+          </div>
 
-              ? (
+        ) : (
 
-                <div className="text-center text-zinc-500 py-24 bg-zinc-900/20 border border-dashed border-zinc-800 rounded-2xl max-w-xl mx-auto space-y-2">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
 
+            {pedidosFiltrados.map(
+              ped => (
 
-                  <p className="text-base font-bold text-zinc-300">
-
-                    Nenhum pedido para exibir
-
-                  </p>
-
-
-                  <p className="text-xs text-zinc-500">
-
-                    Utilize os filtros de data ou pesquise pelo nome do cliente / número do pedido para visualizar os registos.
-
-                  </p>
-
-
-                </div>
-
-              )
-
-              : (
-
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-
-
-                  {
-                    pedidosFiltrados.map(
-
-                      ped => (
-
-                        <div
-
-                          key={
-                            ped.id
-                          }
-
-                          className="bg-zinc-900 border border-zinc-800/80 rounded-2xl p-4 flex flex-col justify-between shadow-md hover:border-zinc-700/60 transition-all relative group"
-
-                        >
-
-
-                          <div className="absolute top-3 right-3 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-
-
-                            <button
-
-                              onClick={
-                                () =>
-                                  imprimirReciboTermico(
-                                    ped
-                                  )
-                              }
-
-                              className="w-7 h-7 bg-zinc-800 hover:bg-green-600 rounded-lg flex items-center justify-center text-xs transition-colors"
-
-                              title="Imprimir 2ª Via (Talão)"
-
-                            >
-
-                              🖨️
-
-                            </button>
-
-
-                            <button
-
-                              onClick={
-                                () =>
-                                  abrirEdicao(
-                                    ped
-                                  )
-                              }
-
-                              className="w-7 h-7 bg-zinc-800 hover:bg-blue-600 rounded-lg flex items-center justify-center text-xs transition-colors"
-
-                              title="Editar Informações e Itens/Combos"
-
-                            >
-
-                              ✏️
-
-                            </button>
-
-
-                            <button
-
-                              onClick={
-                                () =>
-                                  excluirPedido(
-
-                                    ped.numero_pedido,
-
-                                    ped.ids_fragmentados!
-
-                                  )
-                              }
-
-                              className="w-7 h-7 bg-zinc-800 hover:bg-red-600 rounded-lg flex items-center justify-center text-xs transition-colors"
-
-                              title="Excluir Pedido"
-
-                            >
-
-                              🗑️
-
-                            </button>
-
-
-                          </div>
-
-
-                          <div>
-
-
-                            <div className="flex justify-between items-start gap-2 border-b border-zinc-800/60 pb-3 mb-3 pr-24">
-
-
-                              <div>
-
-
-                                <span className="text-[10px] font-mono text-zinc-500">
-
-                                  #{ped.numero_pedido} · {ped.data_pedido}
-
-                                </span>
-
-
-                                <h3 className="font-bold text-zinc-100 text-sm mt-0.5">
-
-                                  {ped.cliente || 'Cliente Anónimo'}
-
-                                </h3>
-
-
-                              </div>
-
-
-                              <div className="flex flex-col items-end gap-1">
-
-
-                                <span
-
-                                  className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase tracking-wider ${getCorCanal(ped.canal)}`}
-
-                                >
-
-                                  {ped.canal}
-
-                                </span>
-
-
-                                <span
-
-                                  className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded ${
-                                    ped.pago
-
-                                      ? 'bg-green-500/10 text-green-500'
-
-                                      : 'bg-red-500/10 text-red-400 border border-red-500/20'
-                                  }`}
-
-                                >
-
-                                  {
-                                    ped.pago
-                                      ? 'Pago'
-                                      : 'Pendente'
-                                  }
-
-                                </span>
-
-
-                              </div>
-
-
-                            </div>
-
-
-                            <div className="space-y-2 mb-4">
-
-
-                              {
-                                ped.itens &&
-
-                                ped.itens.map(
-
-                                  (
-                                    item,
-                                    i
-                                  ) => (
-
-                                    <div
-
-                                      key={
-                                        i
-                                      }
-
-                                      className="flex justify-between text-xs text-zinc-300"
-
-                                    >
-
-
-                                      <span className="line-clamp-1 pr-2">
-
-
-                                        <span className="font-bold text-orange-400 mr-1.5">
-
-                                          {item.quantidade}x
-
-                                        </span>
-
-
-                                        {item.nome_produto}
-
-
-                                      </span>
-
-
-                                      <span className="font-mono text-zinc-500 text-[11px]">
-
-                                        {
-                                          (
-                                            item.preco_unitario *
-                                            item.quantidade
-                                          )
-                                            .toFixed(2)
-                                        }€
-
-                                      </span>
-
-
-                                    </div>
-
-                                  )
-
-                                )
-                              }
-
-
-                            </div>
-
-
-                          </div>
-
-
-                          <div className="border-t border-zinc-800/60 pt-3 mt-2 space-y-2 text-xs text-zinc-400">
-
-
-                            <div className="flex justify-between text-[11px]">
-
-
-                              <span>
-
-                                Pagamento:{' '}
-
-
-                                <span className="text-zinc-200 font-medium">
-
-                                  {ped.forma_pagamento}
-
-                                </span>
-
-
-                              </span>
-
-
-                              {
-                                ped.taxa_entrega >
-                                0
-
-                                &&
-
-                                <span>
-
-                                  Entrega: {ped.taxa_entrega.toFixed(2)}€
-
-                                </span>
-                              }
-
-
-                            </div>
-
-
-                            {
-                              ped.desconto >
-                              0
-
-                              &&
-
-                              (
-
-                                <div className="flex justify-between text-[11px] text-red-400">
-
-
-                                  <span>
-
-                                    Desconto Aplicado:
-
-                                  </span>
-
-
-                                  <span>
-
-                                    -{ped.desconto.toFixed(2)}€
-
-                                  </span>
-
-
-                                </div>
-
-                              )
-                            }
-
-
-                            <div className="flex justify-between items-center border-t border-zinc-800/40 pt-2">
-
-
-                              <span className="text-[11px]">
-
-                                Estafeta:{' '}
-
-
-                                <span className="text-zinc-300 font-medium">
-
-                                  {
-                                    ped.entregador ||
-                                    'Nenhum'
-                                  }
-
-                                </span>
-
-
-                              </span>
-
-
-                              <span className="text-base font-black text-orange-500">
-
-                                {ped.total_geral.toFixed(2)}€
-
-                              </span>
-
-
-                            </div>
-
-
-                            {
-                              !ped.pago &&
-
-                              (
-
-                                <button
-
-                                  onClick={
-                                    () =>
-                                      liquidarCaderninho(
-                                        ped.numero_pedido
-                                      )
-                                  }
-
-                                  className="w-full mt-2 bg-green-600 hover:bg-green-700 text-white text-[10px] font-bold py-1.5 rounded-lg transition-all"
-
-                                >
-
-                                  ✓ Recebido (Confirmar Pagamento)
-
-                                </button>
-
-                              )
-                            }
-
-
-                          </div>
-
-
-                        </div>
-
-                      )
-
-                    )
+                <div
+                  key={
+                    ped.id
                   }
 
+                  className="bg-zinc-900 border border-zinc-800/80 rounded-2xl p-4 flex flex-col justify-between shadow-md hover:border-zinc-700/60 transition-all relative group"
+                >
+
+                  <div className="absolute top-3 right-3 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+
+                    <button
+                      onClick={
+                        () =>
+                          imprimirReciboTermico(
+                            ped
+                          )
+                      }
+
+                      className="w-7 h-7 bg-zinc-800 hover:bg-green-600 rounded-lg flex items-center justify-center text-xs transition-colors"
+
+                      title="Imprimir 2ª Via (Talão)"
+                    >
+
+                      🖨️
+
+                    </button>
+
+
+                    <button
+                      onClick={
+                        () =>
+                          abrirEdicao(
+                            ped
+                          )
+                      }
+
+                      className="w-7 h-7 bg-zinc-800 hover:bg-blue-600 rounded-lg flex items-center justify-center text-xs transition-colors"
+
+                      title="Editar Informações e Itens/Combos"
+                    >
+
+                      ✏️
+
+                    </button>
+
+
+                    <button
+                      onClick={
+                        () =>
+                          excluirPedido(
+                            ped.numero_pedido,
+                            ped.ids_fragmentados!
+                          )
+                      }
+
+                      className="w-7 h-7 bg-zinc-800 hover:bg-red-600 rounded-lg flex items-center justify-center text-xs transition-colors"
+
+                      title="Excluir Pedido"
+                    >
+
+                      🗑️
+
+                    </button>
+
+                  </div>
+
+
+                  <div>
+
+                    <div className="flex justify-between items-start gap-2 border-b border-zinc-800/60 pb-3 mb-3 pr-24">
+
+                      <div>
+
+                        <span className="text-[10px] font-mono text-zinc-500">
+                          #{ped.numero_pedido} · {ped.data_pedido}
+                        </span>
+
+                        <h3 className="font-bold text-zinc-100 text-sm mt-0.5">
+                          {ped.cliente || 'Cliente Anónimo'}
+                        </h3>
+
+                      </div>
+
+
+                      <div className="flex flex-col items-end gap-1">
+
+                        <span
+                          className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase tracking-wider ${getCorCanal(ped.canal)}`}
+                        >
+
+                          {ped.canal}
+
+                        </span>
+
+
+                        <span
+                          className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded ${
+                            ped.pago
+                              ? 'bg-green-500/10 text-green-500'
+                              : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                          }`}
+                        >
+
+                          {ped.pago ? 'Pago' : 'Pendente'}
+
+                        </span>
+
+                      </div>
+
+                    </div>
+
+
+                    <div className="space-y-2 mb-4">
+
+                      {ped.itens &&
+                        ped.itens.map(
+                          (
+                            item,
+                            i
+                          ) => (
+
+                            <div
+                              key={
+                                i
+                              }
+
+                              className="flex justify-between text-xs text-zinc-300"
+                            >
+
+                              <span className="line-clamp-1 pr-2">
+
+                                <span className="font-bold text-orange-400 mr-1.5">
+                                  {item.quantidade}x
+                                </span>
+
+                                {item.nome_produto}
+
+                              </span>
+
+
+                              <span className="font-mono text-zinc-500 text-[11px]">
+
+                                {(item.preco_unitario * item.quantidade).toFixed(2)}€
+
+                              </span>
+
+                            </div>
+
+                          )
+                        )}
+
+                    </div>
+
+                  </div>
+
+
+                  <div className="border-t border-zinc-800/60 pt-3 mt-2 space-y-2 text-xs text-zinc-400">
+
+                    <div className="flex justify-between text-[11px]">
+
+                      <span>
+
+                        Pagamento:{' '}
+
+                        <span className="text-zinc-200 font-medium">
+                          {ped.forma_pagamento}
+                        </span>
+
+                      </span>
+
+
+                      {ped.taxa_entrega > 0 && (
+
+                        <span>
+                          Entrega: {ped.taxa_entrega.toFixed(2)}€
+                        </span>
+
+                      )}
+
+                    </div>
+
+
+                    {ped.desconto > 0 && (
+
+                      <div className="flex justify-between text-[11px] text-red-400">
+
+                        <span>
+                          Desconto Aplicado:
+                        </span>
+
+                        <span>
+                          -{ped.desconto.toFixed(2)}€
+                        </span>
+
+                      </div>
+
+                    )}
+
+
+                    <div className="flex justify-between items-center border-t border-zinc-800/40 pt-2">
+
+                      <span className="text-[11px]">
+
+                        Estafeta:{' '}
+
+                        <span className="text-zinc-300 font-medium">
+                          {ped.entregador || 'Nenhum'}
+                        </span>
+
+                      </span>
+
+
+                      <span className="text-base font-black text-orange-500">
+
+                        {ped.total_geral.toFixed(2)}€
+
+                      </span>
+
+                    </div>
+
+
+                    {!ped.pago && (
+
+                      <button
+                        onClick={
+                          () =>
+                            liquidarCaderninho(
+                              ped.numero_pedido
+                            )
+                        }
+
+                        className="w-full mt-2 bg-green-600 hover:bg-green-700 text-white text-[10px] font-bold py-1.5 rounded-lg transition-all"
+                      >
+
+                        ✓ Recebido (Confirmar Pagamento)
+
+                      </button>
+
+                    )}
+
+                  </div>
 
                 </div>
 
               )
-        }
+            )}
 
+          </div>
+
+        )}
 
       </main>
 
 
       {/* MODAL EDIÇÃO */}
 
+      {modalEditar &&
+        pedidoEditando && (
 
-      {
-        modalEditar &&
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
 
-        pedidoEditando &&
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl p-6 shadow-2xl relative max-h-[90vh] flex flex-col">
 
-        (
+            <button
+              onClick={
+                () =>
+                  setModalEditar(
+                    false
+                  )
+              }
 
-          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+              className="absolute top-5 right-5 text-zinc-400 hover:text-white"
+            >
 
+              ✕
 
-            <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl p-6 shadow-2xl relative max-h-[90vh] flex flex-col">
-
-
-              <button
-
-                onClick={
-                  () =>
-                    setModalEditar(
-                      false
-                    )
-                }
-
-                className="absolute top-5 right-5 text-zinc-400 hover:text-white"
-
-              >
-
-                ✕
-
-              </button>
+            </button>
 
 
-              <h2 className="text-xl font-bold text-white mb-4 border-b border-zinc-800 pb-3">
-
-                Editar Pedido #{pedidoEditando.numero_pedido}
-
-              </h2>
+            <h2 className="text-xl font-bold text-white mb-4 border-b border-zinc-800 pb-3">
+              Editar Pedido #{pedidoEditando.numero_pedido}
+            </h2>
 
 
-              <form
+            <form
+              onSubmit={
+                salvarEdicao
+              }
 
-                onSubmit={
-                  salvarEdicao
-                }
+              className="flex-1 overflow-y-auto space-y-4 pr-1"
+            >
 
-                className="flex-1 overflow-y-auto space-y-4 pr-1"
+              <div className="grid grid-cols-2 gap-4">
 
-              >
+                <div className="col-span-2">
 
-
-                <div className="grid grid-cols-2 gap-4">
-
-
-                  <div className="col-span-2">
-
-
-                    <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
-
-                      Cliente
-
-                    </label>
+                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
+                    Cliente
+                  </label>
 
 
-                    <input
+                  <input
+                    type="text"
 
-                      type="text"
+                    required
 
-                      required
+                    value={
+                      pedidoEditando.cliente ||
+                      ''
+                    }
 
-                      value={
-                        pedidoEditando.cliente ||
-                        ''
-                      }
-
-                      onChange={
-                        e =>
-                          setPedidoEditando({
-
-                            ...pedidoEditando,
-
-                            cliente:
-                              e.target.value
-
-                          })
-                      }
-
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none"
-
-                    />
-
-
-                  </div>
-
-
-                  <div>
-
-
-                    <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
-
-                      Canal (Assume Preços Automáticos)
-
-                    </label>
-
-
-                    <select
-
-                      value={
-                        pedidoEditando.canal
-                      }
-
-                      onChange={
-                        e =>
-                          alterarCanalEdicao(
+                    onChange={
+                      e =>
+                        setPedidoEditando({
+                          ...pedidoEditando,
+                          cliente:
                             e.target.value
-                          )
-                      }
-
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-amber-400 font-bold outline-none cursor-pointer"
-
-                    >
-
-
-                      <option value="Balcão">
-
-                        Balcão
-
-                      </option>
-
-
-                      <option value="WhatsApp">
-
-                        WhatsApp
-
-                      </option>
-
-
-                      <option value="Glovo">
-
-                        Glovo
-
-                      </option>
-
-
-                      <option value="Palmbites">
-
-                        Palmbites
-
-                      </option>
-
-
-                      <option value="Revendedores">
-
-                        Revendedores
-
-                      </option>
-
-
-                    </select>
-
-
-                  </div>
-
-
-                  <div>
-
-
-                    <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
-
-                      Pagamento
-
-                    </label>
-
-
-                    <select
-
-                      value={
-                        pedidoEditando.forma_pagamento
-                      }
-
-                      onChange={
-                        e =>
-                          setPedidoEditando({
-
-                            ...pedidoEditando,
-
-                            forma_pagamento:
-                              e.target.value
-
-                          })
-                      }
-
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none"
-
-                    >
-
-
-                      <option value="Dinheiro">
-
-                        Dinheiro
-
-                      </option>
-
-
-                      <option value="MBWay">
-
-                        MBWay
-
-                      </option>
-
-
-                      <option value="Multibanco">
-
-                        Multibanco
-
-                      </option>
-
-
-                      <option value="Dinheiro Glovo">
-
-                        Dinheiro Glovo
-
-                      </option>
-
-
-                      <option value="Glovo">
-
-                        Faturamento Glovo
-
-                      </option>
-
-
-                      <option value="Caderninho">
-
-                        Caderninho
-
-                      </option>
-
-
-                    </select>
-
-
-                  </div>
-
-
-                  <div>
-
-
-                    <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
-
-                      Estado do Pagamento
-
-                    </label>
-
-
-                    <select
-
-                      value={
-                        pedidoEditando.pago
-
-                          ? 'true'
-
-                          : 'false'
-                      }
-
-                      onChange={
-                        e =>
-                          setPedidoEditando({
-
-                            ...pedidoEditando,
-
-                            pago:
-                              e.target.value ===
-                              'true'
-
-                          })
-                      }
-
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none"
-
-                    >
-
-
-                      <option value="true">
-
-                        Pago
-
-                      </option>
-
-
-                      <option value="false">
-
-                        Pendente
-
-                      </option>
-
-
-                    </select>
-
-
-                  </div>
-
-
-                  <div>
-
-
-                    <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
-
-                      Entregador
-
-                    </label>
-
-
-                    <select
-
-                      value={
-                        pedidoEditando.entregador ||
-                        ''
-                      }
-
-                      onChange={
-                        e =>
-                          setPedidoEditando({
-
-                            ...pedidoEditando,
-
-                            entregador:
-                              e.target.value
-
-                          })
-                      }
-
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none cursor-pointer"
-
-                    >
-
-
-                      <option value="">
-
-                        -- Nenhum --
-
-                      </option>
-
-
-                      {
-                        listaEstafetas.map(
-
-                          est => (
-
-                            <option
-
-                              key={
-                                est.nome
-                              }
-
-                              value={
-                                est.nome
-                              }
-
-                            >
-
-                              {est.nome}
-
-                            </option>
-
-                          )
-
-                        )
-                      }
-
-
-                    </select>
-
-
-                  </div>
-
-
-                  <div>
-
-
-                    <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
-
-                      Taxa de Entrega (€)
-
-                    </label>
-
-
-                    <input
-
-                      type="number"
-
-                      step="0.01"
-
-                      min="0"
-
-                      value={
-                        pedidoEditando.taxa_entrega
-                      }
-
-                      onChange={
-                        e => {
-
-                          const taxa =
-                            parseFloat(
-                              e.target.value
-                            ) ||
-                            0;
-
-
-                          const subtotal =
-                            pedidoEditando.itens
-                              ?.reduce(
-
-                                (
-                                  acc,
-                                  it
-                                ) =>
-                                  acc +
-                                  (
-                                    it.quantidade *
-                                    it.preco_unitario
-                                  ),
-
-                                0
-
-                              ) ||
-                            0;
-
-
-                          const novoTotal =
-                            Math.max(
-
-                              0,
-
-                              subtotal +
-
-                              taxa -
-
-                              (
-                                pedidoEditando.desconto ||
-                                0
-                              )
-
-                            );
-
-
-                          setPedidoEditando({
-
-                            ...pedidoEditando,
-
-                            taxa_entrega:
-                              taxa,
-
-                            total_geral:
-                              novoTotal
-
-                          });
-
-                        }
-                      }
-
-                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-orange-400 font-bold outline-none"
-
-                    />
-
-
-                  </div>
-
-
-                  <div>
-
-
-                    <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
-
-                      Desconto (€)
-
-                    </label>
-
-
-                    <input
-
-                      type="number"
-
-                      step="0.01"
-
-                      min="0"
-
-                      value={
-                        pedidoEditando.desconto ??
-                        ''
-                      }
-
-                      onChange={
-                        e => {
-
-                          const desc =
-                            e.target.value ===
-                            ''
-
-                              ? 0
-
-                              : parseFloat(
-                                  e.target.value
-                                );
-
-
-                          const subtotal =
-                            pedidoEditando.itens
-                              ?.reduce(
-
-                                (
-                                  acc,
-                                  it
-                                ) =>
-                                  acc +
-                                  (
-                                    it.quantidade *
-                                    it.preco_unitario
-                                  ),
-
-                                0
-
-                              ) ||
-                            0;
-
-
-                          const novoTotal =
-                            Math.max(
-
-                              0,
-
-                              subtotal +
-
-                              pedidoEditando.taxa_entrega -
-
-                              desc
-
-                            );
-
-
-                          setPedidoEditando({
-
-                            ...pedidoEditando,
-
-                            desconto:
-                              desc,
-
-                            total_geral:
-                              novoTotal
-
-                          });
-
-                        }
-                      }
-
-                      className="w-full bg-zinc-950 border border-red-900/50 rounded-xl px-3 py-2 text-sm text-red-400 font-bold outline-none"
-
-                    />
-
-
-                  </div>
-
+                        })
+                    }
+
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none"
+                  />
 
                 </div>
 
 
-                {/* ITENS E COMBOS */}
+                <div>
+
+                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
+                    Canal (Assume Preços Automáticos)
+                  </label>
 
 
-                <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 space-y-3 mt-4">
+                  <select
+                    value={
+                      pedidoEditando.canal
+                    }
+
+                    onChange={
+                      e =>
+                        alterarCanalEdicao(
+                          e.target.value
+                        )
+                    }
+
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-amber-400 font-bold outline-none cursor-pointer"
+                  >
+
+                    <option value="Balcão">
+                      Balcão
+                    </option>
+
+                    <option value="WhatsApp">
+                      WhatsApp
+                    </option>
+
+                    <option value="Glovo">
+                      Glovo
+                    </option>
+
+                    <option value="Palmbites">
+                      Palmbites
+                    </option>
+
+                    <option value="Revendedores">
+                      Revendedores
+                    </option>
+
+                  </select>
+
+                </div>
 
 
-                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+                <div>
+
+                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
+                    Pagamento
+                  </label>
 
 
-                    <h3 className="text-xs font-bold uppercase text-zinc-400">
+                  <select
+                    value={
+                      pedidoEditando.forma_pagamento
+                    }
 
-                      Itens e Combos do Pedido
+                    onChange={
+                      e =>
+                        setPedidoEditando({
+                          ...pedidoEditando,
 
-                    </h3>
+                          forma_pagamento:
+                            e.target.value
+                        })
+                    }
+
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none"
+                  >
+
+                    <option value="Dinheiro">
+                      Dinheiro
+                    </option>
+
+                    <option value="MBWay">
+                      MBWay
+                    </option>
+
+                    <option value="Multibanco">
+                      Multibanco
+                    </option>
+
+                    <option value="Dinheiro Glovo">
+                      Dinheiro Glovo
+                    </option>
+
+                    <option value="Glovo">
+                      Faturamento Glovo
+                    </option>
+
+                    <option value="Caderninho">
+                      Caderninho
+                    </option>
+
+                  </select>
+
+                </div>
 
 
-                    <div className="flex gap-2 w-full sm:w-auto">
+                <div>
+
+                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
+                    Estado do Pagamento
+                  </label>
 
 
-                      <select
+                  <select
+                    value={
+                      pedidoEditando.pago
+                        ? 'true'
+                        : 'false'
+                    }
 
-                        onChange={
-                          e => {
+                    onChange={
+                      e =>
+                        setPedidoEditando({
+                          ...pedidoEditando,
 
-                            adicionarProdutoEdicao(
-                              e.target.value
-                            );
+                          pago:
+                            e.target.value ===
+                            'true'
+                        })
+                    }
 
-                            e.target.value =
-                              '';
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none"
+                  >
 
-                          }
-                        }
+                    <option value="true">
+                      Pago
+                    </option>
 
-                        defaultValue=""
+                    <option value="false">
+                      Pendente
+                    </option>
 
-                        className="bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none cursor-pointer flex-1 sm:flex-none"
+                  </select>
 
-                      >
+                </div>
 
+
+                <div>
+
+                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
+                    Entregador
+                  </label>
+
+
+                  <select
+                    value={
+                      pedidoEditando.entregador ||
+                      ''
+                    }
+
+                    onChange={
+                      e =>
+                        setPedidoEditando({
+                          ...pedidoEditando,
+
+                          entregador:
+                            e.target.value
+                        })
+                    }
+
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none cursor-pointer"
+                  >
+
+                    <option value="">
+                      -- Nenhum --
+                    </option>
+
+
+                    {listaEstafetas.map(
+                      est => (
 
                         <option
+                          key={
+                            est.nome
+                          }
 
-                          value=""
-
-                          disabled
-
+                          value={
+                            est.nome
+                          }
                         >
 
-                          + Adicionar Produto...
+                          {est.nome}
 
                         </option>
 
+                      )
+                    )}
 
-                        {
-                          produtosDB.map(
+                  </select>
 
-                            p => (
+                </div>
 
-                              <option
 
-                                key={
-                                  p.id
-                                }
+                <div>
 
-                                value={
-                                  p.id
-                                }
+                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
+                    Taxa de Entrega (€)
+                  </label>
 
-                              >
 
-                                {p.nome}
+                  <input
+                    type="number"
 
-                              </option>
+                    step="0.01"
 
+                    min="0"
+
+                    value={
+                      pedidoEditando.taxa_entrega
+                    }
+
+                    onChange={
+                      e => {
+
+                        const taxa =
+                          parseFloat(
+                            e.target.value
+                          ) ||
+                          0;
+
+
+                        const subtotalLocal =
+                          pedidoEditando.itens
+                            ?.reduce(
+                              (
+                                acc,
+                                it
+                              ) =>
+                                acc +
+                                (
+                                  it.quantidade *
+                                  it.preco_unitario
+                                ),
+                              0
+                            ) ||
+                          0;
+
+
+                        const novoTotal =
+                          Math.max(
+                            0,
+                            subtotalLocal +
+                            taxa -
+                            (
+                              pedidoEditando.desconto ||
+                              0
                             )
+                          );
 
-                          )
+
+                        setPedidoEditando({
+                          ...pedidoEditando,
+
+                          taxa_entrega:
+                            taxa,
+
+                          total_geral:
+                            novoTotal
+                        });
+
+                      }
+                    }
+
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-orange-400 font-bold outline-none"
+                  />
+
+                </div>
+
+
+                <div>
+
+                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
+                    Desconto (€)
+                  </label>
+
+
+                  <input
+                    type="number"
+
+                    step="0.01"
+
+                    min="0"
+
+                    value={
+                      pedidoEditando.desconto ??
+                      ''
+                    }
+
+                    onChange={
+                      e => {
+
+                        const desc =
+                          e.target.value ===
+                          ''
+                            ? 0
+                            : parseFloat(
+                                e.target.value
+                              );
+
+
+                        const subtotalLocal =
+                          pedidoEditando.itens
+                            ?.reduce(
+                              (
+                                acc,
+                                it
+                              ) =>
+                                acc +
+                                (
+                                  it.quantidade *
+                                  it.preco_unitario
+                                ),
+                              0
+                            ) ||
+                          0;
+
+
+                        const novoTotal =
+                          Math.max(
+                            0,
+                            subtotalLocal +
+                            pedidoEditando.taxa_entrega -
+                            desc
+                          );
+
+
+                        setPedidoEditando({
+                          ...pedidoEditando,
+
+                          desconto:
+                            desc,
+
+                          total_geral:
+                            novoTotal
+                        });
+
+                      }
+                    }
+
+                    className="w-full bg-zinc-950 border border-red-900/50 rounded-xl px-3 py-2 text-sm text-red-400 font-bold outline-none"
+                  />
+
+                </div>
+
+              </div>
+
+
+              {/* ITENS E COMBOS */}
+
+              <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 space-y-3 mt-4">
+
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
+
+                  <h3 className="text-xs font-bold uppercase text-zinc-400">
+                    Itens e Combos do Pedido
+                  </h3>
+
+
+                  <div className="flex gap-2 w-full sm:w-auto">
+
+                    <select
+                      onChange={
+                        e => {
+
+                          adicionarProdutoEdicao(
+                            e.target.value
+                          );
+
+                          e.target.value =
+                            '';
+
                         }
+                      }
 
+                      defaultValue=""
 
-                      </select>
+                      className="bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none cursor-pointer flex-1 sm:flex-none"
+                    >
 
-
-                      <select
-
-                        onChange={
-                          e => {
-
-                            iniciarMontagemComboEdicao(
-                              e.target.value
-                            );
-
-                            e.target.value =
-                              '';
-
-                          }
-                        }
-
-                        defaultValue=""
-
-                        className="bg-orange-600/20 border border-orange-500/40 rounded-xl px-3 py-1.5 text-xs text-orange-400 font-bold outline-none cursor-pointer flex-1 sm:flex-none"
-
+                      <option
+                        value=""
+                        disabled
                       >
+                        + Adicionar Produto...
+                      </option>
 
 
-                        <option
+                      {produtosDB.map(
+                        p => (
 
-                          value=""
+                          <option
+                            key={
+                              p.id
+                            }
 
-                          disabled
+                            value={
+                              p.id
+                            }
+                          >
+                            {p.nome}
+                          </option>
 
-                        >
+                        )
+                      )}
 
-                          + Adicionar Combo...
-
-                        </option>
+                    </select>
 
 
-                        {
-                          combosDB.map(
+                    <select
+                      onChange={
+                        e => {
 
-                            c => (
+                          iniciarMontagemComboEdicao(
+                            e.target.value
+                          );
 
-                              <option
+                          e.target.value =
+                            '';
 
-                                key={
-                                  c.id
-                                }
-
-                                value={
-                                  c.id
-                                }
-
-                              >
-
-                                {c.nome}
-
-                              </option>
-
-                            )
-
-                          )
                         }
+                      }
+
+                      defaultValue=""
+
+                      className="bg-orange-600/20 border border-orange-500/40 rounded-xl px-3 py-1.5 text-xs text-orange-400 font-bold outline-none cursor-pointer flex-1 sm:flex-none"
+                    >
+
+                      <option
+                        value=""
+                        disabled
+                      >
+                        + Adicionar Combo...
+                      </option>
 
 
-                      </select>
+                      {combosDB.map(
+                        c => (
 
+                          <option
+                            key={
+                              c.id
+                            }
 
-                    </div>
+                            value={
+                              c.id
+                            }
+                          >
+                            {c.nome}
+                          </option>
 
+                        )
+                      )}
+
+                    </select>
 
                   </div>
 
-
-                  <div className="space-y-2">
-
-
-                    {
-                      pedidoEditando.itens &&
-
-                      pedidoEditando.itens.map(
-
-                        (
-                          item,
-                          idx
-                        ) => (
-
-                          <div
-
-                            key={
-                              idx
-                            }
-
-                            className="flex items-center justify-between bg-zinc-900 p-2.5 rounded-xl border border-zinc-800 text-xs gap-2"
-
-                          >
+                </div>
 
 
-                            <span className="font-bold text-white flex-1 truncate">
+                <div className="space-y-2">
 
-                              {item.nome_produto}
+                  {pedidoEditando.itens &&
+                    pedidoEditando.itens.map(
+                      (
+                        item,
+                        idx
+                      ) => (
 
+                        <div
+                          key={
+                            idx
+                          }
+
+                          className="flex items-center justify-between bg-zinc-900 p-2.5 rounded-xl border border-zinc-800 text-xs gap-2"
+                        >
+
+                          <span className="font-bold text-white flex-1 truncate">
+                            {item.nome_produto}
+                          </span>
+
+
+                          <div className="flex items-center gap-2">
+
+                            <span className="font-mono text-zinc-400">
+                              {(item.preco_unitario * item.quantidade).toFixed(2)}€
                             </span>
 
 
-                            <div className="flex items-center gap-2">
+                            <input
+                              type="number"
 
+                              min="1"
 
-                              <span className="font-mono text-zinc-400">
+                              value={
+                                item.quantidade
+                              }
 
-                                {
-                                  (
-                                    item.preco_unitario *
-                                    item.quantidade
+                              onChange={
+                                e =>
+                                  alterarQtdItemEdicao(
+                                    idx,
+                                    parseInt(
+                                      e.target.value
+                                    ) ||
+                                    1
                                   )
-                                    .toFixed(2)
-                                }€
+                              }
 
-                              </span>
-
-
-                              <input
-
-                                type="number"
-
-                                min="1"
-
-                                value={
-                                  item.quantidade
-                                }
-
-                                onChange={
-                                  e =>
-                                    alterarQtdItemEdicao(
-
-                                      idx,
-
-                                      parseInt(
-                                        e.target.value
-                                      ) ||
-                                      1
-
-                                    )
-                                }
-
-                                className="w-16 bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1 text-center font-bold text-white outline-none"
-
-                              />
+                              className="w-16 bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1 text-center font-bold text-white outline-none"
+                            />
 
 
-                              <button
+                            <button
+                              type="button"
 
-                                type="button"
+                              onClick={
+                                () =>
+                                  removerItemEdicao(
+                                    idx
+                                  )
+                              }
 
-                                onClick={
-                                  () =>
-                                    removerItemEdicao(
-                                      idx
-                                    )
-                                }
-
-                                className="text-red-400 hover:text-red-300 px-1 font-bold"
-
-                              >
-
-                                ✕
-
-                              </button>
-
-
-                            </div>
-
+                              className="text-red-400 hover:text-red-300 px-1 font-bold"
+                            >
+                              ✕
+                            </button>
 
                           </div>
 
-                        )
+                        </div>
 
                       )
-                    }
-
-
-                  </div>
-
+                    )}
 
                 </div>
 
-
-                <div className="flex justify-between items-center pt-2">
-
-
-                  <span className="text-sm font-bold text-zinc-300">
-
-                    Total Geral Atualizado:
-
-                  </span>
+              </div>
 
 
-                  <span className="text-xl font-black text-orange-500 font-mono">
+              <div className="flex justify-between items-center pt-2">
 
-                    {pedidoEditando.total_geral.toFixed(2)}€
-
-                  </span>
-
-
-                </div>
+                <span className="text-sm font-bold text-zinc-300">
+                  Total Geral Atualizado:
+                </span>
 
 
-                <div className="pt-4 border-t border-zinc-800 flex justify-end gap-3">
+                <span className="text-xl font-black text-orange-500 font-mono">
+                  {pedidoEditando.total_geral.toFixed(2)}€
+                </span>
+
+              </div>
 
 
-                  <button
+              <div className="pt-4 border-t border-zinc-800 flex justify-end gap-3">
 
-                    type="button"
+                <button
+                  type="button"
 
-                    onClick={
-                      () =>
-                        setModalEditar(
-                          false
-                        )
-                    }
+                  onClick={
+                    () =>
+                      setModalEditar(
+                        false
+                      )
+                  }
 
-                    className="px-5 py-2.5 text-sm font-bold text-zinc-400 hover:text-white"
-
-                  >
-
-                    Cancelar
-
-                  </button>
+                  className="px-5 py-2.5 text-sm font-bold text-zinc-400 hover:text-white"
+                >
+                  Cancelar
+                </button>
 
 
-                  <button
+                <button
+                  type="submit"
 
-                    type="submit"
+                  disabled={
+                    salvando
+                  }
 
-                    disabled={
-                      salvando
-                    }
+                  className="bg-orange-600 hover:bg-orange-500 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-lg disabled:opacity-50"
+                >
 
-                    className="bg-orange-600 hover:bg-orange-500 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-lg disabled:opacity-50"
+                  {salvando
+                    ? 'A Guardar...'
+                    : 'Guardar Alterações'}
 
-                  >
+                </button>
 
-                    {
-                      salvando
+              </div>
 
-                        ? 'A Guardar...'
-
-                        : 'Guardar Alterações'
-                    }
-
-                  </button>
-
-
-                </div>
-
-
-              </form>
-
-
-            </div>
-
+            </form>
 
           </div>
 
-        )
-      }
+        </div>
+
+      )}
 
 
       {/* MODAL COMBO */}
 
+      {modalComboEdicao &&
+        comboSelecionadoParaMontar && (
 
-      {
-        modalComboEdicao &&
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
 
-        comboSelecionadoParaMontar &&
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl p-6 flex flex-col max-h-[90vh] shadow-2xl relative">
 
-        (
+            <button
+              onClick={
+                () =>
+                  setModalComboEdicao(
+                    false
+                  )
+              }
 
-          <div className="fixed inset-0 bg-black/85 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
+              className="absolute top-5 right-5 text-zinc-400 hover:text-white font-bold"
+            >
+              ✕
+            </button>
 
 
-            <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl p-6 flex flex-col max-h-[90vh] shadow-2xl relative">
+            <h2 className="text-xl font-bold text-orange-500 mb-1">
 
+              Montar Combo: {comboSelecionadoParaMontar.nome}
+
+            </h2>
+
+
+            <p className="text-xs text-zinc-400 mb-4">
+              {comboSelecionadoParaMontar.descricao}
+            </p>
+
+
+            <div className="flex-1 overflow-y-auto space-y-5 pr-1">
+
+              {comboSelecionadoParaMontar
+                .combo_grupos
+                .map(
+                  (
+                    grupo: any
+                  ) => {
+
+                    const selecoesDesteGrupo =
+                      selecoesComboEdicao[
+                        grupo.id
+                      ] ||
+                      [];
+
+
+                    const totalGrupo =
+                      selecoesDesteGrupo
+                        .reduce(
+                          (
+                            acc,
+                            s
+                          ) =>
+                            acc +
+                            (
+                              s.quantidade ||
+                              1
+                            ),
+                          0
+                        );
+
+
+                    const atingiuMaximo =
+                      totalGrupo >=
+                      grupo.quantidade_maxima;
+
+
+                    return (
+
+                      <div
+                        key={
+                          grupo.id
+                        }
+
+                        className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800"
+                      >
+
+                        <h3 className="text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2.5 flex justify-between">
+
+                          <span>
+                            {grupo.nome} ({totalGrupo}/{grupo.quantidade_maxima})
+                          </span>
+
+
+                          {grupo.obrigatorio && (
+
+                            <span className="text-orange-500">
+                              Obrigatório
+                            </span>
+
+                          )}
+
+                        </h3>
+
+
+                        <div className="grid grid-cols-2 gap-2">
+
+                          {grupo.combo_grupo_produtos
+                            .filter(
+                              (
+                                i: any
+                              ) =>
+                                i.ativo
+                            )
+                            .map(
+                              (
+                                itemVinculado:
+                                  any
+                              ) => {
+
+                                const selItem =
+                                  selecoesDesteGrupo
+                                    .find(
+                                      (
+                                        s: any
+                                      ) =>
+                                        s.produto_id ===
+                                        itemVinculado.produto_id
+                                    );
+
+
+                                const qtdSelecionada =
+                                  selItem
+                                    ? selItem.quantidade
+                                    : 0;
+
+
+                                const selecionado =
+                                  qtdSelecionada >
+                                  0;
+
+
+                                return (
+
+                                  <button
+                                    key={
+                                      itemVinculado.produto_id
+                                    }
+
+                                    type="button"
+
+                                    onClick={
+                                      () =>
+                                        toggleSelecaoComboEdicao(
+                                          grupo,
+                                          itemVinculado
+                                        )
+                                    }
+
+                                    className={`p-3 text-left rounded-xl text-xs border transition-all relative ${
+                                      selecionado
+                                        ? 'bg-orange-600/20 border-orange-500 text-white shadow'
+                                        : atingiuMaximo
+                                        ? 'bg-zinc-900/40 border-zinc-800/40 text-zinc-600 opacity-50'
+                                        : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-800'
+                                    }`}
+                                  >
+
+                                    <span className="font-medium block">
+                                      {itemVinculado.produto?.nome}
+                                    </span>
+
+
+                                    {qtdSelecionada >
+                                      0 && (
+
+                                      <span className="absolute top-2 right-2 bg-orange-500 text-white text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center">
+                                        {qtdSelecionada}
+                                      </span>
+
+                                    )}
+
+                                  </button>
+
+                                );
+
+                              }
+                            )}
+
+                        </div>
+
+                      </div>
+
+                    );
+
+                  }
+                )}
+
+            </div>
+
+
+            <div className="pt-4 border-t border-zinc-800 mt-4 flex justify-end gap-3">
 
               <button
+                type="button"
 
                 onClick={
                   () =>
@@ -6152,292 +4898,31 @@ export default function GestaoPedidos() {
                     )
                 }
 
-                className="absolute top-5 right-5 text-zinc-400 hover:text-white font-bold"
-
+                className="px-5 py-2.5 text-xs font-bold text-zinc-400 hover:text-white"
               >
-
-                ✕
-
+                Cancelar
               </button>
 
 
-              <h2 className="text-xl font-bold text-orange-500 mb-1">
-
-                Montar Combo: {comboSelecionadoParaMontar.nome}
-
-              </h2>
-
-
-              <p className="text-xs text-zinc-400 mb-4">
-
-                {comboSelecionadoParaMontar.descricao}
-
-              </p>
-
-
-              <div className="flex-1 overflow-y-auto space-y-5 pr-1">
-
-
-                {
-                  comboSelecionadoParaMontar
-                    .combo_grupos
-                    .map(
-
-                      (
-                        grupo: any
-                      ) => {
-
-                        const selecoesDesteGrupo =
-                          selecoesComboEdicao[
-                            grupo.id
-                          ] ||
-                          [];
-
-
-                        const totalGrupo =
-                          selecoesDesteGrupo
-                            .reduce(
-
-                              (
-                                acc,
-                                s
-                              ) =>
-                                acc +
-                                (
-                                  s.quantidade ||
-                                  1
-                                ),
-
-                              0
-
-                            );
-
-
-                        const atingiuMaximo =
-                          totalGrupo >=
-                          grupo.quantidade_maxima;
-
-
-                        return (
-
-                          <div
-
-                            key={
-                              grupo.id
-                            }
-
-                            className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800"
-
-                          >
-
-
-                            <h3 className="text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2.5 flex justify-between">
-
-
-                              <span>
-
-                                {grupo.nome} ({totalGrupo}/{grupo.quantidade_maxima})
-
-                              </span>
-
-
-                              {
-                                grupo.obrigatorio &&
-
-                                <span className="text-orange-500">
-
-                                  Obrigatório
-
-                                </span>
-                              }
-
-
-                            </h3>
-
-
-                            <div className="grid grid-cols-2 gap-2">
-
-
-                              {
-                                grupo.combo_grupo_produtos
-                                  .filter(
-
-                                    (
-                                      i: any
-                                    ) =>
-                                      i.ativo
-
-                                  )
-                                  .map(
-
-                                    (
-                                      itemVinculado:
-                                        any
-                                    ) => {
-
-                                      const selItem =
-                                        selecoesDesteGrupo
-                                          .find(
-
-                                            (
-                                              s: any
-                                            ) =>
-                                              s.produto_id ===
-                                              itemVinculado.produto_id
-
-                                          );
-
-
-                                      const qtdSelecionada =
-                                        selItem
-
-                                          ? selItem.quantidade
-
-                                          : 0;
-
-
-                                      const selecionado =
-                                        qtdSelecionada >
-                                        0;
-
-
-                                      return (
-
-                                        <button
-
-                                          key={
-                                            itemVinculado.produto_id
-                                          }
-
-                                          type="button"
-
-                                          onClick={
-                                            () =>
-                                              toggleSelecaoComboEdicao(
-
-                                                grupo,
-
-                                                itemVinculado
-
-                                              )
-                                          }
-
-                                          className={`p-3 text-left rounded-xl text-xs border transition-all relative ${
-                                            selecionado
-
-                                              ? 'bg-orange-600/20 border-orange-500 text-white shadow'
-
-                                              : atingiuMaximo
-
-                                                ? 'bg-zinc-900/40 border-zinc-800/40 text-zinc-600 opacity-50'
-
-                                                : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-800'
-                                          }`}
-
-                                        >
-
-
-                                          <span className="font-medium block">
-
-                                            {itemVinculado.produto?.nome}
-
-                                          </span>
-
-
-                                          {
-                                            qtdSelecionada >
-                                            0
-
-                                            &&
-
-                                            (
-
-                                              <span className="absolute top-2 right-2 bg-orange-500 text-white text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center">
-
-                                                {qtdSelecionada}
-
-                                              </span>
-
-                                            )
-                                          }
-
-
-                                        </button>
-
-                                      );
-
-                                    }
-
-                                  )
-                              }
-
-
-                            </div>
-
-
-                          </div>
-
-                        );
-
-                      }
-
-                    )
+              <button
+                type="button"
+
+                onClick={
+                  confirmarComboEdicao
                 }
 
-
-              </div>
-
-
-              <div className="pt-4 border-t border-zinc-800 mt-4 flex justify-end gap-3">
-
-
-                <button
-
-                  type="button"
-
-                  onClick={
-                    () =>
-                      setModalComboEdicao(
-                        false
-                      )
-                  }
-
-                  className="px-5 py-2.5 text-xs font-bold text-zinc-400 hover:text-white"
-
-                >
-
-                  Cancelar
-
-                </button>
-
-
-                <button
-
-                  type="button"
-
-                  onClick={
-                    confirmarComboEdicao
-                  }
-
-                  className="bg-orange-600 hover:bg-orange-500 text-white px-6 py-2.5 rounded-xl text-xs font-bold shadow-lg"
-
-                >
-
-                  Adicionar Combo ao Pedido
-
-                </button>
-
-
-              </div>
-
+                className="bg-orange-600 hover:bg-orange-500 text-white px-6 py-2.5 rounded-xl text-xs font-bold shadow-lg"
+              >
+                Adicionar Combo ao Pedido
+              </button>
 
             </div>
 
-
           </div>
 
-        )
-      }
+        </div>
+
+      )}
 
 
     </div>
