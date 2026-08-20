@@ -3,215 +3,439 @@
 import { useState, useEffect, useMemo } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
-// ============================================================================
-// 🖨️ MOTOR DE IMPRESSÃO TÉRMICA (CHEF BATATÔ) - 80mm
-// ============================================================================
-export const imprimirReciboTermico = (pedido: any) => {
-  const taxaEntrega = Number(pedido.taxa_entrega || 0);
-  const desconto = Number(pedido.desconto || 0);
-  const totalGeral = Number(pedido.total_geral || 0);
 
-  const subtotal = totalGeral - taxaEntrega + desconto;
+// ============================================================================
+// 🖨️ MOTOR DE IMPRESSÃO TÉRMICA CHEF BATATÔ
+// ============================================================================
+
+export const imprimirReciboTermico = (pedido: any) => {
+
+  const taxaEntrega =
+    Number(
+      pedido.taxa_entrega ||
+      0
+    );
+
+
+  const desconto =
+    Number(
+      pedido.desconto ||
+      0
+    );
+
+
+  const totalGeral =
+    Number(
+      pedido.total_geral ||
+      0
+    );
+
+
+  const subtotal =
+    totalGeral -
+    taxaEntrega +
+    desconto;
+
 
   const itensDoPedido =
     pedido.itens ||
     pedido.itens_pedido ||
     [];
 
-  // --------------------------------------------------------------------------
+
+  // ==========================================================================
   // FORMATAÇÃO DE MOEDA
-  // --------------------------------------------------------------------------
-  const moeda = (valor: number) =>
-    Number(valor || 0)
-      .toFixed(2)
-      .replace('.', ',');
+  // ==========================================================================
 
-  // --------------------------------------------------------------------------
-  // EVITA QUE CARACTERES DO TEXTO QUEBREM O HTML
-  // --------------------------------------------------------------------------
-  const escaparHtml = (texto: any) =>
-    String(texto ?? '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
+  const moeda =
+    (
+      valor: number
+    ) =>
 
-  // --------------------------------------------------------------------------
-  // ITENS DO PEDIDO
-  // --------------------------------------------------------------------------
-  const linhasItens = itensDoPedido.map((item: any) => {
-    const quantidade = Number(item.quantidade || 1);
-    const precoUnitario = Number(item.preco_unitario || 0);
-    const precoTotal = quantidade * precoUnitario;
+      Number(
+        valor ||
+        0
+      )
+        .toFixed(2)
+        .replace(
+          '.',
+          ','
+        );
 
-    const nomeOriginal = String(item.nome_produto || '');
 
-    const ehCombo =
-      item.codigo_produto === 'COMBO' ||
-      nomeOriginal.toLowerCase().includes('combo');
+  // ==========================================================================
+  // PROTEÇÃO DO HTML
+  // ==========================================================================
 
-    // ------------------------------------------------------------------------
-    // COMBOS
-    // ------------------------------------------------------------------------
-    if (ehCombo) {
-      const match = nomeOriginal.match(
-        /^(.*?)\s*\((.*)\)\s*$/
-      );
+  const escaparHtml =
+    (
+      texto: any
+    ) =>
 
-      const nomeCombo =
-        match
-          ? match[1].trim()
-          : nomeOriginal;
-
-      const componentes =
-        match && match[2]
-          ? match[2]
-              .split(',')
-              .map((nome: string) => nome.trim())
-              .filter(Boolean)
-          : [];
-
-      const componentesHtml = componentes
-        .map(
-          (nome: string) => `
-            <tr class="subitem">
-              <td class="sub-vazio"></td>
-
-              <td colspan="2" class="sub-descricao">
-                <span class="sub-qtd">1x</span>
-                ${escaparHtml(nome)}
-              </td>
-            </tr>
-          `
+      String(
+        texto ??
+        ''
+      )
+        .replace(
+          /&/g,
+          '&amp;'
         )
-        .join('');
+        .replace(
+          /</g,
+          '&lt;'
+        )
+        .replace(
+          />/g,
+          '&gt;'
+        )
+        .replace(
+          /"/g,
+          '&quot;'
+        )
+        .replace(
+          /'/g,
+          '&#039;'
+        );
 
-      return `
-        <tr class="item-principal">
-          <td class="qtd">
-            ${quantidade}x
-          </td>
 
-          <td class="descricao">
-            ${escaparHtml(nomeCombo)}
-          </td>
+  // ==========================================================================
+  // ITENS
+  // ==========================================================================
 
-          <td class="preco">
-            ${moeda(precoTotal)} €
-          </td>
-        </tr>
+  const linhasItens =
+    itensDoPedido
+      .map(
+        (
+          item: any
+        ) => {
 
-        ${componentesHtml}
-      `;
-    }
+          const quantidade =
+            Number(
+              item.quantidade ||
+              1
+            );
 
-    // ------------------------------------------------------------------------
-    // PRODUTO NORMAL
-    // ------------------------------------------------------------------------
-    return `
-      <tr class="item-principal">
-        <td class="qtd">
-          ${quantidade}x
-        </td>
 
-        <td class="descricao">
-          ${escaparHtml(nomeOriginal)}
-        </td>
+          const precoUnitario =
+            Number(
+              item.preco_unitario ||
+              0
+            );
 
-        <td class="preco">
-          ${moeda(precoTotal)} €
-        </td>
-      </tr>
-    `;
-  }).join('');
 
-  // --------------------------------------------------------------------------
-  // DATA REAL DO PEDIDO
-  // --------------------------------------------------------------------------
-  let dataPedido = pedido.data_pedido
-    ? new Date(pedido.data_pedido)
-    : new Date();
+          const precoTotal =
+            quantidade *
+            precoUnitario;
 
-  if (Number.isNaN(dataPedido.getTime())) {
-    dataPedido = new Date();
+
+          const nomeOriginal =
+            String(
+              item.nome_produto ||
+              ''
+            );
+
+
+          const ehCombo =
+
+            item.codigo_produto ===
+              'COMBO'
+
+            ||
+
+            nomeOriginal
+              .toLowerCase()
+              .includes(
+                'combo'
+              );
+
+
+          // ==================================================================
+          // COMBO
+          // ==================================================================
+
+          if (ehCombo) {
+
+            const match =
+              nomeOriginal.match(
+                /^(.*?)\s*\((.*)\)\s*$/
+              );
+
+
+            const nomeCombo =
+              match
+                ? match[1].trim()
+                : nomeOriginal;
+
+
+            const componentes =
+              match &&
+              match[2]
+
+                ? match[2]
+                    .split(',')
+                    .map(
+                      (
+                        nome: string
+                      ) =>
+                        nome.trim()
+                    )
+                    .filter(
+                      Boolean
+                    )
+
+                : [];
+
+
+            const componentesHtml =
+              componentes
+                .map(
+                  (
+                    nome: string
+                  ) => `
+
+                    <tr class="subitem">
+
+                      <td class="sub-vazio"></td>
+
+                      <td
+                        colspan="2"
+                        class="sub-descricao"
+                      >
+
+                        <span class="sub-qtd">
+                          1x
+                        </span>
+
+                        ${escaparHtml(nome)}
+
+                      </td>
+
+                    </tr>
+
+                  `
+                )
+                .join('');
+
+
+            return `
+
+              <tr class="item-principal">
+
+                <td class="qtd">
+
+                  ${quantidade}x
+
+                </td>
+
+
+                <td class="descricao">
+
+                  ${escaparHtml(nomeCombo)}
+
+                </td>
+
+
+                <td class="preco">
+
+                  ${moeda(precoTotal)} €
+
+                </td>
+
+              </tr>
+
+
+              ${componentesHtml}
+
+            `;
+
+          }
+
+
+          // ==================================================================
+          // PRODUTO NORMAL
+          // ==================================================================
+
+          return `
+
+            <tr class="item-principal">
+
+              <td class="qtd">
+
+                ${quantidade}x
+
+              </td>
+
+
+              <td class="descricao">
+
+                ${escaparHtml(
+                  nomeOriginal
+                )}
+
+              </td>
+
+
+              <td class="preco">
+
+                ${moeda(
+                  precoTotal
+                )} €
+
+              </td>
+
+            </tr>
+
+          `;
+
+        }
+      )
+      .join('');
+
+
+  // ==========================================================================
+  // DATA ORIGINAL DO PEDIDO
+  // ==========================================================================
+
+  let dataPedido =
+    pedido.data_pedido
+
+      ? new Date(
+          pedido.data_pedido
+        )
+
+      : new Date();
+
+
+  if (
+    Number.isNaN(
+      dataPedido.getTime()
+    )
+  ) {
+
+    dataPedido =
+      new Date();
+
   }
 
+
   const dataFormatada =
-    dataPedido.toLocaleDateString(
-      'pt-PT',
-      {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric'
-      }
-    );
+    dataPedido
+      .toLocaleDateString(
+
+        'pt-PT',
+
+        {
+
+          day:
+            '2-digit',
+
+          month:
+            '2-digit',
+
+          year:
+            'numeric'
+
+        }
+
+      );
+
 
   const horaFormatada =
-    dataPedido.toLocaleTimeString(
-      'pt-PT',
-      {
-        hour: '2-digit',
-        minute: '2-digit'
-      }
-    );
+    dataPedido
+      .toLocaleTimeString(
 
-  // --------------------------------------------------------------------------
-  // HTML COMPLETO DO TALÃO
-  // --------------------------------------------------------------------------
+        'pt-PT',
+
+        {
+
+          hour:
+            '2-digit',
+
+          minute:
+            '2-digit'
+
+        }
+
+      );
+
+
+  // ==========================================================================
+  // HTML DO TALÃO
+  // ==========================================================================
+
   const html = `
+
 <!DOCTYPE html>
+
 <html lang="pt-PT">
+
 
 <head>
 
+
 <meta charset="UTF-8">
+
 
 <meta
   http-equiv="Content-Type"
   content="text/html; charset=UTF-8"
 />
 
+
 <meta
   name="viewport"
   content="width=device-width, initial-scale=1"
 />
 
+
 <title>
+
   Talão #${pedido.numero_pedido || '---'}
+
 </title>
+
 
 <style>
 
+
 @page {
+
   margin: 0;
+
 }
+
 
 html {
+
   width: 80mm;
-  height: auto !important;
-  min-height: 0 !important;
+
+  height: auto;
+
+  min-height: 0;
+
   margin: 0;
+
   padding: 0;
+
   background: #ffffff;
+
 }
 
+
 body {
+
   width: 80mm;
-  height: auto !important;
-  min-height: 0 !important;
+
+  height: auto;
+
+  min-height: 0;
 
   margin: 0;
 
-  padding:
-    3mm
-    4mm
-    3mm
-    4mm;
-
-  box-sizing: border-box;
+  padding: 0;
 
   background: #ffffff;
+
   color: #000000;
 
   font-family:
@@ -219,57 +443,132 @@ body {
     Helvetica,
     sans-serif;
 
-  font-size: 12px;
-  line-height: 1.2;
-
-  overflow: visible;
 }
 
+
 * {
-  box-sizing: border-box;
+
+  box-sizing:
+    border-box;
+
 }
 
 
 /* ==========================================================================
-   CABEÇALHO
+   RECIBO
+   ========================================================================== */
+
+#recibo {
+
+  width: 80mm;
+
+  height: auto;
+
+  margin: 0;
+
+  padding:
+    3mm
+    4mm
+    0
+    4mm;
+
+  background: #ffffff;
+
+  color: #000000;
+
+  font-family:
+    Arial,
+    Helvetica,
+    sans-serif;
+
+  font-size:
+    12px;
+
+  line-height:
+    1.2;
+
+}
+
+
+/* ==========================================================================
+   NÚMERO PEDIDO
    ========================================================================== */
 
 .numero-pedido {
+
   margin: 0;
+
   padding: 0;
 
-  text-align: center;
+  text-align:
+    center;
 
-  font-size: 25px;
-  line-height: 27px;
+  font-size:
+    25px;
 
-  font-weight: 900;
+  line-height:
+    27px;
+
+  font-weight:
+    900;
+
 }
+
+
+/* ==========================================================================
+   CONFERÊNCIA
+   ========================================================================== */
 
 .conferencia {
-  margin-top: 0.5mm;
-  margin-bottom: 0;
 
-  text-align: center;
+  margin-top:
+    0.5mm;
 
-  font-size: 13px;
-  line-height: 15px;
+  margin-bottom:
+    0;
 
-  font-weight: 800;
+  text-align:
+    center;
+
+  font-size:
+    13px;
+
+  line-height:
+    15px;
+
+  font-weight:
+    800;
+
 }
 
+
+/* ==========================================================================
+   CANAL E DATA
+   ========================================================================== */
+
 .canal-data {
-  margin-top: 0.7mm;
-  margin-bottom: 3mm;
 
-  text-align: center;
+  margin-top:
+    0.7mm;
 
-  text-transform: uppercase;
+  margin-bottom:
+    3mm;
 
-  font-size: 10px;
-  line-height: 12px;
+  text-align:
+    center;
 
-  font-weight: 700;
+  text-transform:
+    uppercase;
+
+  font-size:
+    10px;
+
+  line-height:
+    12px;
+
+  font-weight:
+    700;
+
 }
 
 
@@ -278,35 +577,59 @@ body {
    ========================================================================== */
 
 .cliente {
+
   margin: 0;
+
   padding: 0;
 
-  font-size: 12px;
-  line-height: 1.25;
+  font-size:
+    12px;
+
+  line-height:
+    1.25;
+
 }
+
 
 .nome-cliente {
-  margin: 0 0 0.5mm 0;
+
+  margin:
+    0
+    0
+    0.5mm
+    0;
+
   padding: 0;
 
-  font-size: 13px;
-  line-height: 15px;
+  font-size:
+    13px;
 
-  font-weight: 800;
+  line-height:
+    15px;
+
+  font-weight:
+    800;
+
 }
 
+
 .cliente-linha {
+
   margin: 0;
+
   padding: 0;
+
 }
 
 
 /* ==========================================================================
-   SEPARADORES
+   SEPARADOR
    ========================================================================== */
 
 .separador {
+
   width: 100%;
+
   height: 0;
 
   margin:
@@ -319,6 +642,7 @@ body {
     1px
     dashed
     #000000;
+
 }
 
 
@@ -327,123 +651,205 @@ body {
    ========================================================================== */
 
 table {
+
   width: 100%;
 
   margin: 0;
+
   padding: 0;
 
-  border-collapse: collapse;
-  border-spacing: 0;
+  border-collapse:
+    collapse;
 
-  table-layout: fixed;
+  border-spacing:
+    0;
+
+  table-layout:
+    fixed;
+
 }
+
 
 tbody {
+
   margin: 0;
+
   padding: 0;
+
 }
+
 
 tr {
+
   margin: 0;
+
   padding: 0;
 
-  page-break-inside: avoid;
+  page-break-inside:
+    avoid;
+
 }
 
+
 td {
+
   margin: 0;
+
   padding: 0;
+
 }
 
 
 /* ==========================================================================
-   ITEM PRINCIPAL
+   PRODUTO PRINCIPAL
    ========================================================================== */
 
 .item-principal td {
-  vertical-align: top;
 
-  padding-top: 1mm;
-  padding-bottom: 1mm;
+  vertical-align:
+    top;
+
+  padding-top:
+    1mm;
+
+  padding-bottom:
+    1mm;
+
 }
+
 
 .qtd {
-  width: 8mm;
 
-  padding-right: 1mm !important;
+  width:
+    8mm;
 
-  font-size: 12px;
+  padding-right:
+    1mm !important;
 
-  font-weight: 800;
+  font-size:
+    12px;
 
-  white-space: nowrap;
+  font-weight:
+    800;
+
+  white-space:
+    nowrap;
+
 }
+
 
 .descricao {
-  width: auto;
 
-  padding-right: 1.5mm !important;
+  width:
+    auto;
 
-  font-size: 12px;
-  line-height: 1.15;
+  padding-right:
+    1.5mm !important;
 
-  font-weight: 700;
+  font-size:
+    12px;
 
-  white-space: normal;
+  line-height:
+    1.15;
 
-  word-break: normal;
-  overflow-wrap: break-word;
+  font-weight:
+    700;
+
+  white-space:
+    normal;
+
+  overflow-wrap:
+    break-word;
+
 }
 
+
 .preco {
-  width: 19mm;
 
-  text-align: right;
+  width:
+    19mm;
 
-  white-space: nowrap;
+  text-align:
+    right;
 
-  font-size: 12px;
-  line-height: 1.15;
+  white-space:
+    nowrap;
 
-  font-weight: 800;
+  font-size:
+    12px;
+
+  line-height:
+    1.15;
+
+  font-weight:
+    800;
+
 }
 
 
 /* ==========================================================================
-   ITENS INTERNOS DO COMBO
+   COMPONENTES DO COMBO
    ========================================================================== */
 
 .subitem td {
-  vertical-align: top;
 
-  padding-top: 0.3mm;
-  padding-bottom: 0.3mm;
+  vertical-align:
+    top;
 
-  font-size: 11px;
-  line-height: 1.15;
+  padding-top:
+    0.3mm;
 
-  font-weight: 400;
+  padding-bottom:
+    0.3mm;
+
+  font-size:
+    11px;
+
+  line-height:
+    1.15;
+
+  font-weight:
+    400;
+
 }
+
 
 .sub-vazio {
-  width: 8mm;
+
+  width:
+    8mm;
+
 }
+
 
 .sub-descricao {
-  padding-left: 2mm !important;
-  padding-right: 1mm !important;
 
-  white-space: normal;
+  padding-left:
+    2mm !important;
 
-  overflow-wrap: break-word;
+  padding-right:
+    1mm !important;
+
+  white-space:
+    normal;
+
+  overflow-wrap:
+    break-word;
+
 }
 
+
 .sub-qtd {
-  display: inline-block;
 
-  width: 6mm;
+  display:
+    inline-block;
 
-  font-weight: 700;
+  width:
+    6mm;
+
+  font-weight:
+    700;
+
 }
 
 
@@ -452,26 +858,37 @@ td {
    ========================================================================== */
 
 .valor {
-  display: flex;
 
-  width: 100%;
+  display:
+    flex;
 
-  justify-content: space-between;
-  align-items: baseline;
+  width:
+    100%;
+
+  justify-content:
+    space-between;
+
+  align-items:
+    baseline;
 
   margin: 0;
+
   padding: 0;
 
-  font-size: 12px;
-  line-height: 16px;
+  font-size:
+    12px;
+
+  line-height:
+    16px;
+
 }
+
 
 .valor-forte {
-  font-weight: 800;
-}
 
-.desconto {
-  font-size: 12px;
+  font-weight:
+    800;
+
 }
 
 
@@ -480,12 +897,18 @@ td {
    ========================================================================== */
 
 .total {
-  display: flex;
 
-  width: 100%;
+  display:
+    flex;
 
-  justify-content: space-between;
-  align-items: baseline;
+  width:
+    100%;
+
+  justify-content:
+    space-between;
+
+  align-items:
+    baseline;
 
   margin:
     2mm
@@ -493,10 +916,15 @@ td {
 
   padding: 0;
 
-  font-size: 18px;
-  line-height: 21px;
+  font-size:
+    18px;
 
-  font-weight: 900;
+  line-height:
+    21px;
+
+  font-weight:
+    900;
+
 }
 
 
@@ -505,333 +933,627 @@ td {
    ========================================================================== */
 
 .pagamento {
-  width: 100%;
+
+  width:
+    100%;
 
   margin: 0;
 
-  padding-top: 1.5mm;
-  padding-bottom: 0;
+  padding-top:
+    1.5mm;
+
+  padding-bottom:
+    0;
 
   border-top:
     1px
     solid
     #000000;
 
-  font-size: 11px;
-  line-height: 14px;
+  font-size:
+    11px;
 
-  font-weight: 700;
+  line-height:
+    14px;
+
+  font-weight:
+    700;
+
 }
+
+
+/* ==========================================================================
+   AVANÇO DE PAPEL
+   ========================================================================== */
+
+/*
+   ESTA É A ÁREA BRANCA DEPOIS DA ÚLTIMA ESCRITA.
+
+   Ela existe para a impressora avançar o papel
+   antes do corte.
+
+   15 mm dá aproximadamente 1,5 cm de folga.
+*/
+
+.espaco-corte {
+
+  width:
+    100%;
+
+  height:
+    15mm;
+
+  margin: 0;
+
+  padding: 0;
+
+}
+
 
 </style>
 
+
 </head>
+
 
 <body>
 
+
+<main id="recibo">
+
+
   <div class="numero-pedido">
+
     #${pedido.numero_pedido || '---'}
+
   </div>
 
+
   <div class="conferencia">
+
     CONFERÊNCIA
+
   </div>
+
 
   <div class="canal-data">
 
-    ${escaparHtml(pedido.canal || '')}
+    ${escaparHtml(
+      pedido.canal ||
+      ''
+    )}
+
     -
+
     ${dataFormatada},
+
     ${horaFormatada}
 
   </div>
 
 
+  <!-- ======================================================================
+       CLIENTE
+       ====================================================================== -->
+
+
   <div class="cliente">
+
 
     <div class="nome-cliente">
 
       ${escaparHtml(
+
         pedido.cliente ||
+
         'Consumidor Final'
+
       )}
 
     </div>
 
+
     ${
+
       pedido.contacto_cliente
+
         ? `
+
           <div class="cliente-linha">
+
             ${escaparHtml(
               pedido.contacto_cliente
             )}
+
           </div>
+
         `
+
         : ''
+
     }
 
+
     ${
+
       pedido.endereco ||
+
       pedido.morada
+
         ? `
+
           <div class="cliente-linha">
+
             ${escaparHtml(
+
               pedido.endereco ||
+
               pedido.morada
+
             )}
+
           </div>
+
         `
+
         : ''
+
     }
+
 
   </div>
 
 
+  <!-- ======================================================================
+       SEPARADOR
+       ====================================================================== -->
+
+
   <div class="separador"></div>
+
+
+  <!-- ======================================================================
+       PRODUTOS
+       ====================================================================== -->
 
 
   <table>
 
+
     <tbody>
+
 
       ${linhasItens}
 
+
     </tbody>
 
+
   </table>
+
+
+  <!-- ======================================================================
+       SEPARADOR
+       ====================================================================== -->
 
 
   <div class="separador"></div>
 
 
+  <!-- ======================================================================
+       SUBTOTAL
+       ====================================================================== -->
+
+
   <div class="valor">
 
-    <span class="valor-forte">
-      Subtotal
-    </span>
 
     <span class="valor-forte">
-      ${moeda(subtotal)} €
+
+      Subtotal
+
     </span>
+
+
+    <span class="valor-forte">
+
+      ${moeda(
+        subtotal
+      )} €
+
+    </span>
+
 
   </div>
 
 
+  <!-- ======================================================================
+       DESCONTO
+       ====================================================================== -->
+
+
   ${
+
     desconto > 0
+
       ? `
-        <div class="valor desconto">
 
-          <span>
-            Desconto
-          </span>
-
-          <span>
-            -${moeda(desconto)} €
-          </span>
-
-        </div>
-      `
-      : ''
-  }
-
-
-  ${
-    taxaEntrega > 0
-      ? `
         <div class="valor">
 
-          <span class="valor-forte">
-            Entrega
+
+          <span>
+
+            Desconto
+
           </span>
 
-          <span class="valor-forte">
-            ${moeda(taxaEntrega)} €
+
+          <span>
+
+            -${moeda(
+              desconto
+            )} €
+
           </span>
+
 
         </div>
+
       `
+
       : ''
+
   }
+
+
+  <!-- ======================================================================
+       ENTREGA
+       ====================================================================== -->
+
+
+  ${
+
+    taxaEntrega > 0
+
+      ? `
+
+        <div class="valor">
+
+
+          <span class="valor-forte">
+
+            Entrega
+
+          </span>
+
+
+          <span class="valor-forte">
+
+            ${moeda(
+              taxaEntrega
+            )} €
+
+          </span>
+
+
+        </div>
+
+      `
+
+      : ''
+
+  }
+
+
+  <!-- ======================================================================
+       TOTAL
+       ====================================================================== -->
 
 
   <div class="total">
 
-    <span>
-      TOTAL
-    </span>
 
     <span>
-      ${moeda(totalGeral)} €
+
+      TOTAL
+
     </span>
+
+
+    <span>
+
+      ${moeda(
+        totalGeral
+      )} €
+
+    </span>
+
 
   </div>
+
+
+  <!-- ======================================================================
+       PAGAMENTO
+       ====================================================================== -->
 
 
   <div class="pagamento">
 
+
     Pagamento:
+
     ${escaparHtml(
+
       pedido.forma_pagamento ||
+
       'Não informado'
+
     )}
 
-    (${pedido.pago ? 'Pago' : 'Pendente'})
+
+    (
+
+      ${
+        pedido.pago
+          ? 'Pago'
+          : 'Pendente'
+      }
+
+    )
+
 
   </div>
 
 
+  <!-- ======================================================================
+       ÁREA DE AVANÇO ANTES DO CORTE
+       ====================================================================== -->
+
+
+  <div class="espaco-corte"></div>
+
+
+</main>
+
+
 </body>
 
+
 </html>
+
 `;
 
 
-  // --------------------------------------------------------------------------
+  // ==========================================================================
   // ELECTRON
-  // --------------------------------------------------------------------------
+  // ==========================================================================
 
   if (
-    typeof window !== 'undefined' &&
-    (window as any).imprimirSilencioso
+
+    typeof window !==
+      'undefined'
+
+    &&
+
+    (window as any)
+      .imprimirSilencioso
+
   ) {
 
     (window as any)
-      .imprimirSilencioso(html);
+      .imprimirSilencioso(
+        html
+      );
+
 
     return;
+
   }
 
 
-  // --------------------------------------------------------------------------
-  // FALLBACK PARA NAVEGADOR NORMAL
-  // --------------------------------------------------------------------------
+  // ==========================================================================
+  // FALLBACK NAVEGADOR
+  // ==========================================================================
 
   const iframe =
-    document.createElement('iframe');
+    document
+      .createElement(
+        'iframe'
+      );
+
 
   iframe.style.position =
     'fixed';
 
+
   iframe.style.right =
     '0';
+
 
   iframe.style.bottom =
     '0';
 
+
   iframe.style.width =
     '0';
+
 
   iframe.style.height =
     '0';
 
+
   iframe.style.border =
     '0';
+
 
   iframe.style.visibility =
     'hidden';
 
-  document.body.appendChild(
-    iframe
-  );
+
+  document.body
+    .appendChild(
+      iframe
+    );
+
 
   const doc =
-    iframe.contentWindow?.document;
+    iframe
+      .contentWindow
+      ?.document;
+
 
   if (doc) {
 
     doc.open();
 
-    doc.write(html);
+    doc.write(
+      html
+    );
 
     doc.close();
 
-    iframe.onload = () => {
 
-      iframe
-        .contentWindow
-        ?.focus();
+    iframe.onload =
+      () => {
 
-      iframe
-        .contentWindow
-        ?.print();
+        iframe
+          .contentWindow
+          ?.focus();
 
-      setTimeout(
-        () => {
 
-          if (
-            document.body.contains(
-              iframe
-            )
-          ) {
+        iframe
+          .contentWindow
+          ?.print();
 
-            document.body
-              .removeChild(
-                iframe
-              );
 
-          }
+        setTimeout(
 
-        },
-        2000
-      );
+          () => {
 
-    };
+            if (
+
+              document.body
+                .contains(
+                  iframe
+                )
+
+            ) {
+
+              document.body
+                .removeChild(
+                  iframe
+                );
+
+            }
+
+          },
+
+          2000
+
+        );
+
+      };
+
   }
+
 };
 
+
 // ============================================================================
-// TIPOS
+// INTERFACES
 // ============================================================================
 
 interface ItemPedido {
+
   id?: string;
+
   produto_id?: string;
+
   codigo_produto: string;
+
   nome_produto: string;
+
   quantidade: number;
+
   preco_unitario: number;
+
 }
+
 
 interface Pedido {
+
   id: string;
+
   numero_pedido: number;
+
   data_pedido: string;
+
   cliente: string;
+
   canal: string;
+
   forma_pagamento: string;
+
   entregador: string;
+
   taxa_entrega: number;
+
   desconto: number;
+
   total_geral: number;
+
   pago: boolean;
+
   itens?: ItemPedido[];
+
   ids_fragmentados?: string[];
+
 }
 
+
 interface Combo {
+
   id: string;
+
   codigo: string;
+
   nome: string;
+
   descricao: string;
 
   tipo_preco:
-    | 'fixo'
-    | 'desconto'
-    | 'desconto_fixo'
-    | 'item_gratis';
+    'fixo'
+    |
+    'desconto'
+    |
+    'desconto_fixo'
+    |
+    'item_gratis';
 
-  preco_fixo: number | null;
+  preco_fixo:
+    number |
+    null;
 
-  preco_glovo?: number | null;
-  preco_whatsapp?: number | null;
+  preco_glovo?:
+    number |
+    null;
 
-  desconto_percentual: number;
-  desconto_absoluto: number;
+  preco_whatsapp?:
+    number |
+    null;
 
-  item_gratis_categoria: string;
+  desconto_percentual:
+    number;
 
-  combo_grupos: any[];
+  desconto_absoluto:
+    number;
+
+  item_gratis_categoria:
+    string;
+
+  combo_grupos:
+    any[];
+
 }
 
 
@@ -841,45 +1563,97 @@ interface Combo {
 
 export default function GestaoPedidos() {
 
-  const [pedidos, setPedidos] =
+  const [
+    pedidos,
+    setPedidos
+  ] =
     useState<Pedido[]>([]);
 
-  const [produtosDB, setProdutosDB] =
+
+  const [
+    produtosDB,
+    setProdutosDB
+  ] =
     useState<any[]>([]);
 
-  const [combosDB, setCombosDB] =
+
+  const [
+    combosDB,
+    setCombosDB
+  ] =
     useState<Combo[]>([]);
 
-  const [listaEstafetas, setListaEstafetas] =
-    useState<{ nome: string }[]>([]);
 
-  const [loading, setLoading] =
+  const [
+    listaEstafetas,
+    setListaEstafetas
+  ] =
+    useState<
+      {
+        nome: string
+      }[]
+    >([]);
+
+
+  const [
+    loading,
+    setLoading
+  ] =
     useState(true);
 
 
-  const [dataInicio, setDataInicio] =
+  const [
+    dataInicio,
+    setDataInicio
+  ] =
     useState('');
 
-  const [dataFim, setDataFim] =
+
+  const [
+    dataFim,
+    setDataFim
+  ] =
     useState('');
 
-  const [termoPesquisa, setTermoPesquisa] =
+
+  const [
+    termoPesquisa,
+    setTermoPesquisa
+  ] =
     useState('');
+
 
   const [
     ordemDirecao,
     setOrdemDirecao
   ] =
-    useState<'desc' | 'asc'>('desc');
+    useState<
+      'desc' |
+      'asc'
+    >('desc');
 
 
-  const [modalEditar, setModalEditar] =
+  const [
+    modalEditar,
+    setModalEditar
+  ] =
     useState(false);
 
-  const [pedidoEditando, setPedidoEditando] =
-    useState<Pedido | null>(null);
 
-  const [salvando, setSalvando] =
+  const [
+    pedidoEditando,
+    setPedidoEditando
+  ] =
+    useState<
+      Pedido |
+      null
+    >(null);
+
+
+  const [
+    salvando,
+    setSalvando
+  ] =
     useState(false);
 
 
@@ -889,25 +1663,36 @@ export default function GestaoPedidos() {
   ] =
     useState(false);
 
+
   const [
     comboSelecionadoParaMontar,
     setComboSelecionadoParaMontar
   ] =
-    useState<Combo | null>(null);
+    useState<
+      Combo |
+      null
+    >(null);
+
 
   const [
     selecoesComboEdicao,
     setSelecoesComboEdicao
   ] =
     useState<{
-      [grupoId: string]: any[]
+      [grupoId: string]:
+        any[]
     }>({});
 
 
   const supabase =
     createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+
+      process.env
+        .NEXT_PUBLIC_SUPABASE_URL!,
+
+      process.env
+        .NEXT_PUBLIC_SUPABASE_ANON_KEY!
+
     );
 
 
@@ -919,90 +1704,180 @@ export default function GestaoPedidos() {
 
     setLoading(true);
 
+
     try {
 
-      const { data: dataProds } =
+      const {
+        data:
+          dataProds
+      } =
         await supabase
-          .from('produtos')
+
+          .from(
+            'produtos'
+          )
+
           .select('*')
-          .eq('ativo', true);
+
+          .eq(
+            'ativo',
+            true
+          );
+
 
       if (dataProds) {
-        setProdutosDB(dataProds);
+
+        setProdutosDB(
+          dataProds
+        );
+
       }
 
 
-      const { data: dataEsts } =
+      const {
+        data:
+          dataEsts
+      } =
         await supabase
-          .from('estafetas')
-          .select('nome')
-          .eq('ativo', true)
+
+          .from(
+            'estafetas'
+          )
+
+          .select(
+            'nome'
+          )
+
+          .eq(
+            'ativo',
+            true
+          )
+
           .order(
             'nome',
             {
-              ascending: true
+              ascending:
+                true
             }
           );
 
+
       if (dataEsts) {
-        setListaEstafetas(dataEsts);
+
+        setListaEstafetas(
+          dataEsts
+        );
+
       }
 
 
-      const { data: dataCombos } =
+      const {
+        data:
+          dataCombos
+      } =
         await supabase
-          .from('combos')
+
+          .from(
+            'combos'
+          )
+
           .select(`
+
             *,
+
             combo_grupos (
+
               *,
+
               combo_grupo_produtos (
+
                 *,
+
                 produto:produtos (*)
+
               )
+
             )
+
           `)
-          .eq('ativo', true)
-          .eq('esgotado', false);
+
+          .eq(
+            'ativo',
+            true
+          )
+
+          .eq(
+            'esgotado',
+            false
+          );
 
 
       if (dataCombos) {
 
         const combosOrdenados =
-          dataCombos.map(cb => ({
-            ...cb,
+          dataCombos.map(
 
-            combo_grupos:
-              (cb.combo_grupos || [])
-                .sort(
-                  (a: any, b: any) =>
-                    a.ordem - b.ordem
+            cb => ({
+
+              ...cb,
+
+              combo_grupos:
+                (
+                  cb.combo_grupos ||
+                  []
                 )
-          }));
+                  .sort(
+                    (
+                      a: any,
+                      b: any
+                    ) =>
+                      a.ordem -
+                      b.ordem
+                  )
+
+            })
+
+          );
+
 
         setCombosDB(
           combosOrdenados
         );
+
       }
 
 
-      const { data, error } =
+      const {
+        data,
+        error
+      } =
         await supabase
-          .from('pedidos')
+
+          .from(
+            'pedidos'
+          )
+
           .select(`
+
             *,
+
             itens:itens_pedido (*)
+
           `)
+
           .order(
             'numero_pedido',
             {
-              ascending: false
+              ascending:
+                false
             }
           );
 
 
       if (error) {
+
         throw error;
+
       }
 
 
@@ -1012,246 +1887,310 @@ export default function GestaoPedidos() {
       ) {
 
         const agrupados =
-          new Map<string, Pedido>();
+          new Map<
+            string,
+            Pedido
+          >();
 
 
-        data.forEach((linha: any) => {
+        data.forEach(
+          (
+            linha: any
+          ) => {
 
-          const chaveNum =
-            String(
-              linha.numero_pedido
-            );
-
-          const taxa =
-            Number(
-              linha.taxa_entrega ||
-              0
-            );
-
-          const desconto =
-            Number(
-              linha.desconto ||
-              0
-            );
-
-          const dataReal =
-            linha.data_pedido ||
-            linha.data_venda ||
-            linha.criado_em ||
-            new Date()
-              .toISOString();
+            const chaveNum =
+              String(
+                linha.numero_pedido
+              );
 
 
-          const itensDestaLinha =
-            (linha.itens || [])
-              .map((item: any) => {
-
-                let precoUnitarioCorreto =
-                  Number(
-                    item.preco_unitario ||
-                    0
-                  );
+            const taxa =
+              Number(
+                linha.taxa_entrega ||
+                0
+              );
 
 
-                if (
-                  linha.canal ===
-                  'Revendedores'
-                ) {
-
-                  const nomeProduto =
-                    (
-                      item.nome_produto ||
-                      ''
-                    )
-                      .toLowerCase();
+            const desconto =
+              Number(
+                linha.desconto ||
+                0
+              );
 
 
-                  if (
-                    nomeProduto.includes(
-                      'fudge'
-                    ) ||
-                    nomeProduto.includes(
-                      'new york'
-                    )
-                  ) {
+            const dataReal =
 
-                    precoUnitarioCorreto =
-                      1.70;
+              linha.data_pedido ||
 
-                  } else {
+              linha.data_venda ||
 
-                    precoUnitarioCorreto =
-                      2.70;
+              linha.criado_em ||
+
+              new Date()
+                .toISOString();
+
+
+            const itensDestaLinha =
+              (
+                linha.itens ||
+                []
+              )
+                .map(
+                  (
+                    item: any
+                  ) => {
+
+                    let precoUnitarioCorreto =
+                      Number(
+                        item.preco_unitario ||
+                        0
+                      );
+
+
+                    if (
+                      linha.canal ===
+                      'Revendedores'
+                    ) {
+
+                      const nomeProduto =
+                        (
+                          item.nome_produto ||
+                          ''
+                        )
+                          .toLowerCase();
+
+
+                      if (
+
+                        nomeProduto
+                          .includes(
+                            'fudge'
+                          )
+
+                        ||
+
+                        nomeProduto
+                          .includes(
+                            'new york'
+                          )
+
+                      ) {
+
+                        precoUnitarioCorreto =
+                          1.70;
+
+                      } else {
+
+                        precoUnitarioCorreto =
+                          2.70;
+
+                      }
+
+                    }
+
+
+                    return {
+
+                      id:
+                        item.id,
+
+                      produto_id:
+                        item.produto_id,
+
+                      codigo_produto:
+                        item.codigo_produto ||
+                        '',
+
+                      nome_produto:
+                        item.nome_produto ||
+                        '',
+
+                      quantidade:
+                        Number(
+                          item.quantidade ||
+                          1
+                        ),
+
+                      preco_unitario:
+                        precoUnitarioCorreto
+
+                    };
 
                   }
+                );
+
+
+            if (
+              !agrupados.has(
+                chaveNum
+              )
+            ) {
+
+              agrupados.set(
+
+                chaveNum,
+
+                {
+
+                  ...linha,
+
+                  numero_pedido:
+                    Number(
+                      linha.numero_pedido
+                    ),
+
+                  data_pedido:
+                    dataReal,
+
+                  taxa_entrega:
+                    taxa,
+
+                  desconto:
+                    desconto,
+
+                  pago:
+                    linha.pago ===
+                    true,
+
+                  itens:
+                    [
+                      ...itensDestaLinha
+                    ],
+
+                  ids_fragmentados:
+                    [
+                      linha.id
+                    ]
 
                 }
 
+              );
 
-                return {
-                  id: item.id,
+            } else {
 
-                  produto_id:
-                    item.produto_id,
-
-                  codigo_produto:
-                    item.codigo_produto ||
-                    '',
-
-                  nome_produto:
-                    item.nome_produto ||
-                    '',
-
-                  quantidade:
-                    Number(
-                      item.quantidade ||
-                      1
-                    ),
-
-                  preco_unitario:
-                    precoUnitarioCorreto
-                };
-
-              });
+              const existente =
+                agrupados.get(
+                  chaveNum
+                )!;
 
 
-          if (
-            !agrupados.has(
-              chaveNum
-            )
-          ) {
+              existente.itens
+                ?.push(
+                  ...itensDestaLinha
+                );
 
-            agrupados.set(
-              chaveNum,
-              {
-                ...linha,
 
-                numero_pedido:
-                  Number(
-                    linha.numero_pedido
-                  ),
+              existente
+                .ids_fragmentados
+                ?.push(
+                  linha.id
+                );
 
-                data_pedido:
-                  dataReal,
 
-                taxa_entrega:
-                  taxa,
+              if (
 
-                desconto:
-                  desconto,
+                !existente.entregador &&
 
-                pago:
-                  linha.pago === true,
+                linha.entregador
 
-                itens:
-                  [...itensDestaLinha],
+              ) {
 
-                ids_fragmentados:
-                  [linha.id]
+                existente.entregador =
+                  linha.entregador;
+
               }
-            );
-
-          } else {
-
-            const existente =
-              agrupados.get(
-                chaveNum
-              )!;
 
 
-            existente.itens
-              ?.push(
-                ...itensDestaLinha
-              );
+              if (
+
+                !existente.cliente &&
+
+                linha.cliente
+
+              ) {
+
+                existente.cliente =
+                  linha.cliente;
+
+              }
 
 
-            existente.ids_fragmentados
-              ?.push(
-                linha.id
-              );
+              if (
+                linha.pago ===
+                true
+              ) {
+
+                existente.pago =
+                  true;
+
+              }
 
 
-            if (
-              !existente.entregador &&
-              linha.entregador
-            ) {
+              existente.taxa_entrega =
+                Math.max(
 
-              existente.entregador =
-                linha.entregador;
+                  existente
+                    .taxa_entrega,
 
-            }
+                  taxa
 
-
-            if (
-              !existente.cliente &&
-              linha.cliente
-            ) {
-
-              existente.cliente =
-                linha.cliente;
-
-            }
+                );
 
 
-            if (
-              linha.pago === true
-            ) {
+              existente.desconto =
+                Math.max(
 
-              existente.pago =
-                true;
+                  existente
+                    .desconto,
+
+                  desconto
+
+                );
 
             }
-
-
-            existente.taxa_entrega =
-              Math.max(
-                existente.taxa_entrega,
-                taxa
-              );
-
-
-            existente.desconto =
-              Math.max(
-                existente.desconto,
-                desconto
-              );
 
           }
-
-        });
+        );
 
 
         const pedidosFormatados =
-          Array.from(
-            agrupados.values()
-          )
-            .map(ped => {
+          Array
+            .from(
+              agrupados.values()
+            )
+            .map(
+              ped => {
 
-              const subtotalItens =
-                (ped.itens || [])
-                  .reduce(
-                    (
-                      acc,
-                      it
-                    ) =>
-                      acc +
+                const subtotalItens =
+                  (
+                    ped.itens ||
+                    []
+                  )
+                    .reduce(
                       (
-                        it.quantidade *
-                        it.preco_unitario
-                      ),
-                    0
-                  );
+                        acc,
+                        it
+                      ) =>
+                        acc +
+                        (
+                          it.quantidade *
+                          it.preco_unitario
+                        ),
+
+                      0
+                    );
 
 
-              ped.total_geral =
-                subtotalItens +
-                ped.taxa_entrega -
-                ped.desconto;
+                ped.total_geral =
+                  subtotalItens +
+                  ped.taxa_entrega -
+                  ped.desconto;
 
 
-              return ped;
+                return ped;
 
-            });
+              }
+            );
 
 
         setPedidos(
@@ -1263,6 +2202,7 @@ export default function GestaoPedidos() {
         setPedidos([]);
 
       }
+
 
     } catch (err) {
 
@@ -1276,11 +2216,12 @@ export default function GestaoPedidos() {
       setLoading(false);
 
     }
+
   }
 
 
   // ==========================================================================
-  // LIQUIDAR CADERNINHO
+  // CADERNINHO
   // ==========================================================================
 
   const liquidarCaderninho =
@@ -1290,12 +2231,20 @@ export default function GestaoPedidos() {
 
       try {
 
-        const { error } =
+        const {
+          error
+        } =
           await supabase
-            .from('pedidos')
+
+            .from(
+              'pedidos'
+            )
+
             .update({
-              pago: true
+              pago:
+                true
             })
+
             .eq(
               'numero_pedido',
               pedidoNum
@@ -1303,25 +2252,40 @@ export default function GestaoPedidos() {
 
 
         if (error) {
+
           throw error;
+
         }
 
 
-        setPedidos(prev =>
-          prev.map(p =>
-            p.numero_pedido ===
-            pedidoNum
-              ? {
-                  ...p,
-                  pago: true
-                }
-              : p
-          )
+        setPedidos(
+
+          prev =>
+            prev.map(
+
+              p =>
+                p.numero_pedido ===
+                pedidoNum
+
+                  ? {
+                      ...p,
+                      pago:
+                        true
+                    }
+
+                  : p
+
+            )
+
         );
+
 
       } catch (err) {
 
-        console.error(err);
+        console.error(
+          err
+        );
+
 
         alert(
           'Erro ao liquidar pagamento.'
@@ -1333,7 +2297,7 @@ export default function GestaoPedidos() {
 
 
   // ==========================================================================
-  // EXCLUIR PEDIDO
+  // EXCLUIR
   // ==========================================================================
 
   const excluirPedido =
@@ -1343,29 +2307,47 @@ export default function GestaoPedidos() {
     ) => {
 
       if (
+
         !confirm(
+
           `⚠️ Tem a certeza que deseja excluir definitivamente o pedido #${pedidoNum}?`
+
         )
+
       ) {
+
         return;
+
       }
 
 
       try {
 
         await supabase
-          .from('itens_pedido')
+
+          .from(
+            'itens_pedido'
+          )
+
           .delete()
+
           .in(
             'pedido_id',
             ids
           );
 
 
-        const { error } =
+        const {
+          error
+        } =
           await supabase
-            .from('pedidos')
+
+            .from(
+              'pedidos'
+            )
+
             .delete()
+
             .in(
               'id',
               ids
@@ -1373,22 +2355,34 @@ export default function GestaoPedidos() {
 
 
         if (error) {
+
           throw error;
+
         }
 
 
-        setPedidos(prev =>
-          prev.filter(
-            p =>
-              p.numero_pedido !==
-              pedidoNum
-          )
+        setPedidos(
+
+          prev =>
+            prev.filter(
+
+              p =>
+                p.numero_pedido !==
+                pedidoNum
+
+            )
+
         );
 
-      } catch (err: any) {
+
+      } catch (
+        err: any
+      ) {
 
         alert(
+
           `Erro ao excluir pedido: ${err.message}`
+
         );
 
       }
@@ -1397,7 +2391,7 @@ export default function GestaoPedidos() {
 
 
   // ==========================================================================
-  // PREÇO POR CANAL
+  // PREÇO
   // ==========================================================================
 
   const calcularPrecoPorCanalEProduto =
@@ -1407,7 +2401,10 @@ export default function GestaoPedidos() {
     ) => {
 
       const nome =
-        (prod.nome || '')
+        (
+          prod.nome ||
+          ''
+        )
           .toLowerCase();
 
 
@@ -1417,158 +2414,285 @@ export default function GestaoPedidos() {
       ) {
 
         if (
-          nome.includes('fudge') ||
-          nome.includes('new york')
+
+          nome.includes(
+            'fudge'
+          )
+
+          ||
+
+          nome.includes(
+            'new york'
+          )
+
         ) {
 
           return 1.70;
 
         }
 
+
         return 2.70;
+
       }
 
 
       if (
-        canal === 'Glovo'
+        canal ===
+        'Glovo'
       ) {
 
         return Number(
+
           prod.preco_glovo ||
+
           prod.preco_cardapio ||
+
           0
+
         );
 
       }
 
 
       if (
-        canal === 'WhatsApp' ||
-        canal === 'Palmbites' ||
-        canal === 'Balcão'
+
+        canal ===
+          'WhatsApp'
+
+        ||
+
+        canal ===
+          'Palmbites'
+
+        ||
+
+        canal ===
+          'Balcão'
+
       ) {
 
         return Number(
+
           prod.preco_cardapio ||
+
           0
+
         );
 
       }
 
 
       return Number(
+
         prod.preco_cardapio ||
+
         0
+
       );
 
     };
 
 
   // ==========================================================================
-  // EDIÇÃO
+  // ABRIR EDIÇÃO
   // ==========================================================================
 
   const abrirEdicao =
-    (pedido: Pedido) => {
+    (
+      pedido: Pedido
+    ) => {
 
       setPedidoEditando(
+
         JSON.parse(
+
           JSON.stringify(
             pedido
           )
+
         )
+
       );
 
-      setModalEditar(true);
+
+      setModalEditar(
+        true
+      );
 
     };
 
 
   const alterarCanalEdicao =
-    (novoCanal: string) => {
+    (
+      novoCanal: string
+    ) => {
 
       if (!pedidoEditando) {
+
         return;
+
       }
 
 
       const itensAtualizados =
-        (pedidoEditando.itens || [])
-          .map(item => {
+        (
+          pedidoEditando.itens ||
+          []
+        )
+          .map(
+            item => {
 
-            if (
-              item.codigo_produto ===
-              'COMBO'
-            ) {
+              if (
+                item.codigo_produto ===
+                'COMBO'
+              ) {
 
-              const baseName =
-                item.nome_produto
-                  .split(' (')[0];
+                const baseName =
+                  item.nome_produto
+                    .split(
+                      ' ('
+                    )[0];
 
 
-              const comboRef =
-                combosDB.find(
-                  c =>
-                    c.nome ===
-                    baseName
+                const comboRef =
+                  combosDB.find(
+
+                    c =>
+                      c.nome ===
+                      baseName
+
+                  );
+
+
+                if (
+                  comboRef
+                ) {
+
+                  if (
+                    comboRef.tipo_preco ===
+                    'fixo'
+                  ) {
+
+                    let novoPreco =
+                      Number(
+
+                        comboRef.preco_fixo ||
+
+                        0
+
+                      );
+
+
+                    if (
+                      novoCanal ===
+                      'Glovo'
+                    ) {
+
+                      novoPreco =
+                        Number(
+
+                          comboRef.preco_glovo ||
+
+                          comboRef.preco_fixo ||
+
+                          0
+
+                        );
+
+                    }
+
+
+                    if (
+
+                      novoCanal ===
+                        'WhatsApp'
+
+                      ||
+
+                      novoCanal ===
+                        'Balcão'
+
+                      ||
+
+                      novoCanal ===
+                        'Palmbites'
+
+                    ) {
+
+                      novoPreco =
+                        Number(
+
+                          comboRef.preco_whatsapp ||
+
+                          comboRef.preco_fixo ||
+
+                          0
+
+                        );
+
+                    }
+
+
+                    return {
+
+                      ...item,
+
+                      preco_unitario:
+                        novoPreco
+
+                    };
+
+                  }
+
+                }
+
+
+                return item;
+
+              }
+
+
+              const prod =
+                produtosDB.find(
+
+                  p =>
+
+                    p.id ===
+                      item.produto_id
+
+                    ||
+
+                    p.nome
+                      .toLowerCase() ===
+                      item.nome_produto
+                        .toLowerCase()
+
                 );
 
 
-              if (comboRef) {
+              if (
+                prod
+              ) {
 
-                if (
-                  comboRef.tipo_preco ===
-                  'fixo'
-                ) {
+                const novoPreco =
+                  calcularPrecoPorCanalEProduto(
 
-                  let novoPreco =
-                    Number(
-                      comboRef.preco_fixo ||
-                      0
-                    );
+                    novoCanal,
 
+                    prod
 
-                  if (
-                    novoCanal ===
-                    'Glovo'
-                  ) {
-
-                    novoPreco =
-                      Number(
-                        comboRef.preco_glovo ||
-                        comboRef.preco_fixo ||
-                        0
-                      );
-
-                  }
+                  );
 
 
-                  if (
-                    novoCanal ===
-                      'WhatsApp' ||
-                    novoCanal ===
-                      'Balcão' ||
-                    novoCanal ===
-                      'Palmbites'
-                  ) {
+                return {
 
-                    novoPreco =
-                      Number(
-                        comboRef.preco_whatsapp ||
-                        comboRef.preco_fixo ||
-                        0
-                      );
+                  ...item,
 
-                  }
+                  preco_unitario:
+                    novoPreco
 
-
-                  return {
-                    ...item,
-                    preco_unitario:
-                      novoPreco
-                  };
-
-                }
+                };
 
               }
 
@@ -1576,73 +2700,49 @@ export default function GestaoPedidos() {
               return item;
 
             }
-
-
-            const prod =
-              produtosDB.find(
-                p =>
-                  p.id ===
-                    item.produto_id ||
-                  p.nome
-                    .toLowerCase() ===
-                    item.nome_produto
-                      .toLowerCase()
-              );
-
-
-            if (prod) {
-
-              const novoPreco =
-                calcularPrecoPorCanalEProduto(
-                  novoCanal,
-                  prod
-                );
-
-
-              return {
-                ...item,
-                preco_unitario:
-                  novoPreco
-              };
-
-            }
-
-
-            return item;
-
-          });
+          );
 
 
       const subtotal =
-        itensAtualizados.reduce(
-          (
-            acc,
-            it
-          ) =>
-            acc +
+        itensAtualizados
+          .reduce(
+
             (
-              it.quantidade *
-              it.preco_unitario
-            ),
-          0
-        );
+              acc,
+              it
+            ) =>
+              acc +
+              (
+                it.quantidade *
+                it.preco_unitario
+              ),
+
+            0
+
+          );
 
 
       const novoTotal =
         Math.max(
+
           0,
+
           subtotal +
+
           pedidoEditando
             .taxa_entrega -
+
           (
             pedidoEditando
               .desconto ||
             0
           )
+
         );
 
 
       setPedidoEditando({
+
         ...pedidoEditando,
 
         canal:
@@ -1653,6 +2753,7 @@ export default function GestaoPedidos() {
 
         total_geral:
           novoTotal
+
       });
 
     };
@@ -1665,10 +2766,15 @@ export default function GestaoPedidos() {
     ) => {
 
       if (
+
         !pedidoEditando ||
+
         !pedidoEditando.itens
+
       ) {
+
         return;
+
       }
 
 
@@ -1680,16 +2786,20 @@ export default function GestaoPedidos() {
 
 
       const novosItens =
-        [...pedidoEditando.itens];
+        [
+          ...pedidoEditando.itens
+        ];
 
 
-      novosItens[index]
-        .quantidade =
-          qtd;
+      novosItens[
+        index
+      ].quantidade =
+        qtd;
 
 
       const subtotal =
         novosItens.reduce(
+
           (
             acc,
             it
@@ -1699,25 +2809,33 @@ export default function GestaoPedidos() {
               it.quantidade *
               it.preco_unitario
             ),
+
           0
+
         );
 
 
       const novoTotal =
         Math.max(
+
           0,
+
           subtotal +
+
           pedidoEditando
             .taxa_entrega -
+
           (
             pedidoEditando
               .desconto ||
             0
           )
+
         );
 
 
       setPedidoEditando({
+
         ...pedidoEditando,
 
         itens:
@@ -1725,32 +2843,47 @@ export default function GestaoPedidos() {
 
         total_geral:
           novoTotal
+
       });
 
     };
 
 
   const removerItemEdicao =
-    (index: number) => {
+    (
+      index: number
+    ) => {
 
       if (
+
         !pedidoEditando ||
+
         !pedidoEditando.itens
+
       ) {
+
         return;
+
       }
 
 
       const novosItens =
         pedidoEditando.itens
           .filter(
-            (_, i) =>
-              i !== index
+
+            (
+              _,
+              i
+            ) =>
+              i !==
+              index
+
           );
 
 
       const subtotal =
         novosItens.reduce(
+
           (
             acc,
             it
@@ -1760,25 +2893,33 @@ export default function GestaoPedidos() {
               it.quantidade *
               it.preco_unitario
             ),
+
           0
+
         );
 
 
       const novoTotal =
         Math.max(
+
           0,
+
           subtotal +
+
           pedidoEditando
             .taxa_entrega -
+
           (
             pedidoEditando
               .desconto ||
             0
           )
+
         );
 
 
       setPedidoEditando({
+
         ...pedidoEditando,
 
         itens:
@@ -1786,39 +2927,54 @@ export default function GestaoPedidos() {
 
         total_geral:
           novoTotal
+
       });
 
     };
 
 
   const adicionarProdutoEdicao =
-    (produtoId: string) => {
+    (
+      produtoId: string
+    ) => {
 
       if (
+
         !pedidoEditando ||
+
         !produtoId
+
       ) {
+
         return;
+
       }
 
 
       const prod =
         produtosDB.find(
+
           p =>
             p.id ===
             produtoId
+
         );
 
 
       if (!prod) {
+
         return;
+
       }
 
 
       const precoUnit =
         calcularPrecoPorCanalEProduto(
+
           pedidoEditando.canal,
+
           prod
+
         );
 
 
@@ -1828,30 +2984,44 @@ export default function GestaoPedidos() {
 
 
       const existenteIndex =
-        itensAtuais.findIndex(
-          it =>
-            it.produto_id ===
-              prod.id &&
-            !it.nome_produto
-              .includes('(')
-        );
+        itensAtuais
+          .findIndex(
+
+            it =>
+
+              it.produto_id ===
+                prod.id
+
+              &&
+
+              !it.nome_produto
+                .includes(
+                  '('
+                )
+
+          );
 
 
       let novosItens =
-        [...itensAtuais];
+        [
+          ...itensAtuais
+        ];
 
 
       if (
-        existenteIndex >= 0
+        existenteIndex >=
+        0
       ) {
 
         novosItens[
           existenteIndex
-        ].quantidade += 1;
+        ].quantidade +=
+          1;
 
       } else {
 
         novosItens.push({
+
           produto_id:
             prod.id,
 
@@ -1867,6 +3037,7 @@ export default function GestaoPedidos() {
 
           preco_unitario:
             precoUnit
+
         });
 
       }
@@ -1874,6 +3045,7 @@ export default function GestaoPedidos() {
 
       const subtotal =
         novosItens.reduce(
+
           (
             acc,
             it
@@ -1883,25 +3055,33 @@ export default function GestaoPedidos() {
               it.quantidade *
               it.preco_unitario
             ),
+
           0
+
         );
 
 
       const novoTotal =
         Math.max(
+
           0,
+
           subtotal +
+
           pedidoEditando
             .taxa_entrega -
+
           (
             pedidoEditando
               .desconto ||
             0
           )
+
         );
 
 
       setPedidoEditando({
+
         ...pedidoEditando,
 
         itens:
@@ -1909,33 +3089,42 @@ export default function GestaoPedidos() {
 
         total_geral:
           novoTotal
+
       });
 
     };
 
 
   // ==========================================================================
-  // COMBOS
+  // COMBO
   // ==========================================================================
 
   const iniciarMontagemComboEdicao =
-    (comboId: string) => {
+    (
+      comboId: string
+    ) => {
 
       if (!comboId) {
+
         return;
+
       }
 
 
       const combo =
         combosDB.find(
+
           c =>
             c.id ===
             comboId
+
         );
 
 
       if (!combo) {
+
         return;
+
       }
 
 
@@ -1943,7 +3132,11 @@ export default function GestaoPedidos() {
         combo
       );
 
-      setSelecoesComboEdicao({});
+
+      setSelecoesComboEdicao(
+        {}
+      );
+
 
       setModalComboEdicao(
         true
@@ -1959,6 +3152,7 @@ export default function GestaoPedidos() {
     ) => {
 
       setSelecoesComboEdicao(
+
         prev => {
 
           const selecoesGrupo =
@@ -1975,16 +3169,19 @@ export default function GestaoPedidos() {
           const indexExistente =
             selecoesGrupo
               .findIndex(
+
                 s =>
                   s.produto_id ===
                   itemVinculado
                     .produto_id
+
               );
 
 
           const totalSelecionadoNoGrupo =
             selecoesGrupo
               .reduce(
+
                 (
                   acc,
                   curr
@@ -1994,7 +3191,9 @@ export default function GestaoPedidos() {
                     curr.quantidade ||
                     1
                   ),
+
                 0
+
               );
 
 
@@ -2004,33 +3203,43 @@ export default function GestaoPedidos() {
           ) {
 
             if (
+
               totalSelecionadoNoGrupo <
+
               grupo.quantidade_maxima
+
             ) {
 
               selecoesGrupo[
                 indexExistente
-              ].quantidade += 1;
+              ].quantidade +=
+                1;
 
             } else {
 
               if (
+
                 selecoesGrupo[
                   indexExistente
-                ].quantidade > 1
+                ].quantidade >
+                1
+
               ) {
 
                 selecoesGrupo[
                   indexExistente
-                ].quantidade -= 1;
+                ].quantidade -=
+                  1;
 
               } else {
 
-                selecoesGrupo
-                  .splice(
-                    indexExistente,
-                    1
-                  );
+                selecoesGrupo.splice(
+
+                  indexExistente,
+
+                  1
+
+                );
 
               }
 
@@ -2039,30 +3248,42 @@ export default function GestaoPedidos() {
           } else {
 
             if (
+
               totalSelecionadoNoGrupo <
+
               grupo.quantidade_maxima
+
             ) {
 
-              selecoesGrupo
-                .push({
-                  ...itemVinculado,
-                  quantidade: 1
-                });
+              selecoesGrupo.push({
+
+                ...itemVinculado,
+
+                quantidade:
+                  1
+
+              });
 
             } else if (
+
               grupo.quantidade_maxima ===
               1
+
             ) {
 
               return {
+
                 ...prev,
 
-                [grupo.id]: [
-                  {
-                    ...itemVinculado,
-                    quantidade: 1
-                  }
-                ]
+                [grupo.id]:
+                  [
+                    {
+                      ...itemVinculado,
+                      quantidade:
+                        1
+                    }
+                  ]
+
               };
 
             }
@@ -2071,13 +3292,16 @@ export default function GestaoPedidos() {
 
 
           return {
+
             ...prev,
 
             [grupo.id]:
               selecoesGrupo
+
           };
 
         }
+
       );
 
     };
@@ -2087,10 +3311,15 @@ export default function GestaoPedidos() {
     () => {
 
       if (
+
         !comboSelecionadoParaMontar ||
+
         !pedidoEditando
+
       ) {
+
         return;
+
       }
 
 
@@ -2109,6 +3338,7 @@ export default function GestaoPedidos() {
 
         const totalGrupo =
           selecoes.reduce(
+
             (
               acc,
               s
@@ -2118,18 +3348,25 @@ export default function GestaoPedidos() {
                 s.quantidade ||
                 1
               ),
+
             0
+
           );
 
 
         if (
+
           grupo.obrigatorio &&
+
           totalGrupo <
-            grupo.quantidade_minima
+          grupo.quantidade_minima
+
         ) {
 
           return alert(
+
             `O grupo "${grupo.nome}" exige no mínimo ${grupo.quantidade_minima} item(ns).`
+
           );
 
         }
@@ -2140,24 +3377,30 @@ export default function GestaoPedidos() {
       let somaPrecos =
         0;
 
+
       let somaAcrescimos =
         0;
 
-      const detalhes: string[] =
-        [];
+
+      const detalhes:
+        string[] =
+          [];
 
 
-      Object
-        .values(
-          selecoesComboEdicao
-        )
+      Object.values(
+        selecoesComboEdicao
+      )
         .forEach(
+
           (
             selGrupo: any
           ) => {
 
             selGrupo.forEach(
-              (item: any) => {
+
+              (
+                item: any
+              ) => {
 
                 const qtdItem =
                   item.quantidade ||
@@ -2165,15 +3408,24 @@ export default function GestaoPedidos() {
 
 
                 for (
-                  let i = 0;
-                  i < qtdItem;
+
+                  let i =
+                    0;
+
+                  i <
+                  qtdItem;
+
                   i++
+
                 ) {
 
                   const precoItem =
                     calcularPrecoPorCanalEProduto(
+
                       pedidoEditando.canal,
+
                       item.produto
+
                     );
 
 
@@ -2183,21 +3435,28 @@ export default function GestaoPedidos() {
 
                   somaAcrescimos +=
                     Number(
+
                       item.acrescimo_preco ||
+
                       0
+
                     );
 
 
                   detalhes.push(
+
                     `${item.produto.nome}`
+
                   );
 
                 }
 
               }
+
             );
 
           }
+
         );
 
 
@@ -2206,9 +3465,11 @@ export default function GestaoPedidos() {
 
 
       if (
+
         comboSelecionadoParaMontar
           .tipo_preco ===
         'fixo'
+
       ) {
 
         if (
@@ -2218,38 +3479,57 @@ export default function GestaoPedidos() {
 
           precoComboFinal =
             Number(
+
               comboSelecionadoParaMontar
                 .preco_glovo ||
+
               comboSelecionadoParaMontar
                 .preco_fixo ||
+
               0
+
             );
 
         } else if (
+
           pedidoEditando.canal ===
-            'WhatsApp' ||
+            'WhatsApp'
+
+          ||
+
           pedidoEditando.canal ===
-            'Balcão' ||
+            'Balcão'
+
+          ||
+
           pedidoEditando.canal ===
             'Palmbites'
+
         ) {
 
           precoComboFinal =
             Number(
+
               comboSelecionadoParaMontar
                 .preco_whatsapp ||
+
               comboSelecionadoParaMontar
                 .preco_fixo ||
+
               0
+
             );
 
         } else {
 
           precoComboFinal =
             Number(
+
               comboSelecionadoParaMontar
                 .preco_fixo ||
+
               0
+
             );
 
         }
@@ -2257,28 +3537,39 @@ export default function GestaoPedidos() {
       }
 
       else if (
+
         comboSelecionadoParaMontar
           .tipo_preco ===
-          'desconto' ||
+          'desconto'
+
+        ||
+
         comboSelecionadoParaMontar
           .nome
           .toLowerCase()
           .includes(
             'batatô10'
-          ) ||
+          )
+
+        ||
+
         comboSelecionadoParaMontar
           .nome
           .toLowerCase()
           .includes(
             'batato10'
           )
+
       ) {
 
         const perc =
           Number(
+
             comboSelecionadoParaMontar
               .desconto_percentual ||
+
             10
+
           );
 
 
@@ -2286,36 +3577,48 @@ export default function GestaoPedidos() {
           somaPrecos *
           (
             1 -
-            perc / 100
+            perc /
+            100
           );
 
       }
 
       else if (
+
         comboSelecionadoParaMontar
           .tipo_preco ===
-          'desconto_fixo' ||
+          'desconto_fixo'
+
+        ||
+
         comboSelecionadoParaMontar
           .nome
           .toLowerCase()
           .includes(
             'para dois'
           )
+
       ) {
 
         const desc =
           Number(
+
             comboSelecionadoParaMontar
               .desconto_absoluto ||
+
             1.70
+
           );
 
 
         precoComboFinal =
           Math.max(
+
             0,
+
             somaPrecos -
             desc
+
           );
 
       }
@@ -2330,36 +3633,44 @@ export default function GestaoPedidos() {
         `${comboSelecionadoParaMontar.nome} (${detalhes.join(', ')})`;
 
 
-      const novosItens = [
-        ...(
-          pedidoEditando.itens ||
-          []
-        ),
+      const novosItens =
+        [
 
-        {
-          produto_id:
-            undefined,
+          ...(
+            pedidoEditando.itens ||
+            []
+          ),
 
-          codigo_produto:
-            'COMBO',
+          {
 
-          nome_produto:
-            nomeComboFormatado,
+            produto_id:
+              undefined,
 
-          quantidade:
-            1,
+            codigo_produto:
+              'COMBO',
 
-          preco_unitario:
-            Number(
-              precoFinalAplicado
-                .toFixed(2)
-            )
-        }
-      ];
+            nome_produto:
+              nomeComboFormatado,
+
+            quantidade:
+              1,
+
+            preco_unitario:
+              Number(
+
+                precoFinalAplicado
+                  .toFixed(2)
+
+              )
+
+          }
+
+        ];
 
 
       const subtotal =
         novosItens.reduce(
+
           (
             acc,
             it
@@ -2369,25 +3680,33 @@ export default function GestaoPedidos() {
               it.quantidade *
               it.preco_unitario
             ),
+
           0
+
         );
 
 
       const novoTotal =
         Math.max(
+
           0,
+
           subtotal +
+
           pedidoEditando
             .taxa_entrega -
+
           (
             pedidoEditando
               .desconto ||
             0
           )
+
         );
 
 
       setPedidoEditando({
+
         ...pedidoEditando,
 
         itens:
@@ -2395,6 +3714,7 @@ export default function GestaoPedidos() {
 
         total_geral:
           novoTotal
+
       });
 
 
@@ -2411,7 +3731,7 @@ export default function GestaoPedidos() {
 
 
   // ==========================================================================
-  // SALVAR EDIÇÃO
+  // SALVAR
   // ==========================================================================
 
   const salvarEdicao =
@@ -2422,12 +3742,18 @@ export default function GestaoPedidos() {
       e.preventDefault();
 
 
-      if (!pedidoEditando) {
+      if (
+        !pedidoEditando
+      ) {
+
         return;
+
       }
 
 
-      setSalvando(true);
+      setSalvando(
+        true
+      );
 
 
       try {
@@ -2435,6 +3761,7 @@ export default function GestaoPedidos() {
         const subtotalItens =
           pedidoEditando.itens
             ?.reduce(
+
               (
                 acc,
                 item
@@ -2444,30 +3771,41 @@ export default function GestaoPedidos() {
                   item.quantidade *
                   item.preco_unitario
                 ),
+
               0
+
             ) ||
           0;
 
 
         const novoTotal =
           Math.max(
+
             0,
+
             subtotalItens +
+
             Number(
               pedidoEditando
                 .taxa_entrega
             ) -
+
             Number(
               pedidoEditando
                 .desconto ||
               0
             )
+
           );
 
 
         const principalId =
+
           pedidoEditando
-            .ids_fragmentados?.[0] ||
+            .ids_fragmentados?.[0]
+
+          ||
+
           pedidoEditando.id;
 
 
@@ -2476,7 +3814,11 @@ export default function GestaoPedidos() {
             erroPrincipal
         } =
           await supabase
-            .from('pedidos')
+
+            .from(
+              'pedidos'
+            )
+
             .update({
 
               cliente:
@@ -2513,28 +3855,42 @@ export default function GestaoPedidos() {
                 novoTotal
 
             })
+
             .eq(
               'id',
               principalId
             );
 
 
-        if (erroPrincipal) {
+        if (
+          erroPrincipal
+        ) {
+
           throw erroPrincipal;
+
         }
 
 
         const idsRelacionados =
+
           pedidoEditando
-            .ids_fragmentados ||
+            .ids_fragmentados
+
+          ||
+
           [
             pedidoEditando.id
           ];
 
 
         await supabase
-          .from('itens_pedido')
+
+          .from(
+            'itens_pedido'
+          )
+
           .delete()
+
           .in(
             'pedido_id',
             idsRelacionados
@@ -2542,36 +3898,43 @@ export default function GestaoPedidos() {
 
 
         if (
+
           pedidoEditando.itens &&
+
           pedidoEditando
             .itens.length >
-            0
+          0
+
         ) {
 
           const novosItensDB =
             pedidoEditando.itens
-              .map(item => ({
+              .map(
 
-                pedido_id:
-                  principalId,
+                item => ({
 
-                produto_id:
-                  item.produto_id ||
-                  null,
+                  pedido_id:
+                    principalId,
 
-                codigo_produto:
-                  item.codigo_produto,
+                  produto_id:
+                    item.produto_id ||
+                    null,
 
-                nome_produto:
-                  item.nome_produto,
+                  codigo_produto:
+                    item.codigo_produto,
 
-                quantidade:
-                  item.quantidade,
+                  nome_produto:
+                    item.nome_produto,
 
-                preco_unitario:
-                  item.preco_unitario
+                  quantidade:
+                    item.quantidade,
 
-              }));
+                  preco_unitario:
+                    item.preco_unitario
+
+                })
+
+              );
 
 
           const {
@@ -2579,16 +3942,22 @@ export default function GestaoPedidos() {
               erroItens
           } =
             await supabase
+
               .from(
                 'itens_pedido'
               )
+
               .insert(
                 novosItensDB
               );
 
 
-          if (erroItens) {
+          if (
+            erroItens
+          ) {
+
             throw erroItens;
+
           }
 
         }
@@ -2601,15 +3970,22 @@ export default function GestaoPedidos() {
 
         carregarDadosIniciais();
 
-      } catch (err: any) {
+
+      } catch (
+        err: any
+      ) {
 
         alert(
+
           `Erro ao salvar edição: ${err.message}`
+
         );
 
       } finally {
 
-        setSalvando(false);
+        setSalvando(
+          false
+        );
 
       }
 
@@ -2620,48 +3996,61 @@ export default function GestaoPedidos() {
   // REALTIME
   // ==========================================================================
 
-  useEffect(() => {
+  useEffect(
+    () => {
 
-    carregarDadosIniciais();
-
-
-    const canalAtualizacao =
-      supabase
-        .channel(
-          'schema-db-changes'
-        )
-        .on(
-          'postgres_changes',
-
-          {
-            event:
-              '*',
-
-            schema:
-              'public',
-
-            table:
-              'pedidos'
-          },
-
-          () => {
-
-            carregarDadosIniciais();
-
-          }
-        )
-        .subscribe();
+      carregarDadosIniciais();
 
 
-    return () => {
+      const canalAtualizacao =
+        supabase
 
-      supabase.removeChannel(
-        canalAtualizacao
-      );
+          .channel(
+            'schema-db-changes'
+          )
 
-    };
+          .on(
 
-  }, []);
+            'postgres_changes',
+
+            {
+
+              event:
+                '*',
+
+              schema:
+                'public',
+
+              table:
+                'pedidos'
+
+            },
+
+            () => {
+
+              carregarDadosIniciais();
+
+            }
+
+          )
+
+          .subscribe();
+
+
+      return () => {
+
+        supabase
+          .removeChannel(
+            canalAtualizacao
+          );
+
+      };
+
+    },
+
+    []
+
+  );
 
 
   // ==========================================================================
@@ -2669,153 +4058,206 @@ export default function GestaoPedidos() {
   // ==========================================================================
 
   const extrairDataIso =
-    (valor: string) => {
+    (
+      valor: string
+    ) => {
 
       if (!valor) {
+
         return '';
+
       }
 
 
       const match =
         valor.match(
+
           /(\d{4})-(\d{2})-(\d{2})/
+
         );
 
 
       return match
+
         ? `${match[1]}-${match[2]}-${match[3]}`
+
         : '';
 
     };
 
 
   const pedidosFiltrados =
-    useMemo(() => {
+    useMemo(
+      () => {
 
-      const temFiltroAtivo =
-        dataInicio !== '' ||
-        dataFim !== '' ||
-        termoPesquisa
-          .trim() !== '';
+        const temFiltroAtivo =
 
+          dataInicio !== ''
 
-      if (!temFiltroAtivo) {
+          ||
 
-        return [];
+          dataFim !== ''
 
-      }
+          ||
 
-
-      return pedidos
-        .filter(
-          pedido => {
-
-            const dataPedidoFormatada =
-              extrairDataIso(
-                pedido.data_pedido
-              );
+          termoPesquisa
+            .trim() !== '';
 
 
-            if (
-              dataInicio &&
-              dataPedidoFormatada <
-                dataInicio
-            ) {
-              return false;
-            }
+        if (
+          !temFiltroAtivo
+        ) {
+
+          return [];
+
+        }
 
 
-            if (
-              dataFim &&
-              dataPedidoFormatada >
-                dataFim
-            ) {
-              return false;
-            }
+        return pedidos
 
+          .filter(
+            pedido => {
 
-            if (
-              termoPesquisa
-                .trim() !== ''
-            ) {
-
-              const termo =
-                termoPesquisa
-                  .toLowerCase()
-                  .trim();
-
-
-              const nomeCliente =
-                (
-                  pedido.cliente ||
-                  ''
-                )
-                  .toLowerCase();
-
-
-              const numPedidoStr =
-                String(
-                  pedido.numero_pedido
-                );
-
-
-              const correspondeNome =
-                nomeCliente.includes(
-                  termo
-                );
-
-
-              const correspondeNumero =
-                numPedidoStr.includes(
-                  termo
+              const dataPedidoFormatada =
+                extrairDataIso(
+                  pedido.data_pedido
                 );
 
 
               if (
-                !correspondeNome &&
-                !correspondeNumero
+
+                dataInicio &&
+
+                dataPedidoFormatada <
+                dataInicio
+
               ) {
+
                 return false;
+
               }
+
+
+              if (
+
+                dataFim &&
+
+                dataPedidoFormatada >
+                dataFim
+
+              ) {
+
+                return false;
+
+              }
+
+
+              if (
+
+                termoPesquisa
+                  .trim() !==
+                ''
+
+              ) {
+
+                const termo =
+                  termoPesquisa
+                    .toLowerCase()
+                    .trim();
+
+
+                const nomeCliente =
+                  (
+                    pedido.cliente ||
+                    ''
+                  )
+                    .toLowerCase();
+
+
+                const numPedidoStr =
+                  String(
+                    pedido.numero_pedido
+                  );
+
+
+                const correspondeNome =
+                  nomeCliente.includes(
+                    termo
+                  );
+
+
+                const correspondeNumero =
+                  numPedidoStr.includes(
+                    termo
+                  );
+
+
+                if (
+
+                  !correspondeNome &&
+
+                  !correspondeNumero
+
+                ) {
+
+                  return false;
+
+                }
+
+              }
+
+
+              return true;
 
             }
 
+          )
 
-            return true;
+          .sort(
+            (
+              a,
+              b
+            ) => {
 
-          }
-        )
-        .sort(
-          (a, b) => {
+              if (
+                ordemDirecao ===
+                'desc'
+              ) {
 
-            if (
-              ordemDirecao ===
-              'desc'
-            ) {
+                return (
+                  b.numero_pedido -
+                  a.numero_pedido
+                );
+
+              }
+
 
               return (
-                b.numero_pedido -
-                a.numero_pedido
+                a.numero_pedido -
+                b.numero_pedido
               );
 
             }
 
+          );
 
-            return (
-              a.numero_pedido -
-              b.numero_pedido
-            );
+      },
 
-          }
-        );
+      [
 
-    }, [
-      pedidos,
-      dataInicio,
-      dataFim,
-      termoPesquisa,
-      ordemDirecao
-    ]);
+        pedidos,
+
+        dataInicio,
+
+        dataFim,
+
+        termoPesquisa,
+
+        ordemDirecao
+
+      ]
+
+    );
 
 
   const limparFiltros =
@@ -2836,12 +4278,15 @@ export default function GestaoPedidos() {
       const hojeIso =
         new Date()
           .toISOString()
-          .split('T')[0];
+          .split(
+            'T'
+          )[0];
 
 
       setDataInicio(
         hojeIso
       );
+
 
       setDataFim(
         hojeIso
@@ -2853,54 +4298,69 @@ export default function GestaoPedidos() {
   const faturamentoTotal =
     pedidosFiltrados
       .reduce(
+
         (
           acc,
           p
         ) =>
           acc +
           p.total_geral,
+
         0
+
       );
 
 
   const totalDescontos =
     pedidosFiltrados
       .reduce(
+
         (
           acc,
           p
         ) =>
           acc +
           p.desconto,
+
         0
+
       );
 
 
   const pendenteCaderninho =
     pedidosFiltrados
+
       .filter(
         p =>
           !p.pago
       )
+
       .reduce(
+
         (
           acc,
           p
         ) =>
           acc +
           p.total_geral,
+
         0
+
       );
 
 
   const getCorCanal =
-    (canal: string) => {
+    (
+      canal: string
+    ) => {
 
       if (
         canal ===
         'Glovo'
       ) {
+
         return 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20';
+
       }
 
 
@@ -2908,7 +4368,9 @@ export default function GestaoPedidos() {
         canal ===
         'WhatsApp'
       ) {
+
         return 'bg-green-500/10 text-green-500 border-green-500/20';
+
       }
 
 
@@ -2916,7 +4378,9 @@ export default function GestaoPedidos() {
         canal ===
         'Palmbites'
       ) {
+
         return 'bg-teal-500/10 text-teal-500 border-teal-500/20';
+
       }
 
 
@@ -2924,7 +4388,9 @@ export default function GestaoPedidos() {
         canal ===
         'Revendedores'
       ) {
+
         return 'bg-purple-500/10 text-purple-400 border-purple-500/20';
+
       }
 
 
@@ -2944,38 +4410,50 @@ export default function GestaoPedidos() {
 
       <header className="bg-zinc-900 border-b border-zinc-800 px-6 py-4 flex justify-between items-center shadow-lg">
 
+
         <div className="flex items-center gap-3">
 
+
           <span className="text-2xl">
+
             📓
+
           </span>
 
+
           <h1 className="text-xl font-bold tracking-wide">
+
             Registo e Controlo de Vendas
+
           </h1>
+
 
         </div>
 
 
         <button
+
           onClick={
             carregarDadosIniciais
           }
+
           className="bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold px-4 py-2 rounded-xl border border-zinc-700 transition-all"
+
         >
 
           🔄 Sincronizar Dados
 
         </button>
 
+
       </header>
 
 
-      {/* ====================================================================
-          PESQUISA E FILTROS
-          ==================================================================== */}
+      {/* PESQUISA */}
+
 
       <section className="px-6 pt-6">
+
 
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-4">
 
@@ -2985,6 +4463,7 @@ export default function GestaoPedidos() {
 
             <div className="flex-1 w-full">
 
+
               <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">
 
                 Pesquisar Pedido
@@ -2993,6 +4472,7 @@ export default function GestaoPedidos() {
 
 
               <input
+
                 type="text"
 
                 value={
@@ -3009,12 +4489,15 @@ export default function GestaoPedidos() {
                 placeholder="Pesquise por nome do cliente ou número do pedido..."
 
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-orange-500 outline-none"
+
               />
+
 
             </div>
 
 
             <div>
+
 
               <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">
 
@@ -3024,6 +4507,7 @@ export default function GestaoPedidos() {
 
 
               <select
+
                 value={
                   ordemDirecao
                 }
@@ -3031,25 +4515,33 @@ export default function GestaoPedidos() {
                 onChange={
                   e =>
                     setOrdemDirecao(
-                      e.target.value
-                        as
-                        'desc' |
-                        'asc'
+                      e.target.value as
+                      'desc' |
+                      'asc'
                     )
                 }
 
                 className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-orange-500 outline-none cursor-pointer"
+
               >
 
+
                 <option value="desc">
+
                   ⬇️ Decrescente (Mais Recentes)
+
                 </option>
+
 
                 <option value="asc">
+
                   ⬆️ Crescente (Mais Antigos)
+
                 </option>
 
+
               </select>
+
 
             </div>
 
@@ -3065,6 +4557,7 @@ export default function GestaoPedidos() {
 
               <div>
 
+
                 <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">
 
                   De (Data Inicial)
@@ -3073,6 +4566,7 @@ export default function GestaoPedidos() {
 
 
                 <input
+
                   type="date"
 
                   value={
@@ -3092,12 +4586,15 @@ export default function GestaoPedidos() {
                   }
 
                   className="w-full sm:w-48 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white focus:border-orange-500 outline-none [color-scheme:dark]"
+
                 />
+
 
               </div>
 
 
               <div>
+
 
                 <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">
 
@@ -3107,6 +4604,7 @@ export default function GestaoPedidos() {
 
 
                 <input
+
                   type="date"
 
                   value={
@@ -3126,7 +4624,9 @@ export default function GestaoPedidos() {
                   }
 
                   className="w-full sm:w-48 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white focus:border-orange-500 outline-none [color-scheme:dark]"
+
                 />
+
 
               </div>
 
@@ -3138,6 +4638,7 @@ export default function GestaoPedidos() {
 
 
               <button
+
                 type="button"
 
                 onClick={
@@ -3145,6 +4646,7 @@ export default function GestaoPedidos() {
                 }
 
                 className="bg-orange-600 hover:bg-orange-500 text-xs font-bold px-4 py-2.5 rounded-xl transition-all shadow-md"
+
               >
 
                 Hoje
@@ -3153,6 +4655,7 @@ export default function GestaoPedidos() {
 
 
               <button
+
                 type="button"
 
                 onClick={
@@ -3166,6 +4669,7 @@ export default function GestaoPedidos() {
                 }
 
                 className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-xs font-bold px-4 py-2.5 rounded-xl border border-zinc-700 transition-all"
+
               >
 
                 Limpar Filtros
@@ -3181,75 +4685,110 @@ export default function GestaoPedidos() {
 
         </div>
 
+
       </section>
 
 
-      {/* ====================================================================
-          MÉTRICAS
-          ==================================================================== */}
+      {/* MÉTRICAS */}
+
 
       <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-4">
 
 
         <div className="bg-zinc-900 border border-zinc-800/60 p-4 rounded-xl flex justify-between items-center">
 
+
           <div>
 
             <span className="text-[10px] text-zinc-400 uppercase font-black">
+
               Faturamento Bruto
+
             </span>
+
 
             <p className="text-2xl font-black mt-1">
+
               {faturamentoTotal.toFixed(2)}€
+
             </p>
+
 
           </div>
 
+
           <span className="text-2xl">
+
             💰
+
           </span>
+
 
         </div>
 
 
         <div className="bg-zinc-900 border border-zinc-800/60 p-4 rounded-xl flex justify-between items-center">
 
+
           <div>
 
+
             <span className="text-[10px] text-zinc-400 uppercase font-black">
+
               Descontos Aplicados
+
             </span>
+
 
             <p className="text-2xl font-black mt-1 text-red-400">
+
               {totalDescontos.toFixed(2)}€
+
             </p>
+
 
           </div>
 
+
           <span className="text-2xl">
+
             🎟️
+
           </span>
+
 
         </div>
 
 
         <div className="bg-zinc-900 border border-zinc-800/60 p-4 rounded-xl flex justify-between items-center">
 
+
           <div>
 
+
             <span className="text-[10px] text-zinc-400 uppercase font-black">
+
               Em Falta (Caderninho)
+
             </span>
 
+
             <p className="text-2xl font-black mt-1 text-orange-400">
+
               {pendenteCaderninho.toFixed(2)}€
+
             </p>
+
 
           </div>
 
+
           <span className="text-2xl">
+
             ✏️
+
           </span>
+
 
         </div>
 
@@ -3257,989 +4796,399 @@ export default function GestaoPedidos() {
       </div>
 
 
-      {/* ====================================================================
-          PEDIDOS
-          ==================================================================== */}
+      {/* PEDIDOS */}
+
 
       <main className="flex-1 px-6 pb-6 overflow-y-auto">
 
 
-        {loading ? (
+        {
+          loading
+            ? (
 
-          <div className="text-center text-zinc-500 py-24">
+              <div className="text-center text-zinc-500 py-24">
 
-            A carregar registos...
+                A carregar registos...
 
-          </div>
+              </div>
 
-        ) : pedidosFiltrados.length === 0 ? (
+            )
 
-          <div className="text-center text-zinc-500 py-24 bg-zinc-900/20 border border-dashed border-zinc-800 rounded-2xl max-w-xl mx-auto space-y-2">
+            : pedidosFiltrados.length ===
+              0
 
-            <p className="text-base font-bold text-zinc-300">
+              ? (
 
-              Nenhum pedido para exibir
-
-            </p>
-
-            <p className="text-xs text-zinc-500">
-
-              Utilize os filtros de data ou pesquise pelo nome do cliente / número do pedido para visualizar os registos.
-
-            </p>
-
-          </div>
-
-        ) : (
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                <div className="text-center text-zinc-500 py-24 bg-zinc-900/20 border border-dashed border-zinc-800 rounded-2xl max-w-xl mx-auto space-y-2">
 
 
-            {pedidosFiltrados.map(
-              ped => (
+                  <p className="text-base font-bold text-zinc-300">
 
-                <div
-                  key={
-                    ped.id
-                  }
+                    Nenhum pedido para exibir
 
-                  className="bg-zinc-900 border border-zinc-800/80 rounded-2xl p-4 flex flex-col justify-between shadow-md hover:border-zinc-700/60 transition-all relative group"
-                >
+                  </p>
 
 
-                  <div className="absolute top-3 right-3 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <p className="text-xs text-zinc-500">
+
+                    Utilize os filtros de data ou pesquise pelo nome do cliente / número do pedido para visualizar os registos.
+
+                  </p>
 
 
-                    <button
-                      onClick={
-                        () =>
-                          imprimirReciboTermico(
-                            ped
-                          )
-                      }
+                </div>
 
-                      className="w-7 h-7 bg-zinc-800 hover:bg-green-600 rounded-lg flex items-center justify-center text-xs transition-colors"
+              )
 
-                      title="Imprimir 2ª Via (Talão)"
-                    >
+              : (
 
-                      🖨️
-
-                    </button>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
 
 
-                    <button
-                      onClick={
-                        () =>
-                          abrirEdicao(
-                            ped
-                          )
-                      }
+                  {
+                    pedidosFiltrados.map(
 
-                      className="w-7 h-7 bg-zinc-800 hover:bg-blue-600 rounded-lg flex items-center justify-center text-xs transition-colors"
+                      ped => (
 
-                      title="Editar Informações e Itens/Combos"
-                    >
+                        <div
 
-                      ✏️
+                          key={
+                            ped.id
+                          }
 
-                    </button>
+                          className="bg-zinc-900 border border-zinc-800/80 rounded-2xl p-4 flex flex-col justify-between shadow-md hover:border-zinc-700/60 transition-all relative group"
 
-
-                    <button
-                      onClick={
-                        () =>
-                          excluirPedido(
-                            ped.numero_pedido,
-                            ped.ids_fragmentados!
-                          )
-                      }
-
-                      className="w-7 h-7 bg-zinc-800 hover:bg-red-600 rounded-lg flex items-center justify-center text-xs transition-colors"
-
-                      title="Excluir Pedido"
-                    >
-
-                      🗑️
-
-                    </button>
-
-
-                  </div>
-
-
-                  <div>
-
-
-                    <div className="flex justify-between items-start gap-2 border-b border-zinc-800/60 pb-3 mb-3 pr-24">
-
-
-                      <div>
-
-                        <span className="text-[10px] font-mono text-zinc-500">
-
-                          #{ped.numero_pedido} · {ped.data_pedido}
-
-                        </span>
-
-
-                        <h3 className="font-bold text-zinc-100 text-sm mt-0.5">
-
-                          {ped.cliente || 'Cliente Anónimo'}
-
-                        </h3>
-
-                      </div>
-
-
-                      <div className="flex flex-col items-end gap-1">
-
-
-                        <span
-                          className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase tracking-wider ${getCorCanal(ped.canal)}`}
                         >
 
-                          {ped.canal}
 
-                        </span>
-
-
-                        <span
-                          className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded ${
-                            ped.pago
-                              ? 'bg-green-500/10 text-green-500'
-                              : 'bg-red-500/10 text-red-400 border border-red-500/20'
-                          }`}
-                        >
-
-                          {ped.pago ? 'Pago' : 'Pendente'}
-
-                        </span>
+                          <div className="absolute top-3 right-3 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
 
 
-                      </div>
+                            <button
 
-
-                    </div>
-
-
-                    <div className="space-y-2 mb-4">
-
-
-                      {ped.itens &&
-                        ped.itens.map(
-                          (
-                            item,
-                            i
-                          ) => (
-
-                            <div
-                              key={
-                                i
+                              onClick={
+                                () =>
+                                  imprimirReciboTermico(
+                                    ped
+                                  )
                               }
 
-                              className="flex justify-between text-xs text-zinc-300"
+                              className="w-7 h-7 bg-zinc-800 hover:bg-green-600 rounded-lg flex items-center justify-center text-xs transition-colors"
+
+                              title="Imprimir 2ª Via (Talão)"
+
                             >
 
-                              <span className="line-clamp-1 pr-2">
+                              🖨️
 
-                                <span className="font-bold text-orange-400 mr-1.5">
+                            </button>
 
-                                  {item.quantidade}x
+
+                            <button
+
+                              onClick={
+                                () =>
+                                  abrirEdicao(
+                                    ped
+                                  )
+                              }
+
+                              className="w-7 h-7 bg-zinc-800 hover:bg-blue-600 rounded-lg flex items-center justify-center text-xs transition-colors"
+
+                              title="Editar Informações e Itens/Combos"
+
+                            >
+
+                              ✏️
+
+                            </button>
+
+
+                            <button
+
+                              onClick={
+                                () =>
+                                  excluirPedido(
+
+                                    ped.numero_pedido,
+
+                                    ped.ids_fragmentados!
+
+                                  )
+                              }
+
+                              className="w-7 h-7 bg-zinc-800 hover:bg-red-600 rounded-lg flex items-center justify-center text-xs transition-colors"
+
+                              title="Excluir Pedido"
+
+                            >
+
+                              🗑️
+
+                            </button>
+
+
+                          </div>
+
+
+                          <div>
+
+
+                            <div className="flex justify-between items-start gap-2 border-b border-zinc-800/60 pb-3 mb-3 pr-24">
+
+
+                              <div>
+
+
+                                <span className="text-[10px] font-mono text-zinc-500">
+
+                                  #{ped.numero_pedido} · {ped.data_pedido}
 
                                 </span>
 
-                                {item.nome_produto}
+
+                                <h3 className="font-bold text-zinc-100 text-sm mt-0.5">
+
+                                  {ped.cliente || 'Cliente Anónimo'}
+
+                                </h3>
+
+
+                              </div>
+
+
+                              <div className="flex flex-col items-end gap-1">
+
+
+                                <span
+
+                                  className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase tracking-wider ${getCorCanal(ped.canal)}`}
+
+                                >
+
+                                  {ped.canal}
+
+                                </span>
+
+
+                                <span
+
+                                  className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded ${
+                                    ped.pago
+
+                                      ? 'bg-green-500/10 text-green-500'
+
+                                      : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                                  }`}
+
+                                >
+
+                                  {
+                                    ped.pago
+                                      ? 'Pago'
+                                      : 'Pendente'
+                                  }
+
+                                </span>
+
+
+                              </div>
+
+
+                            </div>
+
+
+                            <div className="space-y-2 mb-4">
+
+
+                              {
+                                ped.itens &&
+
+                                ped.itens.map(
+
+                                  (
+                                    item,
+                                    i
+                                  ) => (
+
+                                    <div
+
+                                      key={
+                                        i
+                                      }
+
+                                      className="flex justify-between text-xs text-zinc-300"
+
+                                    >
+
+
+                                      <span className="line-clamp-1 pr-2">
+
+
+                                        <span className="font-bold text-orange-400 mr-1.5">
+
+                                          {item.quantidade}x
+
+                                        </span>
+
+
+                                        {item.nome_produto}
+
+
+                                      </span>
+
+
+                                      <span className="font-mono text-zinc-500 text-[11px]">
+
+                                        {
+                                          (
+                                            item.preco_unitario *
+                                            item.quantidade
+                                          )
+                                            .toFixed(2)
+                                        }€
+
+                                      </span>
+
+
+                                    </div>
+
+                                  )
+
+                                )
+                              }
+
+
+                            </div>
+
+
+                          </div>
+
+
+                          <div className="border-t border-zinc-800/60 pt-3 mt-2 space-y-2 text-xs text-zinc-400">
+
+
+                            <div className="flex justify-between text-[11px]">
+
+
+                              <span>
+
+                                Pagamento:{' '}
+
+
+                                <span className="text-zinc-200 font-medium">
+
+                                  {ped.forma_pagamento}
+
+                                </span>
+
 
                               </span>
 
 
-                              <span className="font-mono text-zinc-500 text-[11px]">
+                              {
+                                ped.taxa_entrega >
+                                0
 
-                                {(item.preco_unitario * item.quantidade).toFixed(2)}€
+                                &&
+
+                                <span>
+
+                                  Entrega: {ped.taxa_entrega.toFixed(2)}€
+
+                                </span>
+                              }
+
+
+                            </div>
+
+
+                            {
+                              ped.desconto >
+                              0
+
+                              &&
+
+                              (
+
+                                <div className="flex justify-between text-[11px] text-red-400">
+
+
+                                  <span>
+
+                                    Desconto Aplicado:
+
+                                  </span>
+
+
+                                  <span>
+
+                                    -{ped.desconto.toFixed(2)}€
+
+                                  </span>
+
+
+                                </div>
+
+                              )
+                            }
+
+
+                            <div className="flex justify-between items-center border-t border-zinc-800/40 pt-2">
+
+
+                              <span className="text-[11px]">
+
+                                Estafeta:{' '}
+
+
+                                <span className="text-zinc-300 font-medium">
+
+                                  {
+                                    ped.entregador ||
+                                    'Nenhum'
+                                  }
+
+                                </span>
+
+
+                              </span>
+
+
+                              <span className="text-base font-black text-orange-500">
+
+                                {ped.total_geral.toFixed(2)}€
 
                               </span>
 
 
                             </div>
 
-                          )
-                        )}
 
+                            {
+                              !ped.pago &&
 
-                    </div>
-
-
-                  </div>
-
-
-                  <div className="border-t border-zinc-800/60 pt-3 mt-2 space-y-2 text-xs text-zinc-400">
-
-
-                    <div className="flex justify-between text-[11px]">
-
-                      <span>
-
-                        Pagamento:{' '}
-
-                        <span className="text-zinc-200 font-medium">
-
-                          {ped.forma_pagamento}
-
-                        </span>
-
-                      </span>
-
-
-                      {ped.taxa_entrega > 0 && (
-
-                        <span>
-
-                          Entrega: {ped.taxa_entrega.toFixed(2)}€
-
-                        </span>
-
-                      )}
-
-
-                    </div>
-
-
-                    {ped.desconto > 0 && (
-
-                      <div className="flex justify-between text-[11px] text-red-400">
-
-                        <span>
-                          Desconto Aplicado:
-                        </span>
-
-                        <span>
-                          -{ped.desconto.toFixed(2)}€
-                        </span>
-
-                      </div>
-
-                    )}
-
-
-                    <div className="flex justify-between items-center border-t border-zinc-800/40 pt-2">
-
-                      <span className="text-[11px]">
-
-                        Estafeta:{' '}
-
-                        <span className="text-zinc-300 font-medium">
-
-                          {ped.entregador || 'Nenhum'}
-
-                        </span>
-
-                      </span>
-
-
-                      <span className="text-base font-black text-orange-500">
-
-                        {ped.total_geral.toFixed(2)}€
-
-                      </span>
-
-                    </div>
-
-
-                    {!ped.pago && (
-
-                      <button
-                        onClick={
-                          () =>
-                            liquidarCaderninho(
-                              ped.numero_pedido
-                            )
-                        }
-
-                        className="w-full mt-2 bg-green-600 hover:bg-green-700 text-white text-[10px] font-bold py-1.5 rounded-lg transition-all"
-                      >
-
-                        ✓ Recebido (Confirmar Pagamento)
-
-                      </button>
-
-                    )}
-
-
-                  </div>
-
-
-                </div>
-
-              )
-            )}
-
-
-          </div>
-
-        )}
-
-
-      </main>
-
-
-      {/* ====================================================================
-          MODAL EDIÇÃO
-          ==================================================================== */}
-
-      {modalEditar &&
-        pedidoEditando && (
-
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-
-
-          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl p-6 shadow-2xl relative max-h-[90vh] flex flex-col">
-
-
-            <button
-              onClick={
-                () =>
-                  setModalEditar(
-                    false
-                  )
-              }
-
-              className="absolute top-5 right-5 text-zinc-400 hover:text-white"
-            >
-
-              ✕
-
-            </button>
-
-
-            <h2 className="text-xl font-bold text-white mb-4 border-b border-zinc-800 pb-3">
-
-              Editar Pedido #{pedidoEditando.numero_pedido}
-
-            </h2>
-
-
-            <form
-              onSubmit={
-                salvarEdicao
-              }
-
-              className="flex-1 overflow-y-auto space-y-4 pr-1"
-            >
-
-
-              <div className="grid grid-cols-2 gap-4">
-
-
-                <div className="col-span-2">
-
-                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
-
-                    Cliente
-
-                  </label>
-
-
-                  <input
-                    type="text"
-
-                    required
-
-                    value={
-                      pedidoEditando.cliente ||
-                      ''
-                    }
-
-                    onChange={
-                      e =>
-                        setPedidoEditando({
-                          ...pedidoEditando,
-                          cliente:
-                            e.target.value
-                        })
-                    }
-
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none"
-                  />
-
-                </div>
-
-
-                <div>
-
-                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
-
-                    Canal (Assume Preços Automáticos)
-
-                  </label>
-
-
-                  <select
-                    value={
-                      pedidoEditando.canal
-                    }
-
-                    onChange={
-                      e =>
-                        alterarCanalEdicao(
-                          e.target.value
-                        )
-                    }
-
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-amber-400 font-bold outline-none cursor-pointer"
-                  >
-
-                    <option value="Balcão">
-                      Balcão
-                    </option>
-
-                    <option value="WhatsApp">
-                      WhatsApp
-                    </option>
-
-                    <option value="Glovo">
-                      Glovo
-                    </option>
-
-                    <option value="Palmbites">
-                      Palmbites
-                    </option>
-
-                    <option value="Revendedores">
-                      Revendedores
-                    </option>
-
-                  </select>
-
-                </div>
-
-
-                <div>
-
-                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
-
-                    Pagamento
-
-                  </label>
-
-
-                  <select
-                    value={
-                      pedidoEditando.forma_pagamento
-                    }
-
-                    onChange={
-                      e =>
-                        setPedidoEditando({
-                          ...pedidoEditando,
-
-                          forma_pagamento:
-                            e.target.value
-                        })
-                    }
-
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none"
-                  >
-
-                    <option value="Dinheiro">
-                      Dinheiro
-                    </option>
-
-                    <option value="MBWay">
-                      MBWay
-                    </option>
-
-                    <option value="Multibanco">
-                      Multibanco
-                    </option>
-
-                    <option value="Dinheiro Glovo">
-                      Dinheiro Glovo
-                    </option>
-
-                    <option value="Glovo">
-                      Faturamento Glovo
-                    </option>
-
-                    <option value="Caderninho">
-                      Caderninho
-                    </option>
-
-                  </select>
-
-                </div>
-
-
-                <div>
-
-                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
-
-                    Estado do Pagamento
-
-                  </label>
-
-
-                  <select
-                    value={
-                      pedidoEditando.pago
-                        ? 'true'
-                        : 'false'
-                    }
-
-                    onChange={
-                      e =>
-                        setPedidoEditando({
-                          ...pedidoEditando,
-
-                          pago:
-                            e.target.value ===
-                            'true'
-                        })
-                    }
-
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none"
-                  >
-
-                    <option value="true">
-                      Pago
-                    </option>
-
-                    <option value="false">
-                      Pendente
-                    </option>
-
-                  </select>
-
-                </div>
-
-
-                <div>
-
-                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
-
-                    Entregador
-
-                  </label>
-
-
-                  <select
-                    value={
-                      pedidoEditando.entregador ||
-                      ''
-                    }
-
-                    onChange={
-                      e =>
-                        setPedidoEditando({
-                          ...pedidoEditando,
-
-                          entregador:
-                            e.target.value
-                        })
-                    }
-
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none cursor-pointer"
-                  >
-
-                    <option value="">
-                      -- Nenhum --
-                    </option>
-
-
-                    {listaEstafetas.map(
-                      est => (
-
-                        <option
-                          key={
-                            est.nome
-                          }
-
-                          value={
-                            est.nome
-                          }
-                        >
-
-                          {est.nome}
-
-                        </option>
-
-                      )
-                    )}
-
-
-                  </select>
-
-                </div>
-
-
-                <div>
-
-                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
-
-                    Taxa de Entrega (€)
-
-                  </label>
-
-
-                  <input
-                    type="number"
-
-                    step="0.01"
-
-                    min="0"
-
-                    value={
-                      pedidoEditando.taxa_entrega
-                    }
-
-                    onChange={
-                      e => {
-
-                        const taxa =
-                          parseFloat(
-                            e.target.value
-                          ) ||
-                          0;
-
-
-                        const subtotal =
-                          pedidoEditando.itens
-                            ?.reduce(
                               (
-                                acc,
-                                it
-                              ) =>
-                                acc +
-                                (
-                                  it.quantidade *
-                                  it.preco_unitario
-                                ),
-                              0
-                            ) ||
-                          0;
 
+                                <button
 
-                        const novoTotal =
-                          Math.max(
-                            0,
-                            subtotal +
-                            taxa -
-                            (
-                              pedidoEditando.desconto ||
-                              0
-                            )
-                          );
+                                  onClick={
+                                    () =>
+                                      liquidarCaderninho(
+                                        ped.numero_pedido
+                                      )
+                                  }
 
+                                  className="w-full mt-2 bg-green-600 hover:bg-green-700 text-white text-[10px] font-bold py-1.5 rounded-lg transition-all"
 
-                        setPedidoEditando({
-                          ...pedidoEditando,
+                                >
 
-                          taxa_entrega:
-                            taxa,
+                                  ✓ Recebido (Confirmar Pagamento)
 
-                          total_geral:
-                            novoTotal
-                        });
+                                </button>
 
-                      }
-                    }
-
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-orange-400 font-bold outline-none"
-                  />
-
-                </div>
-
-
-                <div>
-
-                  <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
-
-                    Desconto (€)
-
-                  </label>
-
-
-                  <input
-                    type="number"
-
-                    step="0.01"
-
-                    min="0"
-
-                    value={
-                      pedidoEditando.desconto ??
-                      ''
-                    }
-
-                    onChange={
-                      e => {
-
-                        const desc =
-                          e.target.value ===
-                          ''
-                            ? 0
-                            : parseFloat(
-                                e.target.value
-                              );
-
-
-                        const subtotal =
-                          pedidoEditando.itens
-                            ?.reduce(
-                              (
-                                acc,
-                                it
-                              ) =>
-                                acc +
-                                (
-                                  it.quantidade *
-                                  it.preco_unitario
-                                ),
-                              0
-                            ) ||
-                          0;
-
-
-                        const novoTotal =
-                          Math.max(
-                            0,
-                            subtotal +
-                            pedidoEditando.taxa_entrega -
-                            desc
-                          );
-
-
-                        setPedidoEditando({
-                          ...pedidoEditando,
-
-                          desconto:
-                            desc,
-
-                          total_geral:
-                            novoTotal
-                        });
-
-                      }
-                    }
-
-                    className="w-full bg-zinc-950 border border-red-900/50 rounded-xl px-3 py-2 text-sm text-red-400 font-bold outline-none"
-                  />
-
-                </div>
-
-
-              </div>
-
-
-              {/* ============================================================
-                  ITENS E COMBOS
-                  ============================================================ */}
-
-              <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 space-y-3 mt-4">
-
-
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-
-
-                  <h3 className="text-xs font-bold uppercase text-zinc-400">
-
-                    Itens e Combos do Pedido
-
-                  </h3>
-
-
-                  <div className="flex gap-2 w-full sm:w-auto">
-
-
-                    <select
-                      onChange={
-                        e => {
-
-                          adicionarProdutoEdicao(
-                            e.target.value
-                          );
-
-                          e.target.value =
-                            '';
-
-                        }
-                      }
-
-                      defaultValue=""
-
-                      className="bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none cursor-pointer flex-1 sm:flex-none"
-                    >
-
-                      <option
-                        value=""
-                        disabled
-                      >
-
-                        + Adicionar Produto...
-
-                      </option>
-
-
-                      {produtosDB.map(
-                        p => (
-
-                          <option
-                            key={
-                              p.id
+                              )
                             }
-
-                            value={
-                              p.id
-                            }
-                          >
-
-                            {p.nome}
-
-                          </option>
-
-                        )
-                      )}
-
-
-                    </select>
-
-
-                    <select
-                      onChange={
-                        e => {
-
-                          iniciarMontagemComboEdicao(
-                            e.target.value
-                          );
-
-                          e.target.value =
-                            '';
-
-                        }
-                      }
-
-                      defaultValue=""
-
-                      className="bg-orange-600/20 border border-orange-500/40 rounded-xl px-3 py-1.5 text-xs text-orange-400 font-bold outline-none cursor-pointer flex-1 sm:flex-none"
-                    >
-
-                      <option
-                        value=""
-                        disabled
-                      >
-
-                        + Adicionar Combo...
-
-                      </option>
-
-
-                      {combosDB.map(
-                        c => (
-
-                          <option
-                            key={
-                              c.id
-                            }
-
-                            value={
-                              c.id
-                            }
-                          >
-
-                            {c.nome}
-
-                          </option>
-
-                        )
-                      )}
-
-
-                    </select>
-
-
-                  </div>
-
-
-                </div>
-
-
-                <div className="space-y-2">
-
-
-                  {pedidoEditando.itens &&
-                    pedidoEditando.itens.map(
-                      (
-                        item,
-                        idx
-                      ) => (
-
-                        <div
-                          key={
-                            idx
-                          }
-
-                          className="flex items-center justify-between bg-zinc-900 p-2.5 rounded-xl border border-zinc-800 text-xs gap-2"
-                        >
-
-
-                          <span className="font-bold text-white flex-1 truncate">
-
-                            {item.nome_produto}
-
-                          </span>
-
-
-                          <div className="flex items-center gap-2">
-
-
-                            <span className="font-mono text-zinc-400">
-
-                              {(item.preco_unitario * item.quantidade).toFixed(2)}€
-
-                            </span>
-
-
-                            <input
-                              type="number"
-
-                              min="1"
-
-                              value={
-                                item.quantidade
-                              }
-
-                              onChange={
-                                e =>
-                                  alterarQtdItemEdicao(
-                                    idx,
-
-                                    parseInt(
-                                      e.target.value
-                                    ) ||
-                                    1
-                                  )
-                              }
-
-                              className="w-16 bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1 text-center font-bold text-white outline-none"
-                            />
-
-
-                            <button
-                              type="button"
-
-                              onClick={
-                                () =>
-                                  removerItemEdicao(
-                                    idx
-                                  )
-                              }
-
-                              className="text-red-400 hover:text-red-300 px-1 font-bold"
-                            >
-
-                              ✕
-
-                            </button>
 
 
                           </div>
@@ -4248,308 +5197,953 @@ export default function GestaoPedidos() {
                         </div>
 
                       )
-                    )}
+
+                    )
+                  }
+
+
+                </div>
+
+              )
+        }
+
+
+      </main>
+
+
+      {/* MODAL EDIÇÃO */}
+
+
+      {
+        modalEditar &&
+
+        pedidoEditando &&
+
+        (
+
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+
+
+            <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl p-6 shadow-2xl relative max-h-[90vh] flex flex-col">
+
+
+              <button
+
+                onClick={
+                  () =>
+                    setModalEditar(
+                      false
+                    )
+                }
+
+                className="absolute top-5 right-5 text-zinc-400 hover:text-white"
+
+              >
+
+                ✕
+
+              </button>
+
+
+              <h2 className="text-xl font-bold text-white mb-4 border-b border-zinc-800 pb-3">
+
+                Editar Pedido #{pedidoEditando.numero_pedido}
+
+              </h2>
+
+
+              <form
+
+                onSubmit={
+                  salvarEdicao
+                }
+
+                className="flex-1 overflow-y-auto space-y-4 pr-1"
+
+              >
+
+
+                <div className="grid grid-cols-2 gap-4">
+
+
+                  <div className="col-span-2">
+
+
+                    <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
+
+                      Cliente
+
+                    </label>
+
+
+                    <input
+
+                      type="text"
+
+                      required
+
+                      value={
+                        pedidoEditando.cliente ||
+                        ''
+                      }
+
+                      onChange={
+                        e =>
+                          setPedidoEditando({
+
+                            ...pedidoEditando,
+
+                            cliente:
+                              e.target.value
+
+                          })
+                      }
+
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none"
+
+                    />
+
+
+                  </div>
+
+
+                  <div>
+
+
+                    <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
+
+                      Canal (Assume Preços Automáticos)
+
+                    </label>
+
+
+                    <select
+
+                      value={
+                        pedidoEditando.canal
+                      }
+
+                      onChange={
+                        e =>
+                          alterarCanalEdicao(
+                            e.target.value
+                          )
+                      }
+
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-amber-400 font-bold outline-none cursor-pointer"
+
+                    >
+
+
+                      <option value="Balcão">
+
+                        Balcão
+
+                      </option>
+
+
+                      <option value="WhatsApp">
+
+                        WhatsApp
+
+                      </option>
+
+
+                      <option value="Glovo">
+
+                        Glovo
+
+                      </option>
+
+
+                      <option value="Palmbites">
+
+                        Palmbites
+
+                      </option>
+
+
+                      <option value="Revendedores">
+
+                        Revendedores
+
+                      </option>
+
+
+                    </select>
+
+
+                  </div>
+
+
+                  <div>
+
+
+                    <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
+
+                      Pagamento
+
+                    </label>
+
+
+                    <select
+
+                      value={
+                        pedidoEditando.forma_pagamento
+                      }
+
+                      onChange={
+                        e =>
+                          setPedidoEditando({
+
+                            ...pedidoEditando,
+
+                            forma_pagamento:
+                              e.target.value
+
+                          })
+                      }
+
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none"
+
+                    >
+
+
+                      <option value="Dinheiro">
+
+                        Dinheiro
+
+                      </option>
+
+
+                      <option value="MBWay">
+
+                        MBWay
+
+                      </option>
+
+
+                      <option value="Multibanco">
+
+                        Multibanco
+
+                      </option>
+
+
+                      <option value="Dinheiro Glovo">
+
+                        Dinheiro Glovo
+
+                      </option>
+
+
+                      <option value="Glovo">
+
+                        Faturamento Glovo
+
+                      </option>
+
+
+                      <option value="Caderninho">
+
+                        Caderninho
+
+                      </option>
+
+
+                    </select>
+
+
+                  </div>
+
+
+                  <div>
+
+
+                    <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
+
+                      Estado do Pagamento
+
+                    </label>
+
+
+                    <select
+
+                      value={
+                        pedidoEditando.pago
+
+                          ? 'true'
+
+                          : 'false'
+                      }
+
+                      onChange={
+                        e =>
+                          setPedidoEditando({
+
+                            ...pedidoEditando,
+
+                            pago:
+                              e.target.value ===
+                              'true'
+
+                          })
+                      }
+
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none"
+
+                    >
+
+
+                      <option value="true">
+
+                        Pago
+
+                      </option>
+
+
+                      <option value="false">
+
+                        Pendente
+
+                      </option>
+
+
+                    </select>
+
+
+                  </div>
+
+
+                  <div>
+
+
+                    <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
+
+                      Entregador
+
+                    </label>
+
+
+                    <select
+
+                      value={
+                        pedidoEditando.entregador ||
+                        ''
+                      }
+
+                      onChange={
+                        e =>
+                          setPedidoEditando({
+
+                            ...pedidoEditando,
+
+                            entregador:
+                              e.target.value
+
+                          })
+                      }
+
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white outline-none cursor-pointer"
+
+                    >
+
+
+                      <option value="">
+
+                        -- Nenhum --
+
+                      </option>
+
+
+                      {
+                        listaEstafetas.map(
+
+                          est => (
+
+                            <option
+
+                              key={
+                                est.nome
+                              }
+
+                              value={
+                                est.nome
+                              }
+
+                            >
+
+                              {est.nome}
+
+                            </option>
+
+                          )
+
+                        )
+                      }
+
+
+                    </select>
+
+
+                  </div>
+
+
+                  <div>
+
+
+                    <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
+
+                      Taxa de Entrega (€)
+
+                    </label>
+
+
+                    <input
+
+                      type="number"
+
+                      step="0.01"
+
+                      min="0"
+
+                      value={
+                        pedidoEditando.taxa_entrega
+                      }
+
+                      onChange={
+                        e => {
+
+                          const taxa =
+                            parseFloat(
+                              e.target.value
+                            ) ||
+                            0;
+
+
+                          const subtotal =
+                            pedidoEditando.itens
+                              ?.reduce(
+
+                                (
+                                  acc,
+                                  it
+                                ) =>
+                                  acc +
+                                  (
+                                    it.quantidade *
+                                    it.preco_unitario
+                                  ),
+
+                                0
+
+                              ) ||
+                            0;
+
+
+                          const novoTotal =
+                            Math.max(
+
+                              0,
+
+                              subtotal +
+
+                              taxa -
+
+                              (
+                                pedidoEditando.desconto ||
+                                0
+                              )
+
+                            );
+
+
+                          setPedidoEditando({
+
+                            ...pedidoEditando,
+
+                            taxa_entrega:
+                              taxa,
+
+                            total_geral:
+                              novoTotal
+
+                          });
+
+                        }
+                      }
+
+                      className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-orange-400 font-bold outline-none"
+
+                    />
+
+
+                  </div>
+
+
+                  <div>
+
+
+                    <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
+
+                      Desconto (€)
+
+                    </label>
+
+
+                    <input
+
+                      type="number"
+
+                      step="0.01"
+
+                      min="0"
+
+                      value={
+                        pedidoEditando.desconto ??
+                        ''
+                      }
+
+                      onChange={
+                        e => {
+
+                          const desc =
+                            e.target.value ===
+                            ''
+
+                              ? 0
+
+                              : parseFloat(
+                                  e.target.value
+                                );
+
+
+                          const subtotal =
+                            pedidoEditando.itens
+                              ?.reduce(
+
+                                (
+                                  acc,
+                                  it
+                                ) =>
+                                  acc +
+                                  (
+                                    it.quantidade *
+                                    it.preco_unitario
+                                  ),
+
+                                0
+
+                              ) ||
+                            0;
+
+
+                          const novoTotal =
+                            Math.max(
+
+                              0,
+
+                              subtotal +
+
+                              pedidoEditando.taxa_entrega -
+
+                              desc
+
+                            );
+
+
+                          setPedidoEditando({
+
+                            ...pedidoEditando,
+
+                            desconto:
+                              desc,
+
+                            total_geral:
+                              novoTotal
+
+                          });
+
+                        }
+                      }
+
+                      className="w-full bg-zinc-950 border border-red-900/50 rounded-xl px-3 py-2 text-sm text-red-400 font-bold outline-none"
+
+                    />
+
+
+                  </div>
 
 
                 </div>
 
 
-              </div>
+                {/* ITENS E COMBOS */}
 
 
-              <div className="flex justify-between items-center pt-2">
+                <div className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800 space-y-3 mt-4">
 
-                <span className="text-sm font-bold text-zinc-300">
 
-                  Total Geral Atualizado:
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
 
-                </span>
 
+                    <h3 className="text-xs font-bold uppercase text-zinc-400">
 
-                <span className="text-xl font-black text-orange-500 font-mono">
+                      Itens e Combos do Pedido
 
-                  {pedidoEditando.total_geral.toFixed(2)}€
+                    </h3>
 
-                </span>
 
-              </div>
+                    <div className="flex gap-2 w-full sm:w-auto">
 
 
-              <div className="pt-4 border-t border-zinc-800 flex justify-end gap-3">
+                      <select
 
+                        onChange={
+                          e => {
 
-                <button
-                  type="button"
+                            adicionarProdutoEdicao(
+                              e.target.value
+                            );
 
-                  onClick={
-                    () =>
-                      setModalEditar(
-                        false
-                      )
-                  }
+                            e.target.value =
+                              '';
 
-                  className="px-5 py-2.5 text-sm font-bold text-zinc-400 hover:text-white"
-                >
-
-                  Cancelar
-
-                </button>
-
-
-                <button
-                  type="submit"
-
-                  disabled={
-                    salvando
-                  }
-
-                  className="bg-orange-600 hover:bg-orange-500 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-lg disabled:opacity-50"
-                >
-
-                  {salvando
-                    ? 'A Guardar...'
-                    : 'Guardar Alterações'}
-
-                </button>
-
-
-              </div>
-
-
-            </form>
-
-
-          </div>
-
-
-        </div>
-
-      )}
-
-
-      {/* ====================================================================
-          MODAL COMBO
-          ==================================================================== */}
-
-      {modalComboEdicao &&
-        comboSelecionadoParaMontar && (
-
-        <div className="fixed inset-0 bg-black/85 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
-
-
-          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl p-6 flex flex-col max-h-[90vh] shadow-2xl relative">
-
-
-            <button
-              onClick={
-                () =>
-                  setModalComboEdicao(
-                    false
-                  )
-              }
-
-              className="absolute top-5 right-5 text-zinc-400 hover:text-white font-bold"
-            >
-
-              ✕
-
-            </button>
-
-
-            <h2 className="text-xl font-bold text-orange-500 mb-1">
-
-              Montar Combo: {comboSelecionadoParaMontar.nome}
-
-            </h2>
-
-
-            <p className="text-xs text-zinc-400 mb-4">
-
-              {comboSelecionadoParaMontar.descricao}
-
-            </p>
-
-
-            <div className="flex-1 overflow-y-auto space-y-5 pr-1">
-
-
-              {comboSelecionadoParaMontar
-                .combo_grupos
-                .map(
-                  (grupo: any) => {
-
-                    const selecoesDesteGrupo =
-                      selecoesComboEdicao[
-                        grupo.id
-                      ] ||
-                      [];
-
-
-                    const totalGrupo =
-                      selecoesDesteGrupo
-                        .reduce(
-                          (
-                            acc,
-                            s
-                          ) =>
-                            acc +
-                            (
-                              s.quantidade ||
-                              1
-                            ),
-                          0
-                        );
-
-
-                    const atingiuMaximo =
-                      totalGrupo >=
-                      grupo.quantidade_maxima;
-
-
-                    return (
-
-                      <div
-                        key={
-                          grupo.id
+                          }
                         }
 
-                        className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800"
+                        defaultValue=""
+
+                        className="bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-1.5 text-xs text-white outline-none cursor-pointer flex-1 sm:flex-none"
+
                       >
 
 
-                        <h3 className="text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2.5 flex justify-between">
+                        <option
+
+                          value=""
+
+                          disabled
+
+                        >
+
+                          + Adicionar Produto...
+
+                        </option>
 
 
-                          <span>
+                        {
+                          produtosDB.map(
 
-                            {grupo.nome} ({totalGrupo}/{grupo.quantidade_maxima})
+                            p => (
 
-                          </span>
+                              <option
+
+                                key={
+                                  p.id
+                                }
+
+                                value={
+                                  p.id
+                                }
+
+                              >
+
+                                {p.nome}
+
+                              </option>
+
+                            )
+
+                          )
+                        }
 
 
-                          {grupo.obrigatorio && (
+                      </select>
 
-                            <span className="text-orange-500">
 
-                              Obrigatório
+                      <select
+
+                        onChange={
+                          e => {
+
+                            iniciarMontagemComboEdicao(
+                              e.target.value
+                            );
+
+                            e.target.value =
+                              '';
+
+                          }
+                        }
+
+                        defaultValue=""
+
+                        className="bg-orange-600/20 border border-orange-500/40 rounded-xl px-3 py-1.5 text-xs text-orange-400 font-bold outline-none cursor-pointer flex-1 sm:flex-none"
+
+                      >
+
+
+                        <option
+
+                          value=""
+
+                          disabled
+
+                        >
+
+                          + Adicionar Combo...
+
+                        </option>
+
+
+                        {
+                          combosDB.map(
+
+                            c => (
+
+                              <option
+
+                                key={
+                                  c.id
+                                }
+
+                                value={
+                                  c.id
+                                }
+
+                              >
+
+                                {c.nome}
+
+                              </option>
+
+                            )
+
+                          )
+                        }
+
+
+                      </select>
+
+
+                    </div>
+
+
+                  </div>
+
+
+                  <div className="space-y-2">
+
+
+                    {
+                      pedidoEditando.itens &&
+
+                      pedidoEditando.itens.map(
+
+                        (
+                          item,
+                          idx
+                        ) => (
+
+                          <div
+
+                            key={
+                              idx
+                            }
+
+                            className="flex items-center justify-between bg-zinc-900 p-2.5 rounded-xl border border-zinc-800 text-xs gap-2"
+
+                          >
+
+
+                            <span className="font-bold text-white flex-1 truncate">
+
+                              {item.nome_produto}
 
                             </span>
 
-                          )}
+
+                            <div className="flex items-center gap-2">
 
 
-                        </h3>
+                              <span className="font-mono text-zinc-400">
+
+                                {
+                                  (
+                                    item.preco_unitario *
+                                    item.quantidade
+                                  )
+                                    .toFixed(2)
+                                }€
+
+                              </span>
 
 
-                        <div className="grid grid-cols-2 gap-2">
+                              <input
+
+                                type="number"
+
+                                min="1"
+
+                                value={
+                                  item.quantidade
+                                }
+
+                                onChange={
+                                  e =>
+                                    alterarQtdItemEdicao(
+
+                                      idx,
+
+                                      parseInt(
+                                        e.target.value
+                                      ) ||
+                                      1
+
+                                    )
+                                }
+
+                                className="w-16 bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1 text-center font-bold text-white outline-none"
+
+                              />
 
 
-                          {grupo.combo_grupo_produtos
-                            .filter(
-                              (i: any) =>
-                                i.ativo
-                            )
-                            .map(
-                              (
-                                itemVinculado:
-                                  any
-                              ) => {
+                              <button
 
-                                const selItem =
-                                  selecoesDesteGrupo
-                                    .find(
-                                      (
-                                        s: any
-                                      ) =>
-                                        s.produto_id ===
-                                        itemVinculado.produto_id
-                                    );
+                                type="button"
+
+                                onClick={
+                                  () =>
+                                    removerItemEdicao(
+                                      idx
+                                    )
+                                }
+
+                                className="text-red-400 hover:text-red-300 px-1 font-bold"
+
+                              >
+
+                                ✕
+
+                              </button>
 
 
-                                const qtdSelecionada =
-                                  selItem
-                                    ? selItem.quantidade
-                                    : 0;
+                            </div>
 
 
-                                const selecionado =
-                                  qtdSelecionada >
-                                  0;
+                          </div>
+
+                        )
+
+                      )
+                    }
 
 
-                                return (
-
-                                  <button
-                                    key={
-                                      itemVinculado.produto_id
-                                    }
-
-                                    type="button"
-
-                                    onClick={
-                                      () =>
-                                        toggleSelecaoComboEdicao(
-                                          grupo,
-                                          itemVinculado
-                                        )
-                                    }
-
-                                    className={`p-3 text-left rounded-xl text-xs border transition-all relative ${
-                                      selecionado
-                                        ? 'bg-orange-600/20 border-orange-500 text-white shadow'
-                                        : atingiuMaximo
-                                        ? 'bg-zinc-900/40 border-zinc-800/40 text-zinc-600 opacity-50'
-                                        : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-800'
-                                    }`}
-                                  >
+                  </div>
 
 
-                                    <span className="font-medium block">
-
-                                      {itemVinculado.produto?.nome}
-
-                                    </span>
+                </div>
 
 
-                                    {qtdSelecionada >
-                                      0 && (
-
-                                      <span className="absolute top-2 right-2 bg-orange-500 text-white text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center">
-
-                                        {qtdSelecionada}
-
-                                      </span>
-
-                                    )}
+                <div className="flex justify-between items-center pt-2">
 
 
-                                  </button>
+                  <span className="text-sm font-bold text-zinc-300">
 
-                                );
+                    Total Geral Atualizado:
 
-                              }
-                            )}
-
-
-                        </div>
+                  </span>
 
 
-                      </div>
+                  <span className="text-xl font-black text-orange-500 font-mono">
 
-                    );
+                    {pedidoEditando.total_geral.toFixed(2)}€
 
-                  }
-                )}
+                  </span>
+
+
+                </div>
+
+
+                <div className="pt-4 border-t border-zinc-800 flex justify-end gap-3">
+
+
+                  <button
+
+                    type="button"
+
+                    onClick={
+                      () =>
+                        setModalEditar(
+                          false
+                        )
+                    }
+
+                    className="px-5 py-2.5 text-sm font-bold text-zinc-400 hover:text-white"
+
+                  >
+
+                    Cancelar
+
+                  </button>
+
+
+                  <button
+
+                    type="submit"
+
+                    disabled={
+                      salvando
+                    }
+
+                    className="bg-orange-600 hover:bg-orange-500 text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-lg disabled:opacity-50"
+
+                  >
+
+                    {
+                      salvando
+
+                        ? 'A Guardar...'
+
+                        : 'Guardar Alterações'
+                    }
+
+                  </button>
+
+
+                </div>
+
+
+              </form>
 
 
             </div>
 
 
-            <div className="pt-4 border-t border-zinc-800 mt-4 flex justify-end gap-3">
+          </div>
+
+        )
+      }
+
+
+      {/* MODAL COMBO */}
+
+
+      {
+        modalComboEdicao &&
+
+        comboSelecionadoParaMontar &&
+
+        (
+
+          <div className="fixed inset-0 bg-black/85 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
+
+
+            <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl p-6 flex flex-col max-h-[90vh] shadow-2xl relative">
 
 
               <button
-                type="button"
 
                 onClick={
                   () =>
@@ -4558,27 +6152,283 @@ export default function GestaoPedidos() {
                     )
                 }
 
-                className="px-5 py-2.5 text-xs font-bold text-zinc-400 hover:text-white"
+                className="absolute top-5 right-5 text-zinc-400 hover:text-white font-bold"
+
               >
 
-                Cancelar
+                ✕
 
               </button>
 
 
-              <button
-                type="button"
+              <h2 className="text-xl font-bold text-orange-500 mb-1">
 
-                onClick={
-                  confirmarComboEdicao
+                Montar Combo: {comboSelecionadoParaMontar.nome}
+
+              </h2>
+
+
+              <p className="text-xs text-zinc-400 mb-4">
+
+                {comboSelecionadoParaMontar.descricao}
+
+              </p>
+
+
+              <div className="flex-1 overflow-y-auto space-y-5 pr-1">
+
+
+                {
+                  comboSelecionadoParaMontar
+                    .combo_grupos
+                    .map(
+
+                      (
+                        grupo: any
+                      ) => {
+
+                        const selecoesDesteGrupo =
+                          selecoesComboEdicao[
+                            grupo.id
+                          ] ||
+                          [];
+
+
+                        const totalGrupo =
+                          selecoesDesteGrupo
+                            .reduce(
+
+                              (
+                                acc,
+                                s
+                              ) =>
+                                acc +
+                                (
+                                  s.quantidade ||
+                                  1
+                                ),
+
+                              0
+
+                            );
+
+
+                        const atingiuMaximo =
+                          totalGrupo >=
+                          grupo.quantidade_maxima;
+
+
+                        return (
+
+                          <div
+
+                            key={
+                              grupo.id
+                            }
+
+                            className="bg-zinc-950 p-4 rounded-2xl border border-zinc-800"
+
+                          >
+
+
+                            <h3 className="text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2.5 flex justify-between">
+
+
+                              <span>
+
+                                {grupo.nome} ({totalGrupo}/{grupo.quantidade_maxima})
+
+                              </span>
+
+
+                              {
+                                grupo.obrigatorio &&
+
+                                <span className="text-orange-500">
+
+                                  Obrigatório
+
+                                </span>
+                              }
+
+
+                            </h3>
+
+
+                            <div className="grid grid-cols-2 gap-2">
+
+
+                              {
+                                grupo.combo_grupo_produtos
+                                  .filter(
+
+                                    (
+                                      i: any
+                                    ) =>
+                                      i.ativo
+
+                                  )
+                                  .map(
+
+                                    (
+                                      itemVinculado:
+                                        any
+                                    ) => {
+
+                                      const selItem =
+                                        selecoesDesteGrupo
+                                          .find(
+
+                                            (
+                                              s: any
+                                            ) =>
+                                              s.produto_id ===
+                                              itemVinculado.produto_id
+
+                                          );
+
+
+                                      const qtdSelecionada =
+                                        selItem
+
+                                          ? selItem.quantidade
+
+                                          : 0;
+
+
+                                      const selecionado =
+                                        qtdSelecionada >
+                                        0;
+
+
+                                      return (
+
+                                        <button
+
+                                          key={
+                                            itemVinculado.produto_id
+                                          }
+
+                                          type="button"
+
+                                          onClick={
+                                            () =>
+                                              toggleSelecaoComboEdicao(
+
+                                                grupo,
+
+                                                itemVinculado
+
+                                              )
+                                          }
+
+                                          className={`p-3 text-left rounded-xl text-xs border transition-all relative ${
+                                            selecionado
+
+                                              ? 'bg-orange-600/20 border-orange-500 text-white shadow'
+
+                                              : atingiuMaximo
+
+                                                ? 'bg-zinc-900/40 border-zinc-800/40 text-zinc-600 opacity-50'
+
+                                                : 'bg-zinc-900 border-zinc-800 text-zinc-300 hover:bg-zinc-800'
+                                          }`}
+
+                                        >
+
+
+                                          <span className="font-medium block">
+
+                                            {itemVinculado.produto?.nome}
+
+                                          </span>
+
+
+                                          {
+                                            qtdSelecionada >
+                                            0
+
+                                            &&
+
+                                            (
+
+                                              <span className="absolute top-2 right-2 bg-orange-500 text-white text-[10px] font-bold w-5 h-5 rounded-full flex items-center justify-center">
+
+                                                {qtdSelecionada}
+
+                                              </span>
+
+                                            )
+                                          }
+
+
+                                        </button>
+
+                                      );
+
+                                    }
+
+                                  )
+                              }
+
+
+                            </div>
+
+
+                          </div>
+
+                        );
+
+                      }
+
+                    )
                 }
 
-                className="bg-orange-600 hover:bg-orange-500 text-white px-6 py-2.5 rounded-xl text-xs font-bold shadow-lg"
-              >
 
-                Adicionar Combo ao Pedido
+              </div>
 
-              </button>
+
+              <div className="pt-4 border-t border-zinc-800 mt-4 flex justify-end gap-3">
+
+
+                <button
+
+                  type="button"
+
+                  onClick={
+                    () =>
+                      setModalComboEdicao(
+                        false
+                      )
+                  }
+
+                  className="px-5 py-2.5 text-xs font-bold text-zinc-400 hover:text-white"
+
+                >
+
+                  Cancelar
+
+                </button>
+
+
+                <button
+
+                  type="button"
+
+                  onClick={
+                    confirmarComboEdicao
+                  }
+
+                  className="bg-orange-600 hover:bg-orange-500 text-white px-6 py-2.5 rounded-xl text-xs font-bold shadow-lg"
+
+                >
+
+                  Adicionar Combo ao Pedido
+
+                </button>
+
+
+              </div>
 
 
             </div>
@@ -4586,13 +6436,12 @@ export default function GestaoPedidos() {
 
           </div>
 
-
-        </div>
-
-      )}
+        )
+      }
 
 
     </div>
 
   );
+
 }
