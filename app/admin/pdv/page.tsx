@@ -103,12 +103,9 @@ export const imprimirReciboTermico = (pedido: any) => {
     </html>
   `;
 
-  // VERIFICA SE ESTAMOS A CORRER NA APP ELECTRON
   if (typeof window !== 'undefined' && (window as any).imprimirSilencioso) {
-    // A App deteta a ponte mágica e envia o HTML direto para a impressora!
     (window as any).imprimirSilencioso(html);
   } else {
-    // Se, por acaso, alguém abrir num Chrome normal, funciona da forma tradicional (com iframe e janela de impressão)
     const iframe = document.createElement('iframe');
     iframe.style.display = 'none';
     document.body.appendChild(iframe);
@@ -193,6 +190,9 @@ export default function CaixaPDV() {
   const [entregador, setEntregador] = useState('');
   const [taxaEntrega, setTaxaEntrega] = useState('0.00');
   const [descontoManual, setDescontoManual] = useState('0.00');
+  
+  // ✅ ESTADO DE CONTROLO DE IMPRESSÃO
+  const [imprimirAtivado, setImprimirAtivado] = useState(true);
   
   const [isProcessando, setIsProcessando] = useState(false);
 
@@ -467,7 +467,6 @@ export default function CaixaPDV() {
     setMostrarModalCombo(false);
   };
 
-  // ---- MOTOR BLINDADO DE ESTOQUE (100% GARANTIDO) ----
   const descontarStockAutomaticamente = async (itensDoCarrinho: ItemCarrinho[], numeroDaFatura: string) => {
     try {
       const consumos = new Map<string, number>();
@@ -607,26 +606,28 @@ export default function CaixaPDV() {
         
         await descontarStockAutomaticamente(carrinho, novoNumeroStr);
 
-        // 🖨️ PREPARAR DADOS PARA A IMPRESSORA E IMPRIMIR AUTOMATICAMENTE
-        const dadosRecibo = {
-          numero_pedido: novoNumeroStr,
-          canal: canal,
-          cliente: nomeDoCliente,
-          contacto_cliente: contactoCliente.trim(),
-          endereco: moradaCliente.trim(),
-          itens_pedido: carrinho.map(item => ({
-            quantidade: item.quantidade,
-            nome_produto: item.isCombo ? `${item.produto.nome} (${item.detalhesCombo?.join(', ')})` : item.produto.nome,
-            preco_unitario: item.precoAplicado
-          })),
-          taxa_entrega: parseFloat(taxaEntrega),
-          desconto: parseFloat(descontoManual) || 0,
-          total_geral: totalGeral,
-          forma_pagamento: formaPagamento,
-          pago: estaPago
-        };
+        // ✅ IMPRESSÃO CONDICIONAL
+        if (imprimirAtivado) {
+          const dadosRecibo = {
+            numero_pedido: novoNumeroStr,
+            canal: canal,
+            cliente: nomeDoCliente,
+            contacto_cliente: contactoCliente.trim(),
+            endereco: moradaCliente.trim(),
+            itens_pedido: carrinho.map(item => ({
+              quantidade: item.quantidade,
+              nome_produto: item.isCombo ? `${item.produto.nome} (${item.detalhesCombo?.join(', ')})` : item.produto.nome,
+              preco_unitario: item.precoAplicado
+            })),
+            taxa_entrega: parseFloat(taxaEntrega),
+            desconto: parseFloat(descontoManual) || 0,
+            total_geral: totalGeral,
+            forma_pagamento: formaPagamento,
+            pago: estaPago
+          };
 
-        imprimirReciboTermico(dadosRecibo);
+          imprimirReciboTermico(dadosRecibo);
+        }
       }
       
       alert(`Pedido #${novoNumeroStr} registado com sucesso!`);
@@ -673,7 +674,6 @@ export default function CaixaPDV() {
         </div>
       )}
 
-      {/* CABEÇALHO DO PDV */}
       {!erroCaixa && (
         <div className="bg-zinc-900 border-b border-zinc-800 p-5 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-9 gap-4 shadow-xl relative">
           
@@ -841,6 +841,16 @@ export default function CaixaPDV() {
             </div>
 
             <div className="p-4 bg-zinc-950 border-t border-zinc-800 space-y-3">
+              <label className="flex items-center gap-2 text-xs font-bold text-zinc-300 cursor-pointer bg-zinc-900/60 p-2 rounded-lg border border-zinc-800">
+                <input 
+                  type="checkbox" 
+                  checked={imprimirAtivado} 
+                  onChange={(e) => setImprimirAtivado(e.target.checked)} 
+                  className="accent-orange-600 w-4 h-4 cursor-pointer" 
+                />
+                Imprimir talão automaticamente
+              </label>
+
               <div className="flex justify-between items-center text-zinc-400 text-xs"><span>Subtotal:</span><span className="text-white font-medium">{subtotalProdutos.toFixed(2)}€</span></div>
               {parseFloat(descontoManual) > 0 && <div className="flex justify-between items-center text-red-400 text-xs"><span>Desconto:</span><span>-{parseFloat(descontoManual).toFixed(2)}€</span></div>}
               <div className="flex justify-between items-center text-zinc-400 text-xs"><span>Taxa de Entrega:</span><span className="text-white font-medium">{parseFloat(taxaEntrega).toFixed(2)}€</span></div>
