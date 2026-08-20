@@ -13,9 +13,6 @@ export const imprimirReciboTermico = (pedido: any) => {
   const subtotal = totalGeral - taxaEntrega + desconto;
   const itensDoPedido = pedido.itens || pedido.itens_pedido || [];
 
-  // ==========================================================================
-  // FORMATAÇÃO
-  // ==========================================================================
   const moeda = (valor: number) => {
     return Number(valor || 0).toFixed(2).replace('.', ',');
   };
@@ -29,27 +26,17 @@ export const imprimirReciboTermico = (pedido: any) => {
       .replace(/'/g, '&#039;');
   };
 
-  // ==========================================================================
-  // ITENS DO PEDIDO
-  // ==========================================================================
   const linhasItens = itensDoPedido.map((item: any) => {
     const quantidade = Number(item.quantidade || 1);
     const precoUnitario = Number(item.preco_unitario || 0);
     const precoTotal = quantidade * precoUnitario;
     const nomeOriginal = String(item.nome_produto || '');
-
     const ehCombo = item.codigo_produto === 'COMBO' || nomeOriginal.toLowerCase().includes('combo');
 
-    // ==================================================================
-    // COMBO
-    // ==================================================================
     if (ehCombo) {
       const match = nomeOriginal.match(/^(.*?)\s*\((.*)\)\s*$/);
       const nomeCombo = match ? match[1].trim() : nomeOriginal;
-      const componentes = match && match[2]
-        ? match[2].split(',').map((nome: string) => nome.trim()).filter(Boolean)
-        : [];
-
+      const componentes = match && match[2] ? match[2].split(',').map((nome: string) => nome.trim()).filter(Boolean) : [];
       const componentesHtml = componentes.map((nome: string) => `
         <div class="subitem">
           <span class="subitem-qtd">1x</span>
@@ -69,9 +56,6 @@ export const imprimirReciboTermico = (pedido: any) => {
       `;
     }
 
-    // ==================================================================
-    // PRODUTO NORMAL
-    // ==================================================================
     return `
       <div class="produto">
         <div class="linha-produto">
@@ -83,138 +67,87 @@ export const imprimirReciboTermico = (pedido: any) => {
     `;
   }).join('');
 
-  // ==========================================================================
-  // DATA DO PEDIDO
-  // ==========================================================================
   let dataPedido = pedido.data_pedido ? new Date(pedido.data_pedido) : new Date();
-  if (Number.isNaN(dataPedido.getTime())) {
-    dataPedido = new Date();
-  }
+  if (Number.isNaN(dataPedido.getTime())) { dataPedido = new Date(); }
 
   const dataFormatada = dataPedido.toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit', year: 'numeric' });
   const horaFormatada = dataPedido.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
   const tipoPedido = taxaEntrega > 0 ? 'ENTREGA' : String(pedido.canal || 'PEDIDO').toUpperCase();
 
-  // ==========================================================================
-  // HTML DO TALÃO
-  // ==========================================================================
   const html = `
 <!DOCTYPE html>
 <html lang="pt-PT">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Pedido #${pedido.numero_pedido || '---'}</title>
 <style>
 @page { margin: 0; }
-html, body { width: 80mm; min-width: 80mm; margin: 0; padding: 0; background: #ffffff; color: #000000; }
+body { width: 80mm; margin: 0; padding: 0; background: #ffffff; color: #000000; font-family: Arial, sans-serif; font-size: 13px; line-height: 1.2; }
 * { box-sizing: border-box; }
-
-#recibo {
-  width: 80mm;
-  margin: 0;
-  /* Aumentado o espaço no fundo para garantir o corte perfeito sem comer as letras */
-  padding: 0 3mm 35mm 3mm;
-  background: #ffffff;
-  color: #000000;
-  font-family: Arial, Helvetica, sans-serif;
-  font-size: 13px;
-  line-height: 1.2;
-}
-
-.numero-pedido { width: 100%; margin: 0; padding: 0; text-align: center; font-size: 29px; line-height: 31px; font-weight: 900; }
-.conferencia { width: 100%; margin: 0; padding: 0; text-align: center; font-size: 14px; line-height: 17px; font-weight: 900; }
-.tipo-data { width: 100%; margin: 1mm 0 3mm 0; padding: 0; text-align: center; font-size: 11px; line-height: 14px; font-weight: 800; text-transform: uppercase; }
-.cliente { width: 100%; margin: 0; padding: 0; font-size: 12px; line-height: 15px; }
-.nome-cliente { margin: 0; padding: 0; font-size: 14px; line-height: 17px; font-weight: 900; }
-.cliente-linha { margin: 0; padding: 0; font-size: 12px; line-height: 15px; }
-.separador { width: 100%; height: 0; margin: 2mm 0; padding: 0; border-top: 1px dashed #000000; }
-.produto { width: 100%; margin: 0 0 1.5mm 0; padding: 0; page-break-inside: avoid; }
-.linha-produto { width: 100%; display: grid; grid-template-columns: 7mm minmax(0, 1fr) 18mm; column-gap: 1mm; align-items: start; }
-.qtd { font-size: 13px; line-height: 16px; font-weight: 900; white-space: nowrap; }
-.descricao { min-width: 0; font-size: 13px; line-height: 16px; font-weight: 800; overflow-wrap: break-word; }
-.preco { font-size: 13px; line-height: 16px; font-weight: 900; text-align: right; white-space: nowrap; }
-.subitem { width: calc(100% - 8mm); margin-left: 8mm; margin-top: 0.5mm; display: flex; align-items: flex-start; font-size: 11px; line-height: 14px; }
-.subitem-qtd { flex: 0 0 6mm; width: 6mm; font-weight: 800; }
-.subitem-nome { flex: 1; min-width: 0; font-weight: 500; overflow-wrap: break-word; }
-.valor { width: 100%; margin: 0; padding: 0; display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; line-height: 16px; }
+#recibo { padding: 4mm 3mm 0 3mm; }
+.numero-pedido { text-align: center; font-size: 29px; font-weight: 900; margin: 0; }
+.conferencia { text-align: center; font-size: 14px; font-weight: 900; }
+.tipo-data { margin: 1mm 0 3mm 0; text-align: center; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+.cliente { font-size: 12px; }
+.nome-cliente { font-size: 14px; font-weight: 900; }
+.separador { height: 0; margin: 2mm 0; border-top: 1px dashed #000000; }
+.produto { margin: 0 0 1.5mm 0; page-break-inside: avoid; }
+.linha-produto { display: grid; grid-template-columns: 7mm minmax(0, 1fr) 18mm; gap: 1mm; align-items: start; }
+.qtd { font-weight: 900; }
+.descricao { font-weight: 800; }
+.preco { font-weight: 900; text-align: right; }
+.subitem { margin-left: 8mm; margin-top: 0.5mm; display: flex; font-size: 11px; }
+.subitem-qtd { width: 6mm; font-weight: 800; }
+.valor { display: flex; justify-content: space-between; font-size: 12px; }
 .valor-forte { font-weight: 900; }
-.total { width: 100%; margin: 2mm 0; padding: 0; display: flex; justify-content: space-between; align-items: baseline; font-size: 19px; line-height: 23px; font-weight: 900; }
-.pagamento { width: 100%; margin: 0; padding: 1.5mm 0 0 0; border-top: 1px solid #000000; font-size: 11px; line-height: 14px; font-weight: 800; }
+.total { margin: 2mm 0; display: flex; justify-content: space-between; font-size: 19px; font-weight: 900; }
+.pagamento { padding: 1.5mm 0 0 0; border-top: 1px solid #000000; font-size: 11px; font-weight: 800; }
+.espaco-corte { height: 40mm; width: 100%; display: block; clear: both; } 
 </style>
 </head>
 <body>
 <main id="recibo">
-  <!-- NÚMERO -->
   <div class="numero-pedido">#${pedido.numero_pedido || '---'}</div>
-  <!-- CONFERÊNCIA -->
   <div class="conferencia">CONFER&Ecirc;NCIA</div>
-  <!-- ENTREGA -->
   <div class="tipo-data">${tipoPedido} - ${dataFormatada}, ${horaFormatada}</div>
-  <!-- CLIENTE -->
   <div class="cliente">
     <div class="nome-cliente">${escaparHtml(pedido.cliente || 'Consumidor Final')}</div>
-    ${pedido.contacto_cliente ? `<div class="cliente-linha">${escaparHtml(pedido.contacto_cliente)}</div>` : ''}
-    ${pedido.endereco || pedido.morada ? `<div class="cliente-linha">${escaparHtml(pedido.endereco || pedido.morada)}</div>` : ''}
+    ${pedido.contacto_cliente ? `<div>${escaparHtml(pedido.contacto_cliente)}</div>` : ''}
+    ${pedido.endereco || pedido.morada ? `<div>${escaparHtml(pedido.endereco || pedido.morada)}</div>` : ''}
   </div>
-  <!-- LINHA -->
   <div class="separador"></div>
-  <!-- ITENS -->
   ${linhasItens}
-  <!-- LINHA -->
   <div class="separador"></div>
-  <!-- SUBTOTAL -->
-  <div class="valor">
-    <span class="valor-forte">Subtotal</span>
-    <span class="valor-forte">${moeda(subtotal)} &#8364;</span>
-  </div>
-  <!-- DESCONTO -->
+  <div class="valor"><span class="valor-forte">Subtotal</span><span class="valor-forte">${moeda(subtotal)} &#8364;</span></div>
   ${desconto > 0 ? `<div class="valor"><span>Desconto</span><span>-${moeda(desconto)} &#8364;</span></div>` : ''}
-  <!-- ENTREGA -->
   ${taxaEntrega > 0 ? `<div class="valor"><span class="valor-forte">Entrega</span><span class="valor-forte">${moeda(taxaEntrega)} &#8364;</span></div>` : ''}
-  <!-- TOTAL -->
-  <div class="total">
-    <span>TOTAL</span>
-    <span>${moeda(totalGeral)} &#8364;</span>
-  </div>
-  <!-- PAGAMENTO -->
-  <div class="pagamento">
-    Pagamento: ${escaparHtml(pedido.forma_pagamento || 'Não informado')} (${pedido.pago ? 'Pago' : 'Pendente'})
-  </div>
+  <div class="total"><span>TOTAL</span><span>${moeda(totalGeral)} &#8364;</span></div>
+  <div class="pagamento">Pagamento: ${escaparHtml(pedido.forma_pagamento || 'Não informado')} (${pedido.pago ? 'Pago' : 'Pendente'})</div>
+  <div class="espaco-corte"></div>
 </main>
 </body>
 </html>
 `;
 
-  // ==========================================================================
-  // ELECTRON
-  // ==========================================================================
+  // Tenta enviar silenciosamente pela ponte (preload.js)
   if (typeof window !== 'undefined' && (window as any).imprimirSilencioso) {
     (window as any).imprimirSilencioso(html);
-    return;
-  }
-
-  // ==========================================================================
-  // FALLBACK DO NAVEGADOR
-  // ==========================================================================
-  const iframe = document.createElement('iframe');
-  iframe.style.position = 'fixed'; iframe.style.right = '0'; iframe.style.bottom = '0';
-  iframe.style.width = '0'; iframe.style.height = '0'; iframe.style.border = '0'; iframe.style.visibility = 'hidden';
-  document.body.appendChild(iframe);
-  const doc = iframe.contentWindow?.document;
-
-  if (doc) {
-    doc.open();
-    doc.write(html);
-    doc.close();
-    iframe.onload = () => {
-      iframe.contentWindow?.focus();
-      iframe.contentWindow?.print();
-      setTimeout(() => {
-        if (document.body.contains(iframe)) { document.body.removeChild(iframe); }
-      }, 2000);
-    };
+  } else {
+    // Alerta de erro na ponte para debug
+    alert("ERRO DE CONEXÃO: O sistema silencioso não conectou. A ponte 'preload.js' falhou. A abrir a janela padrão.");
+    
+    // Método padrão com janela
+    const iframe = document.createElement('iframe');
+    iframe.style.position = 'fixed'; iframe.style.right = '0'; iframe.style.bottom = '0';
+    iframe.style.width = '0'; iframe.style.height = '0'; iframe.style.border = '0'; iframe.style.visibility = 'hidden';
+    document.body.appendChild(iframe);
+    const doc = iframe.contentWindow?.document;
+    if (doc) {
+      doc.open(); doc.write(html); doc.close();
+      iframe.onload = () => {
+        iframe.contentWindow?.focus(); iframe.contentWindow?.print();
+        setTimeout(() => { if (document.body.contains(iframe)) document.body.removeChild(iframe); }, 2000);
+      };
+    }
   }
 };
 
@@ -259,12 +192,7 @@ export default function GestaoPedidos() {
       const { data: dataEsts } = await supabase.from('estafetas').select('nome').eq('ativo', true).order('nome', { ascending: true });
       if (dataEsts) setListaEstafetas(dataEsts);
 
-      const { data: dataCombos } = await supabase
-        .from('combos')
-        .select(`*, combo_grupos (*, combo_grupo_produtos (*, produto:produtos (*)))`)
-        .eq('ativo', true)
-        .eq('esgotado', false);
-
+      const { data: dataCombos } = await supabase.from('combos').select(`*, combo_grupos (*, combo_grupo_produtos (*, produto:produtos (*)))`).eq('ativo', true).eq('esgotado', false);
       if (dataCombos) {
         const combosOrdenados = dataCombos.map(cb => ({
           ...cb,
@@ -273,11 +201,7 @@ export default function GestaoPedidos() {
         setCombosDB(combosOrdenados);
       }
 
-      const { data, error } = await supabase
-        .from('pedidos')
-        .select(`*, itens:itens_pedido (*)`)
-        .order('numero_pedido', { ascending: false });
-
+      const { data, error } = await supabase.from('pedidos').select(`*, itens:itens_pedido (*)`).order('numero_pedido', { ascending: false });
       if (error) throw error;
 
       if (data && data.length > 0) {
@@ -339,9 +263,7 @@ export default function GestaoPedidos() {
       const { error } = await supabase.from('pedidos').update({ pago: true }).eq('numero_pedido', pedidoNum);
       if (error) throw error;
       setPedidos(prev => prev.map(p => p.numero_pedido === pedidoNum ? { ...p, pago: true } : p));
-    } catch (err) {
-      console.error(err); alert('Erro ao liquidar pagamento.');
-    }
+    } catch (err) { alert('Erro ao liquidar pagamento.'); }
   };
 
   const excluirPedido = async (pedidoNum: number, ids: string[]) => {
@@ -351,9 +273,7 @@ export default function GestaoPedidos() {
       const { error } = await supabase.from('pedidos').delete().in('id', ids);
       if (error) throw error;
       setPedidos(prev => prev.filter(p => p.numero_pedido !== pedidoNum));
-    } catch (err: any) {
-      alert(`Erro ao excluir pedido: ${err.message}`);
-    }
+    } catch (err: any) { alert(`Erro ao excluir pedido: ${err.message}`); }
   };
 
   const calcularPrecoPorCanalEProduto = (canal: string, prod: any) => {
