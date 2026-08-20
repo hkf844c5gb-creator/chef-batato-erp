@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
 // ============================================================================
-// 🖨️ MOTOR DE IMPRESSÃO SILENCIOSA (CHEF BATATÔ)
+// 🖨️ MOTOR DE IMPRESSÃO TÉRMICA (CHEF BATATÔ) - 80mm Perfeito
 // ============================================================================
 export const imprimirReciboTermico = (pedido: any) => {
   const subtotal = (pedido.total_geral || 0) - (pedido.taxa_entrega || 0) + (pedido.desconto || 0);
@@ -15,59 +15,65 @@ export const imprimirReciboTermico = (pedido: any) => {
       <td style="width: 25px; vertical-align: top; font-weight: bold; font-size: 13px;">${item.quantidade}x</td>
       <td style="vertical-align: top; padding-bottom: 6px; padding-right: 4px; font-size: 13px; line-height: 1.1;">${item.nome_produto}</td>
       <td style="vertical-align: top; text-align: right; white-space: nowrap; font-size: 13px; font-weight: bold;">
-        ${((item.quantidade || 0) * (item.preco_unitario || 0)).toFixed(2).replace('.', ',')} €
+        ${((item.quantidade || 0) * (item.preco_unitario || 0)).toFixed(2).replace('.', ',')} &euro;
       </td>
     </tr>
   `).join('') || '';
 
   const html = `
+    <!DOCTYPE html>
     <html>
       <head>
+        <meta charset="UTF-8">
         <title>Recibo #${pedido.numero_pedido || '---'}</title>
         <style>
-          @media print {
-            @page { margin: 0; }
-            body { 
-              margin: 0; padding: 3mm; width: 100%; max-width: 80mm;
-              font-family: 'Courier New', Courier, monospace; color: black; background: white;
-            }
+          @page {
+            size: 80mm auto;
+            margin: 0mm;
+          }
+          body {
+            margin: 0;
+            padding: 4mm 6mm;
+            width: 72mm;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 12px;
+            color: #000;
+            background: #fff;
+            line-height: 1.2;
           }
           .text-center { text-align: center; }
           .font-bold { font-weight: bold; }
           .font-black { font-weight: 900; }
           .uppercase { text-transform: uppercase; }
-          .border-b { border-bottom: 2px solid black; padding-bottom: 4px; margin-bottom: 8px; }
-          .border-b-dashed { border-bottom: 1px dashed black; padding-bottom: 6px; margin-bottom: 6px; }
+          .border-b { border-bottom: 2px solid black; padding-bottom: 4px; margin-bottom: 6px; }
+          .border-b-dashed { border-bottom: 1px dashed black; padding-bottom: 4px; margin-bottom: 4px; }
           table { width: 100%; border-collapse: collapse; }
-          .flex-between { display: flex; justify-content: space-between; align-items: end; }
+          .flex-between { display: flex; justify-content: space-between; }
         </style>
       </head>
       <body>
-        <div class="text-center border-b"><h1 class="font-black uppercase" style="font-size: 22px; margin: 0;">CHEF BATATÔ</h1></div>
-        <h2 class="text-center font-black" style="font-size: 36px; margin: 0; line-height: 1;">#${pedido.numero_pedido || '---'}</h2>
-        <h3 class="text-center font-bold" style="font-size: 18px; margin: 0; margin-top: 4px;">CONFERENCIA</h3>
-        <p class="text-center uppercase font-bold" style="font-size: 12px; margin-top: 4px; margin-bottom: 16px;">
+        <div class="text-center font-black" style="font-size: 24px; margin-bottom: 2px;">#${pedido.numero_pedido || '---'}</div>
+        <div class="text-center font-bold" style="font-size: 13px;">CONFERENCIA</div>
+        <div class="text-center uppercase font-bold" style="font-size: 11px; margin-bottom: 8px;">
           ${pedido.canal} - ${new Date().toLocaleDateString('pt-PT')} ${new Date().toLocaleTimeString('pt-PT', {hour: '2-digit', minute:'2-digit'})}
-        </p>
-        <div style="font-size: 13px; line-height: 1.3; margin-bottom: 12px;">
-          <div class="font-bold" style="font-size: 15px;">${pedido.cliente || 'Consumidor Final'}</div>
+        </div>
+        <div style="margin-bottom: 8px;">
+          <div class="font-bold" style="font-size: 13px;">${pedido.cliente || 'Consumidor Final'}</div>
           ${pedido.contacto_cliente ? `<div>${pedido.contacto_cliente}</div>` : ''}
           ${pedido.endereco || pedido.morada ? `<div>${pedido.endereco || pedido.morada}</div>` : ''}
         </div>
         <div class="border-b-dashed"></div>
-        <table style="margin-bottom: 8px;">${linhasItens}</table>
+        <table style="margin-bottom: 6px;">${linhasItens}</table>
         <div class="border-b-dashed"></div>
-        <div class="flex-between font-bold" style="font-size: 13px; margin-bottom: 4px;"><span>Subtotal</span><span>${subtotal.toFixed(2).replace('.', ',')} €</span></div>
-        ${(pedido.desconto > 0) ? `<div class="flex-between font-bold" style="font-size: 13px; margin-bottom: 4px; color: #555;"><span>Desconto</span><span>-${Number(pedido.desconto).toFixed(2).replace('.', ',')} €</span></div>` : ''}
-        ${(pedido.taxa_entrega > 0) ? `<div class="flex-between font-bold" style="font-size: 13px; margin-bottom: 8px;"><span>Entrega</span><span>${Number(pedido.taxa_entrega).toFixed(2).replace('.', ',')} €</span></div>` : ''}
-        <div class="flex-between" style="margin-top: 8px; margin-bottom: 16px;"><span class="font-black" style="font-size: 26px;">TOTAL</span><span class="font-black" style="font-size: 24px;">${Number(pedido.total_geral).toFixed(2).replace('.', ',')} €</span></div>
-        <div class="font-bold" style="border-top: 2px solid black; padding-top: 8px; font-size: 13px;">Pagamento: ${pedido.forma_pagamento} (${pedido.pago ? 'Pago' : 'Pendente'})</div>
-        <div style="height: 40px;">.</div>
+        <div class="flex-between font-bold"><span>Subtotal</span><span>${subtotal.toFixed(2).replace('.', ',')} &euro;</span></div>
+        ${(pedido.desconto > 0) ? `<div class="flex-between font-bold" style="color: #444;"><span>Desconto</span><span>-${Number(pedido.desconto).toFixed(2).replace('.', ',')} &euro;</span></div>` : ''}
+        ${(pedido.taxa_entrega > 0) ? `<div class="flex-between font-bold"><span>Entrega</span><span>${Number(pedido.taxa_entrega).toFixed(2).replace('.', ',')} &euro;</span></div>` : ''}
+        <div class="flex-between font-black" style="font-size: 18px; margin-top: 6px; margin-bottom: 6px;"><span>TOTAL</span><span>${Number(pedido.total_geral).toFixed(2).replace('.', ',')} &euro;</span></div>
+        <div class="font-bold" style="border-top: 1px solid black; padding-top: 4px; font-size: 11px;">Pagamento: ${pedido.forma_pagamento} (${pedido.pago ? 'Pago' : 'Pendente'})</div>
       </body>
     </html>
   `;
 
-  // Ponte direta com a aplicação .exe do Chef Batatô
   if (typeof window !== 'undefined' && (window as any).imprimirSilencioso) {
     (window as any).imprimirSilencioso(html);
   } else {
