@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
 // ============================================================================
-// IMPRESSÃO TÉRMICA
+// IMPRESSÃO TÉRMICA (COM CORTE AUTOMÁTICO E CSS PERFEITO PARA 80mm)
 // ============================================================================
 export const imprimirReciboTermico = (pedido: any) => {
   const taxaEntrega = Number(pedido.taxa_entrega || 0);
