@@ -145,6 +145,9 @@ export default function GestaoClientesCompleta() {
     setEditando(false);
   };
 
+  // =====================================================================
+  // NOVA FUNÇÃO DE EDIÇÃO COM "UPSERT/FUSÃO" INTELIGENTE
+  // =====================================================================
   const guardarEdicaoCliente = async () => {
     if (!clienteSelecionado) return;
     try {
@@ -153,15 +156,60 @@ export default function GestaoClientesCompleta() {
       const contactoNovo = editContacto.trim();
       const moradaNova = editMorada.trim();
 
-      // 1. Atualizar histórico de pedidos para refletir os novos dados
+      if (contactoNovo !== '') {
+        // Verifica se já existe ALGUÉM (que não o próprio) com este número na base de dados
+        const { data: clientesComMesmoNumero } = await supabase
+          .from('clientes')
+          .select('*')
+          .eq('contacto', contactoNovo);
+
+        const outroCliente = clientesComMesmoNumero?.find(c => c.id !== clienteSelecionado.idClienteBD);
+
+        if (outroCliente) {
+          // O número já pertence a outra pessoa!
+          const confirma = confirm(
+            `⚠️ ATENÇÃO: O telemóvel ${contactoNovo} já pertence ao cliente "${outroCliente.nome}".\n\nDeseja UNIR os históricos destes dois clientes num só (chamado "${outroCliente.nome}")?`
+          );
+          
+          if (!confirma) return; // Se cancelar, não faz nada para não dar erro.
+
+          // 1. Atualiza todos os pedidos do "Nome Antigo" para passarem a ser do "Outro Cliente"
+          await supabase.from('pedidos').update({ 
+            cliente: outroCliente.nome, 
+            contacto_cliente: contactoNovo 
+          }).eq('cliente', nomeAntigo);
+
+          // 2. Se o cliente selecionado tinha um registo oficial (idClienteBD), apagamos esse duplicado
+          if (clienteSelecionado.idClienteBD) {
+            await supabase.from('clientes').delete().eq('id', clienteSelecionado.idClienteBD);
+          }
+          
+          // 3. Atualizamos a morada do "Outro Cliente" se o utilizador escreveu uma nova
+          if (moradaNova !== '') {
+             await supabase.from('clientes').update({ morada: moradaNova }).eq('id', outroCliente.id);
+          }
+
+          alert(`✅ Históricos unidos sob o nome de "${outroCliente.nome}"!`);
+          setEditando(false);
+          setClienteSelecionado(null);
+          carregarDadosCompletos();
+          return; // Para a execução aqui, pois já fundimos tudo.
+        }
+      }
+
+      // -----------------------------------------------------------
+      // SE CHEGOU AQUI, O NÚMERO ESTÁ LIVRE E PODEMOS GRAVAR NORMALMENTE
+      // -----------------------------------------------------------
+
+      // 1. Atualiza histórico de pedidos para refletir os novos dados
       await supabase
         .from('pedidos')
         .update({ cliente: nomeNovo, contacto_cliente: contactoNovo })
         .eq('cliente', nomeAntigo);
 
-      // 2. Verificar se o cliente já existe fisicamente na tabela "clientes" ou se é fantasma
+      // 2. Verifica se o cliente já existe fisicamente ou se é fantasma
       if (clienteSelecionado.idClienteBD) {
-        // Já existe, vamos apenas fazer Update
+        // Já existe, fazemos Update
         const { error } = await supabase
           .from('clientes')
           .update({
@@ -170,10 +218,9 @@ export default function GestaoClientesCompleta() {
             morada: moradaNova
           })
           .eq('id', clienteSelecionado.idClienteBD);
-        
         if (error) throw error;
       } else {
-        // É um Fantasma (só existia no histórico). Vamos criar o registo oficial.
+        // É um Fantasma. Criamos o registo oficial.
         const { error } = await supabase
           .from('clientes')
           .insert([{
@@ -181,13 +228,12 @@ export default function GestaoClientesCompleta() {
             contacto: contactoNovo,
             morada: moradaNova
           }]);
-
         if (error) throw error;
       }
 
       alert('✅ Ficha de cliente e morada atualizadas com sucesso!');
       setEditando(false);
-      carregarDadosCompletos(); // Recarrega tudo para apanhar o novo ID
+      carregarDadosCompletos(); 
       setClienteSelecionado({
         ...clienteSelecionado,
         nomePrincipal: nomeNovo,

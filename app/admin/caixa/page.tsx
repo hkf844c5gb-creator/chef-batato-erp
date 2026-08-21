@@ -23,8 +23,7 @@ export default function GestaoCaixa() {
   const [movimentos, setMovimentos] = useState<MovimentoCaixa[]>([]);
   const [loading, setLoading] = useState(true);
   
-  const hoje = new Date().toISOString().split('T')[0];
-  const [dataFiltro, setDataFiltro] = useState(hoje);
+  const [dataFiltro, setDataFiltro] = useState(() => new Date().toISOString().split('T')[0]);
 
   const [modalAberto, setModalAberto] = useState(false);
   const [tipoModal, setTipoModal] = useState<'Abertura' | 'Entrada' | 'Saida' | 'Fechamento' | null>(null);
@@ -40,9 +39,83 @@ export default function GestaoCaixa() {
 
   const obterDataEfetiva = (p: any) => p.data_pedido || p.criado_em || new Date().toISOString();
 
+  // Relógio invisível: se a app ficar aberta de um dia para o outro, atualiza automaticamente a data à 00:00
+  useEffect(() => {
+    const relogio = setInterval(() => {
+      const dataHoje = new Date().toISOString().split('T')[0];
+      if (dataHoje !== dataFiltro) {
+        setDataFiltro(dataHoje); // Isto aciona o Fecho e Abertura automáticos imediatamente
+      }
+    }, 60000); // Verifica a cada 1 minuto
+    return () => clearInterval(relogio);
+  }, [dataFiltro]);
+
   async function carregarCaixa() {
     setLoading(true);
     try {
+      // 1. Puxa todos os pedidos para usar nos cálculos
+      const { data: todosPedidos, error: pedidosError } = await supabase
+        .from('pedidos')
+        .select('id, numero_pedido, total_geral, criado_em, data_pedido, forma_pagamento, canal, pago');
+
+      if (pedidosError) throw pedidosError;
+
+      // =========================================================================
+      // MOTOR INTELIGENTE: FECHO AUTOMÁTICO DE DIAS ANTERIORES ESQUECIDOS (00:00)
+      // =========================================================================
+      const { data: ultimaAbertura } = await supabase
+        .from('caixa')
+        .select('data_dia')
+        .eq('tipo', 'Abertura')
+        .lt('data_dia', dataFiltro)
+        .order('data_dia', { ascending: false })
+        .limit(1);
+
+      if (ultimaAbertura && ultimaAbertura.length > 0) {
+        const dataAntigaEsquecida = ultimaAbertura[0].data_dia;
+        
+        // Verifica se fecharam a caixa desse dia
+        const { data: fechoAntigo } = await supabase
+          .from('caixa')
+          .select('id')
+          .eq('data_dia', dataAntigaEsquecida)
+          .eq('tipo', 'Fechamento');
+
+        // Se ninguém fechou a caixa desse dia anterior, o sistema calcula e fecha sozinho!
+        if (!fechoAntigo || fechoAntigo.length === 0) {
+          const { data: movsAntigos } = await supabase.from('caixa').select('tipo, valor').eq('data_dia', dataAntigaEsquecida);
+          
+          let abAnt = 0, entAnt = 0, saiAnt = 0;
+          (movsAntigos || []).forEach(m => {
+            if (m.tipo === 'Abertura') abAnt += Number(m.valor);
+            else if (m.tipo === 'Entrada') entAnt += Number(m.valor);
+            else if (m.tipo === 'Saida') saiAnt += Number(m.valor);
+          });
+
+          let vendasAnt = 0;
+          (todosPedidos || []).forEach(p => {
+             const dStr = obterDataEfetiva(p).substring(0, 10);
+             if (dStr === dataAntigaEsquecida && p.pago === true && (p.forma_pagamento === 'Dinheiro' || p.forma_pagamento === 'Dinheiro Glovo')) {
+                vendasAnt += Number(p.total_geral);
+             }
+          });
+          
+          const saldoFinalEsquecido = abAnt + entAnt + vendasAnt - saiAnt;
+          
+          // Insere o fecho automático da meia-noite
+          await supabase.from('caixa').insert([{
+             data_dia: dataAntigaEsquecida,
+             tipo: 'Fechamento',
+             descricao: 'Fecho Automático do Sistema (00:00)',
+             valor: saldoFinalEsquecido
+          }]);
+        }
+      }
+      // =========================================================================
+
+      // =========================================================================
+      // MOTOR INTELIGENTE: ABERTURA AUTOMÁTICA DE HOJE (00:01)
+      // =========================================================================
       let { data: caixaData, error: caixaError } = await supabase
         .from('caixa')
         .select('*')
@@ -53,7 +126,7 @@ export default function GestaoCaixa() {
       const temAberturaHoje = caixaData?.some(m => m.tipo === 'Abertura');
       
       if (!temAberturaHoje) {
-        // Ordena por data e created_at para garantir que puxa o último fecho exato
+        // Puxa sempre o ÚLTIMO fecho registado (agora garantido pelo nosso motor acima)
         const { data: ultimoFecho } = await supabase
           .from('caixa')
           .select('valor')
@@ -69,7 +142,7 @@ export default function GestaoCaixa() {
           const { error: erroInsert } = await supabase.from('caixa').insert([{
             data_dia: dataFiltro,
             tipo: 'Abertura',
-            descricao: 'Fundo de Maneio (Abertura Automática)',
+            descricao: 'Fundo de Maneio (Abertura Automática às 00:01)',
             valor: valorTransitado
           }]);
 
@@ -82,14 +155,9 @@ export default function GestaoCaixa() {
           }
         }
       }
+      // =========================================================================
 
-      // NOVO MOTOR DE PESQUISA: Puxa todos e filtra localmente pela data exata (ignora Fuso Horário)
-      const { data: todosPedidos, error: pedidosError } = await supabase
-        .from('pedidos')
-        .select('id, numero_pedido, total_geral, criado_em, data_pedido, forma_pagamento, canal, pago');
-
-      if (pedidosError) throw pedidosError;
-
+      // A partir daqui, o código flui exatamente como no original
       const pedidosValidos = (todosPedidos || []).filter(p => {
         const dataPedidoStr = obterDataEfetiva(p).substring(0, 10);
         return dataPedidoStr === dataFiltro && 
@@ -97,7 +165,6 @@ export default function GestaoCaixa() {
                (p.forma_pagamento === 'Dinheiro' || p.forma_pagamento === 'Dinheiro Glovo');
       });
 
-      // Movimentos da tabela CAIXA (Manuais + Abertura Automática)
       const movimentosManuais: MovimentoCaixa[] = (caixaData || []).map(m => ({
         id: m.id,
         created_at: m.created_at,
@@ -105,11 +172,10 @@ export default function GestaoCaixa() {
         tipo: m.tipo,
         descricao: m.descricao,
         valor: Number(m.valor),
-        isAutomatico: m.descricao.includes('Abertura Automática'),
-        isFromPDV: false // Permite editar/excluir!
+        isAutomatico: m.descricao.includes('Abertura Automática') || m.descricao.includes('Fecho Automático'),
+        isFromPDV: false
       }));
 
-      // Movimentos da tabela PEDIDOS (Apenas Vendas Dinheiro)
       const movimentosPDV: MovimentoCaixa[] = pedidosValidos.map(p => ({
         id: p.id,
         created_at: obterDataEfetiva(p),
@@ -118,7 +184,7 @@ export default function GestaoCaixa() {
         descricao: `Venda PDV #${p.numero_pedido || 'S/N'} (${p.canal}) - ${p.forma_pagamento}`,
         valor: Number(p.total_geral),
         isAutomatico: true,
-        isFromPDV: true // Bloqueia edição pois vem do sistema de vendas
+        isFromPDV: true
       }));
 
       const todosMovimentos = [...movimentosManuais, ...movimentosPDV];
@@ -373,7 +439,6 @@ export default function GestaoCaixa() {
                           {mov.tipo === 'Saida' ? '-' : mov.tipo === 'Fechamento' ? '=' : '+'}{Number(mov.valor).toFixed(2)}€
                         </div>
                         
-                        {/* Como a abertura automática agora não é isFromPDV, o botão editar/excluir aparece! */}
                         {!mov.isFromPDV ? (
                           <div className="flex gap-2">
                             <button onClick={() => abrirModal(mov.tipo, mov)} className="w-8 h-8 rounded-lg bg-zinc-800/80 hover:bg-blue-600 flex items-center justify-center text-zinc-400 hover:text-white transition-colors" title="Editar">
