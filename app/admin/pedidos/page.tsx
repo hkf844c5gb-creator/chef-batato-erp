@@ -4,159 +4,30 @@ import { useState, useEffect, useMemo } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
 // ============================================================================
-// IMPRESSÃO TÉRMICA
+// IMPRESSÃO TÉRMICA (MODO ESC/POS DIRETO - MODO PALMBITES)
 // ============================================================================
 export const imprimirReciboTermico = (pedido: any) => {
-  const taxaEntrega = Number(pedido.taxa_entrega || 0);
-  const desconto = Number(pedido.desconto || 0);
-  const totalGeral = Number(pedido.total_geral || 0);
-  const subtotal = totalGeral - taxaEntrega + desconto;
-  const itensDoPedido = pedido.itens || pedido.itens_pedido || [];
-
-  const moeda = (valor: number) => {
-    return Number(valor || 0).toFixed(2).replace('.', ',');
-  };
-
-  const escaparHtml = (texto: any) => {
-    return String(texto ?? '')
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-  };
-
-  const linhasItens = itensDoPedido.map((item: any) => {
-    const quantidade = Number(item.quantidade || 1);
-    const precoUnitario = Number(item.preco_unitario || 0);
-    const precoTotal = quantidade * precoUnitario;
-    const nomeOriginal = String(item.nome_produto || '');
-    const ehCombo = item.codigo_produto === 'COMBO' || nomeOriginal.toLowerCase().includes('combo');
-
-    if (ehCombo) {
-      const match = nomeOriginal.match(/^(.*?)\s*\((.*)\)\s*$/);
-      const nomeCombo = match ? match[1].trim() : nomeOriginal;
-      const componentes = match && match[2] ? match[2].split(',').map((nome: string) => nome.trim()).filter(Boolean) : [];
-      const componentesHtml = componentes.map((nome: string) => `
-        <div class="subitem">
-          <span class="subitem-qtd">1x</span>
-          <span class="subitem-nome">${escaparHtml(nome)}</span>
-        </div>
-      `).join('');
-
-      return `
-        <div class="produto">
-          <div class="linha-produto">
-            <div class="qtd">${quantidade}x</div>
-            <div class="descricao">${escaparHtml(nomeCombo)}</div>
-            <div class="preco">${moeda(precoTotal)} &#8364;</div>
-          </div>
-          ${componentesHtml}
-        </div>
-      `;
-    }
-
-    return `
-      <div class="produto">
-        <div class="linha-produto">
-          <div class="qtd">${quantidade}x</div>
-          <div class="descricao">${escaparHtml(nomeOriginal)}</div>
-          <div class="preco">${moeda(precoTotal)} &#8364;</div>
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  let dataPedido = pedido.data_pedido ? new Date(pedido.data_pedido) : new Date();
-  if (Number.isNaN(dataPedido.getTime())) { dataPedido = new Date(); }
-
-  const dataFormatada = dataPedido.toLocaleDateString('pt-PT', { day: '2-digit', month: '2-digit', year: 'numeric' });
-  const horaFormatada = dataPedido.toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' });
-  const tipoPedido = taxaEntrega > 0 ? 'ENTREGA' : String(pedido.canal || 'PEDIDO').toUpperCase();
-
-  const html = `
-<!DOCTYPE html>
-<html lang="pt-PT">
-<head>
-<meta charset="UTF-8">
-<style>
-@page { margin: 0; }
-body { width: 80mm; margin: 0; padding: 0; background: #ffffff; color: #000000; font-family: Arial, sans-serif; font-size: 13px; line-height: 1.2; }
-* { box-sizing: border-box; }
-#recibo { padding: 4mm 3mm 2mm 3mm; }
-.numero-pedido { text-align: center; font-size: 29px; font-weight: 900; margin: 0; }
-.conferencia { text-align: center; font-size: 14px; font-weight: 900; }
-.tipo-data { margin: 1mm 0 3mm 0; text-align: center; font-size: 11px; font-weight: 800; text-transform: uppercase; }
-.cliente { font-size: 12px; }
-.nome-cliente { font-size: 14px; font-weight: 900; }
-.separador { height: 0; margin: 2mm 0; border-top: 1px dashed #000000; }
-.produto { margin: 0 0 1.5mm 0; page-break-inside: avoid; }
-.linha-produto { display: grid; grid-template-columns: 7mm minmax(0, 1fr) 18mm; gap: 1mm; align-items: start; }
-.qtd { font-weight: 900; }
-.descricao { font-weight: 800; }
-.preco { font-weight: 900; text-align: right; }
-.subitem { margin-left: 8mm; margin-top: 0.5mm; display: flex; font-size: 11px; }
-.subitem-qtd { width: 6mm; font-weight: 800; }
-.valor { display: flex; justify-content: space-between; font-size: 12px; }
-.valor-forte { font-weight: 900; }
-.total { margin: 2mm 0; display: flex; justify-content: space-between; font-size: 19px; font-weight: 900; }
-.pagamento { padding: 1.5mm 0 0 0; border-top: 1px solid #000000; font-size: 11px; font-weight: 800; }
-
-/* TRUQUE PARA O CORTE MANUAL: ESPAÇO E PONTO INVISÍVEL */
-.puxar-papel { margin-top: 40mm; color: #ffffff; text-align: center; font-size: 10px; }
-</style>
-</head>
-<body>
-<main id="recibo">
-  <div class="numero-pedido">#${pedido.numero_pedido || '---'}</div>
-  <div class="conferencia">CONFER&Ecirc;NCIA</div>
-  <div class="tipo-data">${tipoPedido} - ${dataFormatada}, ${horaFormatada}</div>
-  <div class="cliente">
-    <div class="nome-cliente">${escaparHtml(pedido.cliente || 'Consumidor Final')}</div>
-    ${pedido.contacto_cliente ? `<div>${escaparHtml(pedido.contacto_cliente)}</div>` : ''}
-    ${pedido.endereco || pedido.morada ? `<div>${escaparHtml(pedido.endereco || pedido.morada)}</div>` : ''}
-  </div>
-  <div class="separador"></div>
-  ${linhasItens}
-  <div class="separador"></div>
-  <div class="valor"><span class="valor-forte">Subtotal</span><span class="valor-forte">${moeda(subtotal)} &#8364;</span></div>
-  ${desconto > 0 ? `<div class="valor"><span>Desconto</span><span>-${moeda(desconto)} &#8364;</span></div>` : ''}
-  ${taxaEntrega > 0 ? `<div class="valor"><span class="valor-forte">Entrega</span><span class="valor-forte">${moeda(taxaEntrega)} &#8364;</span></div>` : ''}
-  <div class="total"><span>TOTAL</span><span>${moeda(totalGeral)} &#8364;</span></div>
-  <div class="pagamento">Pagamento: ${escaparHtml(pedido.forma_pagamento || 'Não informado')} (${pedido.pago ? 'Pago' : 'Pendente'})</div>
-  
-  <!-- O PONTO INVISÍVEL QUE OBRIGA O MOTOR A EMPURRAR O PAPEL -->
-  <div class="puxar-papel">.</div>
-</main>
-</body>
-</html>
-`;
-
+  // VERIFICA SE ESTAMOS A CORRER NA APP ELECTRON DO WINDOWS
   if (typeof window !== 'undefined' && (window as any).imprimirSilencioso) {
-    (window as any).imprimirSilencioso(html);
+    
+    // Envia os dados reais do pedido em formato JSON puro para o main.js tratar!
+    (window as any).imprimirSilencioso(JSON.stringify(pedido));
+    
   } else {
-    const iframe = document.createElement('iframe');
-    iframe.style.position = 'fixed'; iframe.style.right = '0'; iframe.style.bottom = '0';
-    iframe.style.width = '0'; iframe.style.height = '0'; iframe.style.border = '0'; iframe.style.visibility = 'hidden';
-    document.body.appendChild(iframe);
-    const doc = iframe.contentWindow?.document;
-    if (doc) {
-      doc.open(); doc.write(html); doc.close();
-      iframe.onload = () => {
-        iframe.contentWindow?.focus(); iframe.contentWindow?.print();
-        setTimeout(() => { if (document.body.contains(iframe)) document.body.removeChild(iframe); }, 2000);
-      };
-    }
+    alert("ERRO: O Motor ESC/POS profissional só funciona dentro do sistema instalado no Windows.");
   }
 };
 
 // ============================================================================
-// INTERFACES E COMPONENTE
+// INTERFACES
 // ============================================================================
 interface ItemPedido { id?: string; produto_id?: string; codigo_produto: string; nome_produto: string; quantidade: number; preco_unitario: number; }
 interface Pedido { id: string; numero_pedido: number; data_pedido: string; cliente: string; canal: string; forma_pagamento: string; entregador: string; taxa_entrega: number; desconto: number; total_geral: number; pago: boolean; itens?: ItemPedido[]; ids_fragmentados?: string[]; }
 interface Combo { id: string; codigo: string; nome: string; descricao: string; tipo_preco: 'fixo' | 'desconto' | 'desconto_fixo' | 'item_gratis'; preco_fixo: number | null; preco_glovo?: number | null; preco_whatsapp?: number | null; desconto_percentual: number; desconto_absoluto: number; item_gratis_categoria: string; combo_grupos: any[]; }
 
+// ============================================================================
+// COMPONENTE PRINCIPAL
+// ============================================================================
 export default function GestaoPedidos() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [produtosDB, setProdutosDB] = useState<any[]>([]);
