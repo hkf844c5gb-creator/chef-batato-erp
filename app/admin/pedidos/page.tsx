@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
 // ============================================================================
-// IMPRESSÃO TÉRMICA (COM CORTE AUTOMÁTICO E CSS PERFEITO PARA 80mm)
+// IMPRESSÃO TÉRMICA
 // ============================================================================
 export const imprimirReciboTermico = (pedido: any) => {
   const taxaEntrega = Number(pedido.taxa_entrega || 0);
@@ -101,6 +101,9 @@ body { width: 80mm; margin: 0; padding: 0; background: #ffffff; color: #000000; 
 .valor-forte { font-weight: 900; }
 .total { margin: 2mm 0; display: flex; justify-content: space-between; font-size: 19px; font-weight: 900; }
 .pagamento { padding: 1.5mm 0 0 0; border-top: 1px solid #000000; font-size: 11px; font-weight: 800; }
+
+/* TRUQUE PARA O CORTE MANUAL: ESPAÇO E PONTO INVISÍVEL */
+.puxar-papel { margin-top: 40mm; color: #ffffff; text-align: center; font-size: 10px; }
 </style>
 </head>
 <body>
@@ -121,6 +124,9 @@ body { width: 80mm; margin: 0; padding: 0; background: #ffffff; color: #000000; 
   ${taxaEntrega > 0 ? `<div class="valor"><span class="valor-forte">Entrega</span><span class="valor-forte">${moeda(taxaEntrega)} &#8364;</span></div>` : ''}
   <div class="total"><span>TOTAL</span><span>${moeda(totalGeral)} &#8364;</span></div>
   <div class="pagamento">Pagamento: ${escaparHtml(pedido.forma_pagamento || 'Não informado')} (${pedido.pago ? 'Pago' : 'Pendente'})</div>
+  
+  <!-- O PONTO INVISÍVEL QUE OBRIGA O MOTOR A EMPURRAR O PAPEL -->
+  <div class="puxar-papel">.</div>
 </main>
 </body>
 </html>
@@ -129,8 +135,6 @@ body { width: 80mm; margin: 0; padding: 0; background: #ffffff; color: #000000; 
   if (typeof window !== 'undefined' && (window as any).imprimirSilencioso) {
     (window as any).imprimirSilencioso(html);
   } else {
-    alert("ERRO DE CONEXÃO: O sistema silencioso não conectou. A ponte 'preload.js' falhou. A abrir a janela padrão.");
-    
     const iframe = document.createElement('iframe');
     iframe.style.position = 'fixed'; iframe.style.right = '0'; iframe.style.bottom = '0';
     iframe.style.width = '0'; iframe.style.height = '0'; iframe.style.border = '0'; iframe.style.visibility = 'hidden';
@@ -147,15 +151,12 @@ body { width: 80mm; margin: 0; padding: 0; background: #ffffff; color: #000000; 
 };
 
 // ============================================================================
-// INTERFACES
+// INTERFACES E COMPONENTE
 // ============================================================================
 interface ItemPedido { id?: string; produto_id?: string; codigo_produto: string; nome_produto: string; quantidade: number; preco_unitario: number; }
 interface Pedido { id: string; numero_pedido: number; data_pedido: string; cliente: string; canal: string; forma_pagamento: string; entregador: string; taxa_entrega: number; desconto: number; total_geral: number; pago: boolean; itens?: ItemPedido[]; ids_fragmentados?: string[]; }
 interface Combo { id: string; codigo: string; nome: string; descricao: string; tipo_preco: 'fixo' | 'desconto' | 'desconto_fixo' | 'item_gratis'; preco_fixo: number | null; preco_glovo?: number | null; preco_whatsapp?: number | null; desconto_percentual: number; desconto_absoluto: number; item_gratis_categoria: string; combo_grupos: any[]; }
 
-// ============================================================================
-// COMPONENTE PRINCIPAL
-// ============================================================================
 export default function GestaoPedidos() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [produtosDB, setProdutosDB] = useState<any[]>([]);
