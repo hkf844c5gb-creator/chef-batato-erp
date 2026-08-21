@@ -191,8 +191,8 @@ export default function CaixaPDV() {
   const [taxaEntrega, setTaxaEntrega] = useState('0.00');
   const [descontoManual, setDescontoManual] = useState('0.00');
   
-  // ✅ ESTADO DE CONTROLO DE IMPRESSÃO
-  const [imprimirAtivado, setImprimirAtivado] = useState(true);
+  // ✅ COMEÇA SEMPRE DESMARCADO (false)
+  const [imprimirAtivado, setImprimirAtivado] = useState(false);
   
   const [isProcessando, setIsProcessando] = useState(false);
 
@@ -606,7 +606,7 @@ export default function CaixaPDV() {
         
         await descontarStockAutomaticamente(carrinho, novoNumeroStr);
 
-        // ✅ IMPRESSÃO CONDICIONAL
+        // ✅ IMPRESSÃO CONDICIONAL (SÓ IMPRIME SE O UTILIZADOR MARCAR)
         if (imprimirAtivado) {
           const dadosRecibo = {
             numero_pedido: novoNumeroStr,
