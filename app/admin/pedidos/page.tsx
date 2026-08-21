@@ -7,12 +7,8 @@ import { createBrowserClient } from '@supabase/ssr';
 // IMPRESSÃO TÉRMICA (MODO ESC/POS DIRETO - MODO PALMBITES)
 // ============================================================================
 export const imprimirReciboTermico = (pedido: any) => {
-  // VERIFICA SE ESTAMOS A CORRER NA APP ELECTRON DO WINDOWS
   if (typeof window !== 'undefined' && (window as any).imprimirSilencioso) {
-    
-    // Envia os dados reais do pedido em formato JSON puro para o main.js tratar!
     (window as any).imprimirSilencioso(JSON.stringify(pedido));
-    
   } else {
     alert("ERRO: O Motor ESC/POS profissional só funciona dentro do sistema instalado no Windows.");
   }
@@ -22,8 +18,21 @@ export const imprimirReciboTermico = (pedido: any) => {
 // INTERFACES
 // ============================================================================
 interface ItemPedido { id?: string; produto_id?: string; codigo_produto: string; nome_produto: string; quantidade: number; preco_unitario: number; }
-interface Pedido { id: string; numero_pedido: number; data_pedido: string; cliente: string; canal: string; forma_pagamento: string; entregador: string; taxa_entrega: number; desconto: number; total_geral: number; pago: boolean; itens?: ItemPedido[]; ids_fragmentados?: string[]; }
+interface Pedido { id: string; numero_pedido: number; data_pedido: string; cliente: string; canal: string; forma_pagamento: string; entregador: string; taxa_entrega: number; desconto: number; total_geral: number; pago: boolean; itens?: ItemPedido[]; ids_fragmentados?: string[]; criado_em?: string; }
 interface Combo { id: string; codigo: string; nome: string; descricao: string; tipo_preco: 'fixo' | 'desconto' | 'desconto_fixo' | 'item_gratis'; preco_fixo: number | null; preco_glovo?: number | null; preco_whatsapp?: number | null; desconto_percentual: number; desconto_absoluto: number; item_gratis_categoria: string; combo_grupos: any[]; }
+
+// ⏱️ MOTOR DE FUSO HORÁRIO DE LISBOA
+const getHojeLisboa = () => {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Lisbon' }).format(new Date());
+};
+
+const getDataLisboaFormatada = (dataIso: string) => {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Lisbon' }).format(new Date(dataIso));
+  } catch {
+    return dataIso.substring(0, 10);
+  }
+};
 
 // ============================================================================
 // COMPONENTE PRINCIPAL
@@ -34,8 +43,11 @@ export default function GestaoPedidos() {
   const [combosDB, setCombosDB] = useState<Combo[]>([]);
   const [listaEstafetas, setListaEstafetas] = useState<{ nome: string }[]>([]);
   const [loading, setLoading] = useState(true);
-  const [dataInicio, setDataInicio] = useState('');
-  const [dataFim, setDataFim] = useState('');
+  
+  // Começamos logo com o filtro no dia de hoje em Lisboa!
+  const [dataInicio, setDataInicio] = useState(getHojeLisboa());
+  const [dataFim, setDataFim] = useState(getHojeLisboa());
+  
   const [termoPesquisa, setTermoPesquisa] = useState('');
   const [ordemDirecao, setOrdemDirecao] = useState<'desc' | 'asc'>('desc');
   const [modalEditar, setModalEditar] = useState(false);
@@ -77,7 +89,13 @@ export default function GestaoPedidos() {
           const chaveNum = String(linha.numero_pedido);
           const taxa = Number(linha.taxa_entrega || 0);
           const descontoLinha = Number(linha.desconto || 0);
-          const dataReal = linha.data_pedido || linha.data_venda || linha.criado_em || new Date().toISOString();
+          
+          // Usa SEMPRE a data oficial do pedido (ou da venda). Só cai pro criado_em se faltar
+          let dataRealBase = linha.data_pedido || linha.data_venda;
+          if (!dataRealBase) dataRealBase = linha.criado_em || new Date().toISOString();
+          
+          // Limpa as horas para comparar só os dias
+          const dataApenasDia = getDataLisboaFormatada(dataRealBase);
 
           const itensDestaLinha = (linha.itens || []).map((item: any) => {
             let precoUnitarioCorreto = Number(item.preco_unitario || 0);
@@ -94,8 +112,10 @@ export default function GestaoPedidos() {
 
           if (!agrupados.has(chaveNum)) {
             agrupados.set(chaveNum, {
-              ...linha, numero_pedido: Number(linha.numero_pedido), data_pedido: dataReal, taxa_entrega: taxa,
-              desconto: descontoLinha, pago: linha.pago === true, itens: [...itensDestaLinha], ids_fragmentados: [linha.id]
+              ...linha, numero_pedido: Number(linha.numero_pedido), 
+              data_pedido: dataApenasDia, // Guarda formatada sem horas
+              taxa_entrega: taxa,
+              desconto: descontoLinha, pago: linha.pago === true, itens: [...itensDestaLinha], ids_fragmentados: [linha.id], criado_em: linha.criado_em
             });
           } else {
             const existente = agrupados.get(chaveNum)!;
@@ -331,20 +351,16 @@ export default function GestaoPedidos() {
     return () => { supabase.removeChannel(canalAtualizacao); };
   }, []);
 
-  const extrairDataIso = (valor: string) => {
-    if (!valor) return '';
-    const match = valor.match(/(\d{4})-(\d{2})-(\d{2})/);
-    return match ? `${match[1]}-${match[2]}-${match[3]}` : '';
-  };
-
   const pedidosFiltrados = useMemo(() => {
     const temFiltroAtivo = dataInicio !== '' || dataFim !== '' || termoPesquisa.trim() !== '';
     if (!temFiltroAtivo) return [];
 
     return pedidos.filter(pedido => {
-      const dataPedidoFormatada = extrairDataIso(pedido.data_pedido);
-      if (dataInicio && dataPedidoFormatada < dataInicio) return false;
-      if (dataFim && dataPedidoFormatada > dataFim) return false;
+      // Usa a data estrita que você viu ser guardada
+      const dataPedidoLimpa = pedido.data_pedido; 
+      
+      if (dataInicio && dataPedidoLimpa < dataInicio) return false;
+      if (dataFim && dataPedidoLimpa > dataFim) return false;
       if (termoPesquisa.trim() !== '') {
         const termo = termoPesquisa.toLowerCase().trim();
         const nomeCliente = (pedido.cliente || '').toLowerCase();
@@ -353,6 +369,7 @@ export default function GestaoPedidos() {
       }
       return true;
     }).sort((a, b) => {
+      // Ordenar por ID no dia
       if (ordemDirecao === 'desc') return b.numero_pedido - a.numero_pedido;
       return a.numero_pedido - b.numero_pedido;
     });
@@ -360,8 +377,8 @@ export default function GestaoPedidos() {
 
   const limparFiltros = () => { setDataInicio(''); setDataFim(''); setTermoPesquisa(''); };
   const selecionarHoje = () => {
-    const hojeIso = new Date().toISOString().split('T')[0];
-    setDataInicio(hojeIso); setDataFim(hojeIso);
+    const hoje = getHojeLisboa();
+    setDataInicio(hoje); setDataFim(hoje);
   };
 
   const faturamentoTotal = pedidosFiltrados.reduce((acc, p) => acc + p.total_geral, 0);
@@ -438,7 +455,7 @@ export default function GestaoPedidos() {
         {loading ? ( <div className="text-center text-zinc-500 py-24">A carregar registos...</div> ) : pedidosFiltrados.length === 0 ? (
           <div className="text-center text-zinc-500 py-24 bg-zinc-900/20 border border-dashed border-zinc-800 rounded-2xl max-w-xl mx-auto space-y-2">
             <p className="text-base font-bold text-zinc-300">Nenhum pedido para exibir</p>
-            <p className="text-xs text-zinc-500">Utilize os filtros para visualizar os pedidos.</p>
+            <p className="text-xs text-zinc-500">Utilize os filtros para visualizar os pedidos desta data.</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -452,7 +469,7 @@ export default function GestaoPedidos() {
                 <div>
                   <div className="flex justify-between items-start gap-2 border-b border-zinc-800/60 pb-3 mb-3 pr-24">
                     <div>
-                      <span className="text-[10px] font-mono text-zinc-500">#{ped.numero_pedido} · {ped.data_pedido}</span>
+                      <span className="text-[10px] font-mono text-zinc-500">#{ped.numero_pedido} · {ped.data_pedido.substring(0,10)}</span>
                       <h3 className="font-bold text-zinc-100 text-sm mt-0.5">{ped.cliente || 'Cliente Anónimo'}</h3>
                     </div>
                     <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase ${getCorCanal(ped.canal)}`}>{ped.canal}</span>
@@ -469,8 +486,16 @@ export default function GestaoPedidos() {
                 <div className="border-t border-zinc-800/60 pt-3 mt-2 space-y-2 text-xs text-zinc-400">
                   <div className="flex justify-between text-[11px]">
                     <span>Pagamento: <span className="text-zinc-200">{ped.forma_pagamento}</span></span>
-                    {ped.taxa_entrega > 0 && <span>Entrega: {ped.taxa_entrega.toFixed(2)}€</span>}
                   </div>
+                  
+                  {/* NOVOS SINAIS DE MAIS E MENOS AQUI */}
+                  {(ped.desconto > 0 || ped.taxa_entrega > 0) && (
+                    <div className="flex justify-between text-[11px] mt-1">
+                      {ped.desconto > 0 && <span className="text-red-400 font-medium">Desconto: -{ped.desconto.toFixed(2)}€</span>}
+                      {ped.taxa_entrega > 0 && <span className="text-emerald-400 font-medium">Entrega: +{ped.taxa_entrega.toFixed(2)}€</span>}
+                    </div>
+                  )}
+
                   <div className="flex justify-between items-center border-t border-zinc-800/40 pt-2">
                     <span className="text-[11px]">Estafeta: <span className="text-zinc-300">{ped.entregador || 'Nenhum'}</span></span>
                     <span className="text-base font-black text-orange-500">{ped.total_geral.toFixed(2)}€</span>

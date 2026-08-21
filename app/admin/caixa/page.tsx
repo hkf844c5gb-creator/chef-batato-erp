@@ -14,6 +14,19 @@ interface MovimentoCaixa {
   isFromPDV?: boolean; 
 }
 
+// ⏱️ MOTOR DE FUSO HORÁRIO DE LISBOA
+const getHojeLisboa = () => {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Lisbon' }).format(new Date());
+};
+
+const getDataLisboaFormatada = (dataIso: string) => {
+  try {
+    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Lisbon' }).format(new Date(dataIso));
+  } catch {
+    return dataIso.substring(0, 10);
+  }
+};
+
 export default function GestaoCaixa() {
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -23,7 +36,7 @@ export default function GestaoCaixa() {
   const [movimentos, setMovimentos] = useState<MovimentoCaixa[]>([]);
   const [loading, setLoading] = useState(true);
   
-  const [dataFiltro, setDataFiltro] = useState(() => new Date().toISOString().split('T')[0]);
+  const [dataFiltro, setDataFiltro] = useState(getHojeLisboa);
 
   const [modalAberto, setModalAberto] = useState(false);
   const [tipoModal, setTipoModal] = useState<'Abertura' | 'Entrada' | 'Saida' | 'Fechamento' | null>(null);
@@ -37,32 +50,28 @@ export default function GestaoCaixa() {
   
   const [processando, setProcessando] = useState(false);
 
+  // 🎯 PRIORIDADE ABSOLUTA À DATA QUE VOCÊ ESCOLHEU NO PDV (data_pedido)
   const obterDataEfetiva = (p: any) => p.data_pedido || p.criado_em || new Date().toISOString();
 
-  // Relógio invisível: se a app ficar aberta de um dia para o outro, atualiza automaticamente a data à 00:00
   useEffect(() => {
     const relogio = setInterval(() => {
-      const dataHoje = new Date().toISOString().split('T')[0];
+      const dataHoje = getHojeLisboa();
       if (dataHoje !== dataFiltro) {
-        setDataFiltro(dataHoje); // Isto aciona o Fecho e Abertura automáticos imediatamente
+        setDataFiltro(dataHoje); 
       }
-    }, 60000); // Verifica a cada 1 minuto
+    }, 60000); 
     return () => clearInterval(relogio);
   }, [dataFiltro]);
 
   async function carregarCaixa() {
     setLoading(true);
     try {
-      // 1. Puxa todos os pedidos para usar nos cálculos
       const { data: todosPedidos, error: pedidosError } = await supabase
         .from('pedidos')
         .select('id, numero_pedido, total_geral, criado_em, data_pedido, forma_pagamento, canal, pago');
 
       if (pedidosError) throw pedidosError;
 
-      // =========================================================================
-      // MOTOR INTELIGENTE: FECHO AUTOMÁTICO DE DIAS ANTERIORES ESQUECIDOS (00:00)
-      // =========================================================================
       const { data: ultimaAbertura } = await supabase
         .from('caixa')
         .select('data_dia')
@@ -74,14 +83,12 @@ export default function GestaoCaixa() {
       if (ultimaAbertura && ultimaAbertura.length > 0) {
         const dataAntigaEsquecida = ultimaAbertura[0].data_dia;
         
-        // Verifica se fecharam a caixa desse dia
         const { data: fechoAntigo } = await supabase
           .from('caixa')
           .select('id')
           .eq('data_dia', dataAntigaEsquecida)
           .eq('tipo', 'Fechamento');
 
-        // Se ninguém fechou a caixa desse dia anterior, o sistema calcula e fecha sozinho!
         if (!fechoAntigo || fechoAntigo.length === 0) {
           const { data: movsAntigos } = await supabase.from('caixa').select('tipo, valor').eq('data_dia', dataAntigaEsquecida);
           
@@ -94,7 +101,7 @@ export default function GestaoCaixa() {
 
           let vendasAnt = 0;
           (todosPedidos || []).forEach(p => {
-             const dStr = obterDataEfetiva(p).substring(0, 10);
+             const dStr = getDataLisboaFormatada(obterDataEfetiva(p));
              if (dStr === dataAntigaEsquecida && p.pago === true && (p.forma_pagamento === 'Dinheiro' || p.forma_pagamento === 'Dinheiro Glovo')) {
                 vendasAnt += Number(p.total_geral);
              }
@@ -102,20 +109,15 @@ export default function GestaoCaixa() {
           
           const saldoFinalEsquecido = abAnt + entAnt + vendasAnt - saiAnt;
           
-          // Insere o fecho automático da meia-noite
           await supabase.from('caixa').insert([{
              data_dia: dataAntigaEsquecida,
              tipo: 'Fechamento',
-             descricao: 'Fecho Automático do Sistema (00:00)',
+             descricao: 'Fecho Automático do Sistema (00:00 Lisboa)',
              valor: saldoFinalEsquecido
           }]);
         }
       }
-      // =========================================================================
 
-      // =========================================================================
-      // MOTOR INTELIGENTE: ABERTURA AUTOMÁTICA DE HOJE (00:01)
-      // =========================================================================
       let { data: caixaData, error: caixaError } = await supabase
         .from('caixa')
         .select('*')
@@ -126,7 +128,6 @@ export default function GestaoCaixa() {
       const temAberturaHoje = caixaData?.some(m => m.tipo === 'Abertura');
       
       if (!temAberturaHoje) {
-        // Puxa sempre o ÚLTIMO fecho registado (agora garantido pelo nosso motor acima)
         const { data: ultimoFecho } = await supabase
           .from('caixa')
           .select('valor')
@@ -155,11 +156,10 @@ export default function GestaoCaixa() {
           }
         }
       }
-      // =========================================================================
 
-      // A partir daqui, o código flui exatamente como no original
+      // Filtra estritamente pela data do calendário no fuso de Portugal
       const pedidosValidos = (todosPedidos || []).filter(p => {
-        const dataPedidoStr = obterDataEfetiva(p).substring(0, 10);
+        const dataPedidoStr = getDataLisboaFormatada(obterDataEfetiva(p));
         return dataPedidoStr === dataFiltro && 
                p.pago === true && 
                (p.forma_pagamento === 'Dinheiro' || p.forma_pagamento === 'Dinheiro Glovo');
@@ -178,7 +178,7 @@ export default function GestaoCaixa() {
 
       const movimentosPDV: MovimentoCaixa[] = pedidosValidos.map(p => ({
         id: p.id,
-        created_at: obterDataEfetiva(p),
+        created_at: p.criado_em, // Guarda o momento exato para ordenação
         data_dia: dataFiltro,
         tipo: 'Entrada', 
         descricao: `Venda PDV #${p.numero_pedido || 'S/N'} (${p.canal}) - ${p.forma_pagamento}`,
@@ -293,7 +293,6 @@ export default function GestaoCaixa() {
   return (
     <div className="min-h-screen bg-zinc-950 text-white font-sans flex flex-col pb-24 selection:bg-orange-500/30">
       
-      {/* HEADER */}
       <header className="sticky top-0 z-20 bg-zinc-950/80 backdrop-blur-xl border-b border-zinc-800/60 px-5 py-5 flex justify-between items-center transition-all">
         <div className="flex items-center gap-4">
           <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-green-700 flex items-center justify-center shadow-lg shadow-green-900/40 text-2xl">
@@ -318,7 +317,6 @@ export default function GestaoCaixa() {
 
       <main className="flex-1 w-full max-w-[1200px] mx-auto p-5 md:p-8 space-y-8">
         
-        {/* DASHBOARD RÁPIDO */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className={`p-6 rounded-[32px] shadow-xl flex flex-col justify-center border ${caixaAberto ? 'bg-gradient-to-br from-green-900/20 to-green-950/20 border-green-500/30' : 'bg-gradient-to-br from-red-900/20 to-red-950/20 border-red-500/30'}`}>
             <span className={`text-[10px] font-bold uppercase tracking-widest ${caixaAberto ? 'text-green-500' : 'text-red-500'}`}>
@@ -351,7 +349,6 @@ export default function GestaoCaixa() {
           </div>
         </div>
 
-        {/* BOTÕES DE AÇÃO */}
         <div className="flex flex-wrap gap-4">
           {!temAbertura && (
             <button onClick={() => abrirModal('Abertura')} className="bg-green-600 hover:bg-green-500 text-white px-6 py-3 rounded-xl text-sm font-black shadow-lg shadow-green-900/50 transition-transform active:scale-95 flex-1 md:flex-none">
@@ -374,10 +371,9 @@ export default function GestaoCaixa() {
           )}
         </div>
 
-        {/* LINHA DO TEMPO / HISTÓRICO DO DIA */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-[24px] overflow-hidden">
           <div className="p-5 border-b border-zinc-800/80 bg-zinc-950/50">
-            <h3 className="text-xs font-black uppercase text-zinc-400 tracking-widest">Movimentos de {new Date(dataFiltro).toLocaleDateString('pt-PT')}</h3>
+            <h3 className="text-xs font-black uppercase text-zinc-400 tracking-widest">Movimentos do Dia (Horário de Lisboa)</h3>
           </div>
           
           <div className="p-2">
@@ -428,7 +424,7 @@ export default function GestaoCaixa() {
                             )}
                           </p>
                           <p className="text-[10px] text-zinc-500 font-mono mt-0.5">
-                            {new Date(mov.created_at).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit' })} • {mov.tipo}
+                            {new Date(mov.created_at).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Lisbon' })} • {mov.tipo}
                           </p>
                         </div>
                       </div>
@@ -463,7 +459,6 @@ export default function GestaoCaixa() {
 
       </main>
 
-      {/* MODAL MÁGICO DE MOVIMENTOS E EDIÇÃO */}
       {modalAberto && (
         <div className="fixed inset-0 bg-zinc-950/80 backdrop-blur-md z-[60] flex flex-col justify-end md:justify-center items-center p-0 md:p-4 animate-in fade-in duration-200">
           <div className="bg-zinc-900 w-full md:max-w-md rounded-t-[32px] md:rounded-[32px] flex flex-col overflow-hidden shadow-[0_-20px_50px_rgba(0,0,0,0.5)] border border-zinc-800 animate-in slide-in-from-bottom-10 duration-300">
