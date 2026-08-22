@@ -3,9 +3,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
-// ============================================================================
-// IMPRESSÃO TÉRMICA (MODO ESC/POS DIRETO - MODO PALMBITES)
-// ============================================================================
 export const imprimirReciboTermico = (pedido: any) => {
   if (typeof window !== 'undefined' && (window as any).imprimirSilencioso) {
     (window as any).imprimirSilencioso(JSON.stringify(pedido));
@@ -14,29 +11,20 @@ export const imprimirReciboTermico = (pedido: any) => {
   }
 };
 
-// ============================================================================
-// INTERFACES
-// ============================================================================
 interface ItemPedido { id?: string; produto_id?: string; codigo_produto: string; nome_produto: string; quantidade: number; preco_unitario: number; }
 interface Pedido { id: string; numero_pedido: number; data_pedido: string; cliente: string; canal: string; forma_pagamento: string; entregador: string; taxa_entrega: number; desconto: number; total_geral: number; pago: boolean; itens?: ItemPedido[]; ids_fragmentados?: string[]; criado_em?: string; }
 interface Combo { id: string; codigo: string; nome: string; descricao: string; tipo_preco: 'fixo' | 'desconto' | 'desconto_fixo' | 'item_gratis'; preco_fixo: number | null; preco_glovo?: number | null; preco_whatsapp?: number | null; desconto_percentual: number; desconto_absoluto: number; item_gratis_categoria: string; combo_grupos: any[]; }
 
-// ⏱️ MOTOR DE FUSO HORÁRIO DE LISBOA
 const getHojeLisboa = () => {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Lisbon' }).format(new Date());
 };
 
-const getDataLisboaFormatada = (dataIso: string) => {
-  try {
-    return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Lisbon' }).format(new Date(dataIso));
-  } catch {
-    return dataIso.substring(0, 10);
-  }
+// ✂️ MODO CRU: Lê EXATAMENTE os caracteres do data_pedido ignorando qualquer conversão de horas!
+const extrairDataEstatica = (dataIso: string) => {
+  if (!dataIso) return '';
+  return dataIso.substring(0, 10);
 };
 
-// ============================================================================
-// COMPONENTE PRINCIPAL
-// ============================================================================
 export default function GestaoPedidos() {
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [produtosDB, setProdutosDB] = useState<any[]>([]);
@@ -44,7 +32,6 @@ export default function GestaoPedidos() {
   const [listaEstafetas, setListaEstafetas] = useState<{ nome: string }[]>([]);
   const [loading, setLoading] = useState(true);
   
-  // Começamos logo com o filtro no dia de hoje em Lisboa!
   const [dataInicio, setDataInicio] = useState(getHojeLisboa());
   const [dataFim, setDataFim] = useState(getHojeLisboa());
   
@@ -57,10 +44,7 @@ export default function GestaoPedidos() {
   const [comboSelecionadoParaMontar, setComboSelecionadoParaMontar] = useState<Combo | null>(null);
   const [selecoesComboEdicao, setSelecoesComboEdicao] = useState<{ [grupoId: string]: any[] }>({});
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  const supabase = createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 
   async function carregarDadosIniciais() {
     setLoading(true);
@@ -74,8 +58,7 @@ export default function GestaoPedidos() {
       const { data: dataCombos } = await supabase.from('combos').select(`*, combo_grupos (*, combo_grupo_produtos (*, produto:produtos (*)))`).eq('ativo', true).eq('esgotado', false);
       if (dataCombos) {
         const combosOrdenados = dataCombos.map(cb => ({
-          ...cb,
-          combo_grupos: (cb.combo_grupos || []).sort((a: any, b: any) => a.ordem - b.ordem)
+          ...cb, combo_grupos: (cb.combo_grupos || []).sort((a: any, b: any) => a.ordem - b.ordem)
         }));
         setCombosDB(combosOrdenados);
       }
@@ -90,12 +73,8 @@ export default function GestaoPedidos() {
           const taxa = Number(linha.taxa_entrega || 0);
           const descontoLinha = Number(linha.desconto || 0);
           
-          // Usa SEMPRE a data oficial do pedido (ou da venda). Só cai pro criado_em se faltar
-          let dataRealBase = linha.data_pedido || linha.data_venda;
-          if (!dataRealBase) dataRealBase = linha.criado_em || new Date().toISOString();
-          
-          // Limpa as horas para comparar só os dias
-          const dataApenasDia = getDataLisboaFormatada(dataRealBase);
+          // 🎯 FORÇA ESTRITA: O sistema agora só olha para a 'data_pedido' e NUNCA para o 'criado_em' se a 'data_pedido' existir.
+          const dataApenasDia = linha.data_pedido ? extrairDataEstatica(linha.data_pedido) : extrairDataEstatica(linha.criado_em);
 
           const itensDestaLinha = (linha.itens || []).map((item: any) => {
             let precoUnitarioCorreto = Number(item.preco_unitario || 0);
@@ -113,9 +92,8 @@ export default function GestaoPedidos() {
           if (!agrupados.has(chaveNum)) {
             agrupados.set(chaveNum, {
               ...linha, numero_pedido: Number(linha.numero_pedido), 
-              data_pedido: dataApenasDia, // Guarda formatada sem horas
-              taxa_entrega: taxa,
-              desconto: descontoLinha, pago: linha.pago === true, itens: [...itensDestaLinha], ids_fragmentados: [linha.id], criado_em: linha.criado_em
+              data_pedido: dataApenasDia, 
+              taxa_entrega: taxa, desconto: descontoLinha, pago: linha.pago === true, itens: [...itensDestaLinha], ids_fragmentados: [linha.id], criado_em: linha.criado_em
             });
           } else {
             const existente = agrupados.get(chaveNum)!;
@@ -356,8 +334,8 @@ export default function GestaoPedidos() {
     if (!temFiltroAtivo) return [];
 
     return pedidos.filter(pedido => {
-      // Usa a data estrita que você viu ser guardada
-      const dataPedidoLimpa = pedido.data_pedido; 
+      // Usa a data estritamente como está guardada
+      const dataPedidoLimpa = extrairDataEstatica(pedido.data_pedido); 
       
       if (dataInicio && dataPedidoLimpa < dataInicio) return false;
       if (dataFim && dataPedidoLimpa > dataFim) return false;
@@ -369,7 +347,6 @@ export default function GestaoPedidos() {
       }
       return true;
     }).sort((a, b) => {
-      // Ordenar por ID no dia
       if (ordemDirecao === 'desc') return b.numero_pedido - a.numero_pedido;
       return a.numero_pedido - b.numero_pedido;
     });
@@ -488,7 +465,6 @@ export default function GestaoPedidos() {
                     <span>Pagamento: <span className="text-zinc-200">{ped.forma_pagamento}</span></span>
                   </div>
                   
-                  {/* NOVOS SINAIS DE MAIS E MENOS AQUI */}
                   {(ped.desconto > 0 || ped.taxa_entrega > 0) && (
                     <div className="flex justify-between text-[11px] mt-1">
                       {ped.desconto > 0 && <span className="text-red-400 font-medium">Desconto: -{ped.desconto.toFixed(2)}€</span>}
@@ -512,7 +488,6 @@ export default function GestaoPedidos() {
         )}
       </main>
 
-      {/* MODAL EDIÇÃO */}
       {modalEditar && pedidoEditando && (
         <div className="fixed inset-0 bg-black/80 flex justify-center items-center z-50 p-4">
           <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl p-6">
@@ -537,7 +512,6 @@ export default function GestaoPedidos() {
         </div>
       )}
 
-      {/* MODAL COMBO */}
       {modalComboEdicao && comboSelecionadoParaMontar && (
         <div className="fixed inset-0 bg-black/80 flex justify-center items-center z-[60] p-4">
           <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl p-6">
