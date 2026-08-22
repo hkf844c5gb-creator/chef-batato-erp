@@ -86,59 +86,73 @@ export default function ConciliacaoPage() {
   };
 
   // =========================================================================
-  // MOTOR DE EXTRAÇÃO INTELIGENTE (ESTOQUE + CONTROLO FINANCEIRO ABSOLUTO)
+  // MOTOR SUPER INTELIGENTE DE CLASSIFICAÇÃO FINANCEIRA E ESTOQUE
   // =========================================================================
-  const processarInsercaoNoEstoque = async (itens: any[], fornecedor: string, mesRef: string) => {
+  const processarInsercaoGlobal = async (itens: any[], fornecedor: string, mesRef: string, arquivoNome: string, tipoArquivo: string, apenasDespesas = false) => {
     if (!itens || itens.length === 0) return;
 
     for (const item of itens) {
       try {
-        const tipoItem = (item.tipo || 'geral').toLowerCase();
+        const tipoItem = String(item.tipo || 'geral').toLowerCase();
+        const nomeExtraido = String(item.nome_extraido || item.descricao || item.nome || '').toLowerCase();
         const fornecedorFormatado = fornecedor || 'Fornecedor Diversos';
         const valorReal = Number(item.valor_total || item.valor || item.preco || 0);
 
-        // 1. ATUALIZAÇÃO DO ESTOQUE / ARMAZÉM (Apenas para comida e embalagens)
-        if (tipoItem === 'alimentar' || tipoItem === 'embalagem' || tipoItem === 'insumo') {
+        if (valorReal <= 0) continue; // Previne inserir despesas a zeros
+
+        // 1. ATUALIZAÇÃO DO ESTOQUE (IGNORA SE FOR REPROCESSAMENTO ANTIGO)
+        if (!apenasDespesas && (tipoItem === 'alimentar' || tipoItem === 'embalagem' || tipoItem === 'insumo')) {
           const { data: insumoExistente } = await supabase
             .from('insumos')
             .select('id, quantidade_atual')
-            .ilike('nome', `%${item.nome_extraido}%`)
+            .ilike('nome', `%${item.nome_extraido || item.nome}%`)
             .limit(1)
             .maybeSingle();
 
           if (insumoExistente) {
-            const novaQtd = Number(insumoExistente.quantidade_atual) + Number(item.quantidade);
+            const novaQtd = Number(insumoExistente.quantidade_atual) + Number(item.quantidade || 1);
             await supabase.from('insumos').update({ quantidade_atual: novaQtd }).eq('id', insumoExistente.id);
           } else {
             await supabase.from('insumos').insert([{
-              nome: item.nome_extraido,
+              nome: item.nome_extraido || item.nome,
               unidade_medida: item.unidade || 'unidade',
-              quantidade_atual: item.quantidade,
+              quantidade_atual: item.quantidade || 1,
               custo_unidade: valorReal / Number(item.quantidade || 1),
               fornecedor_principal: fornecedorFormatado
             }]);
           }
         }
 
-        // 2. ATUALIZAÇÃO DA TABELA DE DESPESAS (Para TODOS os itens registados)
-        let categoriaDespesa = 'Despesas Gerais e Ferramentas';
-        
-        if (tipoItem === 'alimentar' || tipoItem === 'insumo' || tipoItem === 'mercado') categoriaDespesa = 'Mercado / Insumos';
-        else if (tipoItem === 'embalagem' || tipoItem === 'etiqueta') categoriaDespesa = 'Embalagens e Etiquetas';
-        else if (tipoItem === 'marketing' || tipoItem === 'publicidade' || tipoItem === 'anuncio') categoriaDespesa = 'Marketing e Publicidade';
-        else if (tipoItem === 'plataforma' || tipoItem === 'taxa' || tipoItem === 'comissao' || tipoItem === 'glovo') categoriaDespesa = 'Taxas e Comissões (Glovo/Uber)';
-        else if (tipoItem === 'combustivel' || tipoItem === 'transporte') categoriaDespesa = 'Transporte e Combustível';
+        // 2. CLASSIFICADOR INTELIGENTE DE DESPESAS
+        let categoriaDespesa = 'Outros'; 
+        const textoBusca = `${tipoItem} ${nomeExtraido} ${fornecedorFormatado.toLowerCase()} ${tipoArquivo.toLowerCase()}`;
 
-        const descFinal = item.quantidade > 1 ? `${item.nome_extraido} (${item.quantidade} ${item.unidade || 'un'})` : item.nome_extraido;
+        if (textoBusca.includes('glovo') || textoBusca.includes('uber eats') || textoBusca.includes('comissao') || textoBusca.includes('taxa') || textoBusca.includes('palmbites')) {
+          categoriaDespesa = 'Taxas e Comissões (Glovo/Uber)';
+        } else if (textoBusca.includes('alimentar') || textoBusca.includes('insumo') || textoBusca.includes('mercado') || textoBusca.includes('carne') || textoBusca.includes('peixe') || textoBusca.includes('legume') || textoBusca.includes('bebida') || textoBusca.includes('pingo doce') || textoBusca.includes('continente') || textoBusca.includes('makro') || textoBusca.includes('recheio') || textoBusca.includes('auchan')) {
+          categoriaDespesa = 'Ingredientes & Mercadoria';
+        } else if (textoBusca.includes('embalagem') || textoBusca.includes('etiqueta') || textoBusca.includes('saco') || textoBusca.includes('caixa') || textoBusca.includes('copo') || textoBusca.includes('papel') || textoBusca.includes('consumivel') || textoBusca.includes('grafica')) {
+          categoriaDespesa = 'Embalagens & Consumíveis';
+        } else if (textoBusca.includes('marketing') || textoBusca.includes('publicidade') || textoBusca.includes('anuncio') || textoBusca.includes('facebook') || textoBusca.includes('instagram') || textoBusca.includes('meta') || textoBusca.includes('google') || textoBusca.includes('tiktok')) {
+          categoriaDespesa = 'Marketing & Publicidade';
+        } else if (textoBusca.includes('combustivel') || textoBusca.includes('transporte') || textoBusca.includes('estafeta') || textoBusca.includes('gasolina') || textoBusca.includes('gasoleo') || textoBusca.includes('bp') || textoBusca.includes('galp') || textoBusca.includes('repsol') || textoBusca.includes('portagem') || textoBusca.includes('via verde')) {
+          categoriaDespesa = 'Frota & Combustível';
+        } else if (textoBusca.includes('luz') || textoBusca.includes('agua') || textoBusca.includes('internet') || textoBusca.includes('renda') || textoBusca.includes('software') || textoBusca.includes('contabilidade') || textoBusca.includes('fixo') || textoBusca.includes('nos') || textoBusca.includes('meo') || textoBusca.includes('vodafone') || textoBusca.includes('edp') || textoBusca.includes('endesa') || textoBusca.includes('iberdrola') || textoBusca.includes('vercel') || textoBusca.includes('supabase')) {
+          categoriaDespesa = 'Estrutura & Fixos';
+        } else if (textoBusca.includes('devolucao') || textoBusca.includes('reembolso') || textoBusca.includes('estorno')) {
+          categoriaDespesa = 'Devoluções & Reembolsos';
+        }
+
+        const nomeRealDoItem = item.nome_extraido || item.nome || item.descricao || 'Despesa Lançada';
+        const descFinal = item.quantidade > 1 ? `${nomeRealDoItem} (${item.quantidade} ${item.unidade || 'un'}) - ${fornecedorFormatado}` : `${nomeRealDoItem} - ${fornecedorFormatado}`;
 
         await supabase.from('despesas').insert([{
           descricao: descFinal,
           categoria: categoriaDespesa,
           valor: valorReal,
-          fornecedor: fornecedorFormatado,
           data_despesa: new Date().toISOString().split('T')[0],
-          mes_referencia: mesRef,
-          pago: true // Assumimos que a fatura importada já foi liquidada
+          metodo_pagamento: 'Conciliação Automática',
+          status: 'Validado' 
         }]);
 
       } catch (err) {
@@ -206,11 +220,11 @@ export default function ConciliacaoPage() {
            if (dataAPI.dadosLidos) {
              let itensParaProcessar = dataAPI.dadosLidos.itens || dataAPI.dadosLidos.produtos || [];
              
-             // Se a IA não identificar as linhas separadas, mas puxar um valor total (ex: Extratos Glovo ou Faturas Genéricas)
+             // Se for fatura geral/extrato que a IA não separou, atira o total para a classificação inteligente
              if (itensParaProcessar.length === 0 && dataAPI.dadosLidos.valorTotal) {
                 itensParaProcessar = [{
-                   nome_extraido: `Fatura Lote (${catIndividual}) - ${dataAPI.dadosLidos.fornecedor || 'Diversos'}`,
-                   tipo: catIndividual === 'Glovo' ? 'comissao' : 'geral',
+                   nome_extraido: `Fatura Lote (${catIndividual})`,
+                   tipo: catIndividual === 'Glovo' || catIndividual === 'Palmbites' ? 'comissao' : 'geral',
                    quantidade: 1,
                    unidade: 'un',
                    valor_total: dataAPI.dadosLidos.valorTotal
@@ -218,7 +232,7 @@ export default function ConciliacaoPage() {
              }
 
              if (itensParaProcessar.length > 0) {
-                await processarInsercaoNoEstoque(itensParaProcessar, dataAPI.dadosLidos.fornecedor, periodo);
+                await processarInsercaoGlobal(itensParaProcessar, dataAPI.dadosLidos.fornecedor, periodo, file.name, catIndividual, false);
              }
            }
         }
@@ -229,13 +243,69 @@ export default function ConciliacaoPage() {
         }
       }
 
-      alert('Lote finalizado! Matéria-prima atualizada e Despesas Financeiras contabilizadas! 🎉');
+      alert('Lote finalizado! Faturas processadas, Estoque atualizado e Despesas Financeiras devidamente catalogadas! 🎉');
       setFiles([]);
       setAutoDetectado(false);
       carregarHistorico(); 
 
     } catch (err: any) {
       alert(`Erro fatal durante o processamento: ${err.message}`);
+    } finally {
+      setProcessando(false);
+      setProgresso({ atual: 0, total: 0 });
+      setStatusTexto('A extrair itens e faturas...');
+    }
+  };
+
+  // =========================================================================
+  // LANÇAR FATURAS ANTIGAS NAS DESPESAS (SEM DUPLICAR ESTOQUE)
+  // =========================================================================
+  const reprocessarParaDespesas = async () => {
+    if (selecionados.length === 0) return;
+    if (!confirm(`Deseja ler as ${selecionados.length} faturas selecionadas e lançá-las automaticamente nas Despesas? (Atenção: Para evitar duplicados, não iremos alterar o Estoque do Armazém nesta ação).`)) return;
+
+    setProcessando(true);
+    setProgresso({ atual: 1, total: selecionados.length });
+    setStatusTexto('A analisar histórico antigo e a classificar Despesas...');
+
+    try {
+      for (let i = 0; i < selecionados.length; i++) {
+        const id = selecionados[i];
+        const sessao = historico.find(h => h.id === id);
+        if (!sessao) continue;
+
+        setProgresso({ atual: i + 1, total: selecionados.length });
+
+        const dados = sessao.resumo;
+        const catIndividual = sessao.tipo_arquivo;
+        let itensParaProcessar = dados?.itens || dados?.produtos || dados?.line_items || dados?.dadosExtraidos?.itens || dados?.dadosExtraidos?.produtos || (Array.isArray(dados) ? dados : []);
+        
+        if (itensParaProcessar.length === 0 && (dados?.dadosExtraidos?.valorTotal || dados?.valorTotal)) {
+           itensParaProcessar = [{
+              nome_extraido: `Fatura Antiga (${catIndividual})`,
+              tipo: catIndividual === 'Glovo' || catIndividual === 'Palmbites' ? 'comissao' : 'geral',
+              quantidade: 1,
+              unidade: 'un',
+              valor_total: dados?.dadosExtraidos?.valorTotal || dados?.valorTotal
+           }];
+        }
+
+        if (itensParaProcessar.length > 0) {
+           await processarInsercaoGlobal(
+             itensParaProcessar, 
+             dados?.dadosExtraidos?.fornecedor || dados?.fornecedor || '', 
+             sessao.periodo_ref, 
+             dados?.fileName || dados?.nome_arquivo || '', 
+             catIndividual,
+             true // FLAG ATIVA: Salta o armazém, vai só para as despesas!
+           );
+        }
+      }
+
+      alert('Mágico! As faturas antigas foram analisadas e arrumadas na página de Despesas! 🎉');
+      setSelecionados([]);
+    } catch (err: any) {
+      alert(`Erro ao lançar nas despesas: ${err.message}`);
     } finally {
       setProcessando(false);
       setProgresso({ atual: 0, total: 0 });
@@ -278,9 +348,9 @@ export default function ConciliacaoPage() {
     <div className="p-8 font-sans max-w-7xl mx-auto relative">
       <div className="mb-8 border-b border-zinc-800 pb-4">
         <h1 className="text-3xl font-bold text-orange-500 flex items-center gap-3">
-          Conciliador Inteligente <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full">v2.2</span>
+          Conciliador Inteligente <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full">v2.4 Automático</span>
         </h1>
-        <p className="text-zinc-400 text-sm mt-2">Upload em lote, extração automática para o Estoque e rastreamento para as Despesas Financeiras.</p>
+        <p className="text-zinc-400 text-sm mt-2">Upload em lote, extração automática para o Estoque e classificação rigorosa de todas as Despesas Financeiras.</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -333,13 +403,19 @@ export default function ConciliacaoPage() {
             <div className="p-5 border-b border-zinc-800 bg-zinc-900/80 flex flex-col sm:flex-row justify-between items-center gap-4">
               <div className="flex items-center gap-4">
                 <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-2">
-                  🗄️ Histórico (Clique numa fatura para ver os itens)
+                  🗄️ Histórico
                 </h3>
                 
+                {/* NOVOS BOTÕES EM MASSA */}
                 {selecionados.length > 0 && (
-                  <button onClick={apagarSelecionados} className="bg-red-600 hover:bg-red-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2 shadow-lg shadow-red-900/20">
-                    🗑️ Eliminar Selecionados ({selecionados.length})
-                  </button>
+                  <div className="flex gap-2">
+                    <button onClick={reprocessarParaDespesas} className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2 shadow-lg shadow-emerald-900/20">
+                      💸 Lançar nas Despesas ({selecionados.length})
+                    </button>
+                    <button onClick={apagarSelecionados} className="bg-red-600 hover:bg-red-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2 shadow-lg shadow-red-900/20">
+                      🗑️ Eliminar
+                    </button>
+                  </div>
                 )}
               </div>
               
@@ -538,7 +614,7 @@ export default function ConciliacaoPage() {
           <div className="w-64 bg-zinc-800 rounded-full h-2.5 mt-6 overflow-hidden">
              <div className="bg-orange-500 h-2.5 transition-all duration-300" style={{ width: `${(progresso.atual / progresso.total) * 100}%` }}></div>
           </div>
-          <p className="text-orange-500 text-sm mt-4 animate-pulse">A extrair Insumos e a lançar rubricas nas Despesas...</p>
+          <p className="text-orange-500 text-sm mt-4 animate-pulse">A classificar categorias e a lançar rubricas nas Despesas...</p>
         </div>
       )}
     </div>
