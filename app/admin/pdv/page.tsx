@@ -7,10 +7,6 @@ import { createBrowserClient } from '@supabase/ssr';
 // 🖨️ MOTOR DE IMPRESSÃO TÉRMICA (CHEF BATATÔ) - Adapta-se a 58mm ou 80mm
 // ============================================================================
 export const imprimirReciboTermico = (pedido: any) => {
-  const iframe = document.createElement('iframe');
-  iframe.style.display = 'none';
-  document.body.appendChild(iframe);
-
   const subtotal = (pedido.total_geral || 0) - (pedido.taxa_entrega || 0) + (pedido.desconto || 0);
 
   const linhasItens = pedido.itens_pedido?.map((item: any) => `
@@ -107,16 +103,26 @@ export const imprimirReciboTermico = (pedido: any) => {
     </html>
   `;
 
-  const doc = iframe.contentWindow?.document;
-  if (doc) {
-    doc.open();
-    doc.write(html);
-    doc.close();
-    iframe.onload = () => {
-      iframe.contentWindow?.focus();
-      iframe.contentWindow?.print();
-      setTimeout(() => document.body.removeChild(iframe), 2000);
-    };
+  // VERIFICA SE ESTAMOS A CORRER NA APP ELECTRON
+  if (typeof window !== 'undefined' && (window as any).imprimirSilencioso) {
+    // A App deteta a ponte mágica e envia o HTML direto para a impressora!
+    (window as any).imprimirSilencioso(html);
+  } else {
+    // Se, por acaso, alguém abrir num Chrome normal, funciona da forma tradicional (com iframe e janela de impressão)
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    document.body.appendChild(iframe);
+    const doc = iframe.contentWindow?.document;
+    if (doc) {
+      doc.open();
+      doc.write(html);
+      doc.close();
+      iframe.onload = () => {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+        setTimeout(() => document.body.removeChild(iframe), 2000);
+      };
+    }
   }
 };
 // ============================================================================

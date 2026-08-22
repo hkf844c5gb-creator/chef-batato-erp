@@ -26,7 +26,6 @@ export default function ConciliacaoPage() {
   const [files, setFiles] = useState<File[]>([]);
   const [categoria, setCategoria] = useState('Fatura');
   
-  // Data inicial partilhada entre o Upload e o Filtro do Histórico
   const getMesAtual = () => {
     const hoje = new Date();
     return `${hoje.getFullYear()}-${String(hoje.getMonth() + 1).padStart(2, '0')}`;
@@ -35,11 +34,9 @@ export default function ConciliacaoPage() {
   const [periodo, setPeriodo] = useState(getMesAtual);
   const [autoDetectado, setAutoDetectado] = useState(false);
 
-  // NOVO: O filtro começa automaticamente no mês atual!
   const [filtroMes, setFiltroMes] = useState(getMesAtual);
   const [selecionados, setSelecionados] = useState<string[]>([]);
 
-  // Estado para controlar a Fatura/Sessão aberta no Modal de Detalhes
   const [sessaoDetalhe, setSessaoDetalhe] = useState<SessaoAuditoria | null>(null);
 
   const categoriasDisponiveis = [
@@ -88,12 +85,20 @@ export default function ConciliacaoPage() {
     }
   };
 
+  // =========================================================================
+  // MOTOR DE EXTRAÇÃO INTELIGENTE (ESTOQUE + CONTROLO FINANCEIRO ABSOLUTO)
+  // =========================================================================
   const processarInsercaoNoEstoque = async (itens: any[], fornecedor: string, mesRef: string) => {
     if (!itens || itens.length === 0) return;
 
     for (const item of itens) {
       try {
-        if (item.tipo === 'alimentar' || item.tipo === 'embalagem') {
+        const tipoItem = (item.tipo || 'geral').toLowerCase();
+        const fornecedorFormatado = fornecedor || 'Fornecedor Diversos';
+        const valorReal = Number(item.valor_total || item.valor || item.preco || 0);
+
+        // 1. ATUALIZAÇÃO DO ESTOQUE / ARMAZÉM (Apenas para comida e embalagens)
+        if (tipoItem === 'alimentar' || tipoItem === 'embalagem' || tipoItem === 'insumo') {
           const { data: insumoExistente } = await supabase
             .from('insumos')
             .select('id, quantidade_atual')
@@ -109,23 +114,35 @@ export default function ConciliacaoPage() {
               nome: item.nome_extraido,
               unidade_medida: item.unidade || 'unidade',
               quantidade_atual: item.quantidade,
-              custo_unidade: Number(item.valor_total) / Number(item.quantidade),
-              fornecedor_principal: fornecedor
+              custo_unidade: valorReal / Number(item.quantidade || 1),
+              fornecedor_principal: fornecedorFormatado
             }]);
           }
-        } else if (item.tipo === 'geral') {
-          await supabase.from('despesas').insert([{
-            descricao: item.nome_extraido,
-            categoria: 'Despesas Gerais e Ferramentas',
-            valor: item.valor_total,
-            fornecedor: fornecedor,
-            data_despesa: new Date().toISOString().split('T')[0],
-            mes_referencia: mesRef,
-            pago: true
-          }]);
         }
+
+        // 2. ATUALIZAÇÃO DA TABELA DE DESPESAS (Para TODOS os itens registados)
+        let categoriaDespesa = 'Despesas Gerais e Ferramentas';
+        
+        if (tipoItem === 'alimentar' || tipoItem === 'insumo' || tipoItem === 'mercado') categoriaDespesa = 'Mercado / Insumos';
+        else if (tipoItem === 'embalagem' || tipoItem === 'etiqueta') categoriaDespesa = 'Embalagens e Etiquetas';
+        else if (tipoItem === 'marketing' || tipoItem === 'publicidade' || tipoItem === 'anuncio') categoriaDespesa = 'Marketing e Publicidade';
+        else if (tipoItem === 'plataforma' || tipoItem === 'taxa' || tipoItem === 'comissao' || tipoItem === 'glovo') categoriaDespesa = 'Taxas e Comissões (Glovo/Uber)';
+        else if (tipoItem === 'combustivel' || tipoItem === 'transporte') categoriaDespesa = 'Transporte e Combustível';
+
+        const descFinal = item.quantidade > 1 ? `${item.nome_extraido} (${item.quantidade} ${item.unidade || 'un'})` : item.nome_extraido;
+
+        await supabase.from('despesas').insert([{
+          descricao: descFinal,
+          categoria: categoriaDespesa,
+          valor: valorReal,
+          fornecedor: fornecedorFormatado,
+          data_despesa: new Date().toISOString().split('T')[0],
+          mes_referencia: mesRef,
+          pago: true // Assumimos que a fatura importada já foi liquidada
+        }]);
+
       } catch (err) {
-        console.error("Erro a inserir item no ERP:", item, err);
+        console.error("Erro a extrair dados para o ERP:", item, err);
       }
     }
   };
@@ -142,14 +159,13 @@ export default function ConciliacaoPage() {
         setProgresso({ atual: i + 1, total: files.length });
         setStatusTexto(`A analisar ficheiro ${i + 1} de ${files.length}...`);
 
-        // 🛡️ 1. VERIFICAÇÃO DE DUPLICADOS (Evitar processar a mesma fatura 2x)
         const jaExiste = historico.some(h => {
           return h.resumo?.fileName === file.name || JSON.stringify(h.resumo || {}).includes(file.name);
         });
 
         if (jaExiste) {
           alert(`⚠️ A fatura "${file.name}" já se encontra no sistema! Vamos saltar este ficheiro para não duplicar custos.`);
-          continue; // Salta para a próxima repetição do loop
+          continue; 
         }
 
         const nomeFile = file.name.toLowerCase();
@@ -187,19 +203,33 @@ export default function ConciliacaoPage() {
         if (!res.ok) {
            console.error(`Erro ao processar ${file.name}:`, dataAPI.error);
         } else {
-           if (dataAPI.dadosLidos && dataAPI.dadosLidos.itens && dataAPI.dadosLidos.itens.length > 0) {
-              await processarInsercaoNoEstoque(dataAPI.dadosLidos.itens, dataAPI.dadosLidos.fornecedor, periodo);
+           if (dataAPI.dadosLidos) {
+             let itensParaProcessar = dataAPI.dadosLidos.itens || dataAPI.dadosLidos.produtos || [];
+             
+             // Se a IA não identificar as linhas separadas, mas puxar um valor total (ex: Extratos Glovo ou Faturas Genéricas)
+             if (itensParaProcessar.length === 0 && dataAPI.dadosLidos.valorTotal) {
+                itensParaProcessar = [{
+                   nome_extraido: `Fatura Lote (${catIndividual}) - ${dataAPI.dadosLidos.fornecedor || 'Diversos'}`,
+                   tipo: catIndividual === 'Glovo' ? 'comissao' : 'geral',
+                   quantidade: 1,
+                   unidade: 'un',
+                   valor_total: dataAPI.dadosLidos.valorTotal
+                }];
+             }
+
+             if (itensParaProcessar.length > 0) {
+                await processarInsercaoNoEstoque(itensParaProcessar, dataAPI.dadosLidos.fornecedor, periodo);
+             }
            }
         }
 
-        // 🛡️ 2. TRAVÃO DE SEGURANÇA (15 Segundos) ENTRE FATURAS
         if (i < files.length - 1) {
           setStatusTexto(`A arrefecer a Inteligência Artificial... (A aguardar 15s para o ficheiro ${i + 2})`);
           await new Promise(resolve => setTimeout(resolve, 15000));
         }
       }
 
-      alert('Lote finalizado! Matéria-prima adicionada ao Stock e Despesas atualizadas! 🎉');
+      alert('Lote finalizado! Matéria-prima atualizada e Despesas Financeiras contabilizadas! 🎉');
       setFiles([]);
       setAutoDetectado(false);
       carregarHistorico(); 
@@ -250,7 +280,7 @@ export default function ConciliacaoPage() {
         <h1 className="text-3xl font-bold text-orange-500 flex items-center gap-3">
           Conciliador Inteligente <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full">v2.2</span>
         </h1>
-        <p className="text-zinc-400 text-sm mt-2">Upload em lote, eliminação em massa, extração inteligente de itens de faturas.</p>
+        <p className="text-zinc-400 text-sm mt-2">Upload em lote, extração automática para o Estoque e rastreamento para as Despesas Financeiras.</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -291,7 +321,7 @@ export default function ConciliacaoPage() {
             </div>
 
             <button onClick={iniciarAuditoria} disabled={processando || files.length === 0} className={`w-full py-3 rounded-xl text-sm font-bold transition-all ${processando || files.length === 0 ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-700 text-white shadow-[0_0_15px_rgba(147,51,234,0.3)]'}`}>
-              Ler Faturas & Extrair Estoque 🚀
+              Ler Faturas & Extrair Dados 🚀
             </button>
           </div>
         </div>
@@ -347,7 +377,6 @@ export default function ConciliacaoPage() {
                     const listaItens = dados?.itens || dados?.produtos || dados?.line_items || dados?.dadosExtraidos?.itens || dados?.dadosExtraidos?.produtos || (Array.isArray(dados) ? dados : []);
                     const qtdItensListados = listaItens.length > 0 ? listaItens.length : (dados?.dadosExtraidos ? 1 : 0);
 
-                    // EXTRAI O NOME DO FICHEIRO ORIGINAL E O EMOJI
                     const nomeFicheiroOriginal = dados?.fileName || dados?.nome_arquivo || dados?.file_name;
                     
                     let emoji = '🧾';
@@ -509,7 +538,7 @@ export default function ConciliacaoPage() {
           <div className="w-64 bg-zinc-800 rounded-full h-2.5 mt-6 overflow-hidden">
              <div className="bg-orange-500 h-2.5 transition-all duration-300" style={{ width: `${(progresso.atual / progresso.total) * 100}%` }}></div>
           </div>
-          <p className="text-orange-500 text-sm mt-4 animate-pulse">A Inteligência Artificial está a catalogar as quantidades do seu stock.</p>
+          <p className="text-orange-500 text-sm mt-4 animate-pulse">A extrair Insumos e a lançar rubricas nas Despesas...</p>
         </div>
       )}
     </div>
