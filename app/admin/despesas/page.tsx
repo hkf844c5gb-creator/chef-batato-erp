@@ -9,7 +9,6 @@ interface Despesa {
   categoria: string;
   valor: number;
   data_despesa: string;
-  fornecedor: string; 
   mes_referencia: string;
   pago: boolean; 
 }
@@ -43,7 +42,7 @@ export default function GestaoDespesas() {
 
   const [formDespesa, setFormDespesa] = useState<Despesa>({
     id: '', descricao: '', categoria: 'Ingredientes & Mercadoria', valor: 0,
-    fornecedor: '', data_despesa: new Date().toISOString().split('T')[0], mes_referencia: '', pago: true 
+    data_despesa: new Date().toISOString().split('T')[0], mes_referencia: '', pago: true 
   });
 
   async function carregarDespesas() {
@@ -67,13 +66,13 @@ export default function GestaoDespesas() {
   const abrirClassificacaoEmMassa = () => {
     if (selecionados.length === 0) return;
     setModoBulk(true);
-    setFormDespesa({ id: '', descricao: '', valor: 0, fornecedor: '', data_despesa: '', mes_referencia: '', categoria: 'Ingredientes & Mercadoria', pago: true });
+    setFormDespesa({ id: '', descricao: '', valor: 0, data_despesa: '', mes_referencia: '', categoria: 'Ingredientes & Mercadoria', pago: true });
     setModalAberto(true);
   };
 
   const abrirEditarDespesa = (d: Despesa) => {
     setModoBulk(false);
-    setFormDespesa({ ...d, pago: d.pago !== false }); // Assegura que default é pago=true
+    setFormDespesa({ ...d, pago: d.pago !== false }); 
     setModalAberto(true);
   };
 
@@ -89,7 +88,16 @@ export default function GestaoDespesas() {
         setSelecionados([]);
       } else {
         if (!formDespesa.descricao.trim() || formDespesa.valor <= 0) throw new Error('Preencha a descrição e um valor válido.');
-        const dados = { descricao: formDespesa.descricao, categoria: formDespesa.categoria, valor: formDespesa.valor, fornecedor: formDespesa.fornecedor, data_despesa: formDespesa.data_despesa, mes_referencia: formDespesa.data_despesa.slice(0, 7), pago: formDespesa.pago };
+        
+        // ⚠️ REMOVIDO O 'fornecedor' DO PAYLOAD AQUI PARA NÃO DAR ERRO NO SUPABASE
+        const dados = { 
+          descricao: formDespesa.descricao, 
+          categoria: formDespesa.categoria, 
+          valor: formDespesa.valor, 
+          data_despesa: formDespesa.data_despesa, 
+          mes_referencia: formDespesa.data_despesa.slice(0, 7), 
+          pago: formDespesa.pago 
+        };
 
         if (formDespesa.id) {
           const { error } = await supabase.from('despesas').update(dados).eq('id', formDespesa.id);
@@ -191,6 +199,7 @@ export default function GestaoDespesas() {
                 <>
                   <input required type="text" value={formDespesa.descricao} onChange={e => setFormDespesa({...formDespesa, descricao: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm text-zinc-300" />
                   <input required type="number" step="0.01" value={formDespesa.valor || ''} onChange={e => setFormDespesa({...formDespesa, valor: parseFloat(e.target.value) || 0})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-red-400 font-bold" />
+                  <input type="date" required value={formDespesa.data_despesa} onChange={e => setFormDespesa({...formDespesa, data_despesa: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-xs font-bold text-white" />
                 </>
               )}
 

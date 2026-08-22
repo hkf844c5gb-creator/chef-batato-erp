@@ -116,22 +116,23 @@ export default function ConciliacaoPage() {
 
       const nomeRealDoItem = item.nome_extraido || item.nome || item.descricao || 'Despesa Extraída';
       const nomeDaFaturaSeguro = arquivoNome ? arquivoNome : 'Doc. Extraído';
-      const descFinal = `[${qtdItem} ${unidItem}] ${nomeRealDoItem} 📄 ${nomeDaFaturaSeguro}`;
+      
+      // Juntei o fornecedor à descrição para a informação não se perder!
+      const descFinal = `[${qtdItem} ${unidItem}] ${nomeRealDoItem} | ${fornecedorFormatado} 📄 ${nomeDaFaturaSeguro}`;
       
       let dataDespesaGravar = new Date().toISOString().split('T')[0];
       if (dataFaturaDoc && dataFaturaDoc.length >= 10) {
         try { dataDespesaGravar = new Date(dataFaturaDoc).toISOString().split('T')[0]; } catch(e) {}
       }
 
-      // CORREÇÃO CRÍTICA: Usa as colunas corretas (pago, mes_referencia)
+      // ⚠️ REMOVIDO O 'fornecedor' AQUI TAMBÉM
       const { error } = await supabase.from('despesas').insert([{
         descricao: descFinal,
         categoria: '⚠️ Por Classificar', 
         valor: valorReal,
-        fornecedor: fornecedorFormatado,
         data_despesa: dataDespesaGravar,
         mes_referencia: mesRef,
-        pago: true // Como o Rafael disse: Todas já estão pagas!
+        pago: true 
       }]);
 
       if (error) throw new Error(`Erro na Base de Dados ao gravar o item "${nomeRealDoItem}": ${error.message}`);
