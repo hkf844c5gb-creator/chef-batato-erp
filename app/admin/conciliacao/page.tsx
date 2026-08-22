@@ -13,6 +13,7 @@ interface SessaoAuditoria {
   periodo_ref: string;
   resumo: any;
   divergencias: any[];
+  created_at: string;
 }
 
 export default function ConciliacaoPage() {
@@ -46,16 +47,13 @@ export default function ConciliacaoPage() {
 
   async function carregarHistorico() {
     setLoading(true);
-    // CORREÇÃO: Removido o order('created_at') que causava o erro. Ordena pelo período_ref como estava no original.
     let query = supabase.from('auditoria_sessoes').select('*').order('periodo_ref', { ascending: false }); 
     if (filtroMes) query = query.eq('periodo_ref', filtroMes);
 
     const { data, error } = await query;
     if (error) {
-      console.error("🔥 ERRO A LER SUPABASE:", error);
       alert("Erro ao puxar histórico: " + error.message);
     } else if (data) {
-      // Ordenação secundária pelo ID apenas no frontend para não dar erro no banco
       const dataOrdenada = [...data].sort((a, b) => b.id.localeCompare(a.id));
       setHistorico(dataOrdenada);
     }
@@ -71,85 +69,78 @@ export default function ConciliacaoPage() {
       
       const nome = selecionados[0].name.toLowerCase();
       let detectado = 'Fatura'; 
-      
       if (nome.includes('glovo')) detectado = 'Glovo';
       else if (nome.includes('palm') || nome.includes('palmbites')) detectado = 'Palmbites';
       else if (nome.includes('extrato') || nome.includes('banco') || nome.includes('cgd')) detectado = 'Extrato';
-      else if (nome.includes('recibo') || nome.includes('fatura') || nome.includes('pagamento')) detectado = 'Fatura';
-
       setCategoria(detectado);
       setAutoDetectado(true);
     }
+  };
+
+  const extrairListaItens = (dados: any) => {
+    if (!dados) return [];
+    if (Array.isArray(dados)) return dados;
+    if (Array.isArray(dados.itens)) return dados.itens;
+    if (Array.isArray(dados.produtos)) return dados.produtos;
+    if (Array.isArray(dados.line_items)) return dados.line_items;
+    if (dados.dadosExtraidos && Array.isArray(dados.dadosExtraidos.itens)) return dados.dadosExtraidos.itens;
+    if (dados.dadosExtraidos && Array.isArray(dados.dadosExtraidos.produtos)) return dados.dadosExtraidos.produtos;
+    if (dados.dadosLidos && Array.isArray(dados.dadosLidos.itens)) return dados.dadosLidos.itens;
+    return [];
   };
 
   const processarInsercaoGlobal = async (itens: any[], fornecedor: string, mesRef: string, arquivoNome: string, tipoArquivo: string, apenasDespesas = false, dataFaturaDoc = '') => {
     if (!itens || itens.length === 0) return;
 
     for (const item of itens) {
-      try {
-        const tipoItem = String(item.tipo || 'geral').toLowerCase();
-        const fornecedorFormatado = fornecedor || 'Fornecedor Diversos';
-        const valorReal = Number(item.valor_total || item.valor || item.preco || 0);
-        const qtdItem = item.quantidade || item.qtd || 1;
-        const unidItem = item.unidade || 'un';
+      const tipoItem = String(item.tipo || 'geral').toLowerCase();
+      const fornecedorFormatado = fornecedor || 'Fornecedor Diversos';
+      const valorReal = Number(item.valor_total || item.valor || item.preco || 0);
+      const qtdItem = item.quantidade || item.qtd || 1;
+      const unidItem = item.unidade || 'un';
 
-        if (valorReal <= 0) continue; 
+      if (valorReal <= 0) continue; 
 
-        // 1. ATUALIZAÇÃO DO ESTOQUE
-        if (!apenasDespesas && (tipoItem === 'alimentar' || tipoItem === 'embalagem' || tipoItem === 'insumo')) {
-          const { data: insumoExistente } = await supabase
-            .from('insumos')
-            .select('id, quantidade_atual')
-            .ilike('nome', `%${item.nome_extraido || item.nome}%`)
-            .limit(1)
-            .maybeSingle();
-
-          if (insumoExistente) {
-            const novaQtd = Number(insumoExistente.quantidade_atual) + Number(qtdItem);
-            await supabase.from('insumos').update({ quantidade_atual: novaQtd }).eq('id', insumoExistente.id);
-          } else {
-            await supabase.from('insumos').insert([{
-              nome: item.nome_extraido || item.nome,
-              unidade_medida: unidItem,
-              quantidade_atual: qtdItem,
-              custo_unidade: valorReal / Number(qtdItem),
-              fornecedor_principal: fornecedorFormatado
-            }]);
-          }
+      if (!apenasDespesas && (tipoItem === 'alimentar' || tipoItem === 'embalagem' || tipoItem === 'insumo')) {
+        const { data: insumoExistente } = await supabase.from('insumos').select('id, quantidade_atual').ilike('nome', `%${item.nome_extraido || item.nome}%`).limit(1).maybeSingle();
+        if (insumoExistente) {
+          const novaQtd = Number(insumoExistente.quantidade_atual) + Number(qtdItem);
+          await supabase.from('insumos').update({ quantidade_atual: novaQtd }).eq('id', insumoExistente.id);
+        } else {
+          await supabase.from('insumos').insert([{
+            nome: item.nome_extraido || item.nome, unidade_medida: unidItem, quantidade_atual: qtdItem,
+            custo_unidade: valorReal / Number(qtdItem), fornecedor_principal: fornecedorFormatado
+          }]);
         }
-
-        // 2. CRIA RASCUNHO NAS DESPESAS (Com nome e quantidades detalhadas!)
-        const nomeRealDoItem = item.nome_extraido || item.nome || item.descricao || 'Despesa Extraída';
-        const nomeDaFaturaSeguro = arquivoNome ? arquivoNome : 'Doc. Extraído';
-        
-        // Formato Rico: [10 un] Nome do Produto 📄 Fatura.pdf
-        const descFinal = `[${qtdItem} ${unidItem}] ${nomeRealDoItem} 📄 ${nomeDaFaturaSeguro}`;
-        
-        let dataDespesaGravar = new Date().toISOString().split('T')[0];
-        if (dataFaturaDoc && dataFaturaDoc.length >= 10) {
-          try { dataDespesaGravar = new Date(dataFaturaDoc).toISOString().split('T')[0]; } catch(e) {}
-        }
-
-        await supabase.from('despesas').insert([{
-          descricao: descFinal,
-          categoria: '⚠️ Por Classificar', 
-          valor: valorReal,
-          fornecedor: fornecedorFormatado,
-          data_despesa: dataDespesaGravar,
-          metodo_pagamento: 'Extração Automática',
-          status: 'Pendente' 
-        }]);
-
-      } catch (err) {
-        console.error("Erro a extrair dados para o ERP:", item, err);
       }
+
+      const nomeRealDoItem = item.nome_extraido || item.nome || item.descricao || 'Despesa Extraída';
+      const nomeDaFaturaSeguro = arquivoNome ? arquivoNome : 'Doc. Extraído';
+      const descFinal = `[${qtdItem} ${unidItem}] ${nomeRealDoItem} 📄 ${nomeDaFaturaSeguro}`;
+      
+      let dataDespesaGravar = new Date().toISOString().split('T')[0];
+      if (dataFaturaDoc && dataFaturaDoc.length >= 10) {
+        try { dataDespesaGravar = new Date(dataFaturaDoc).toISOString().split('T')[0]; } catch(e) {}
+      }
+
+      // CORREÇÃO CRÍTICA: Usa as colunas corretas (pago, mes_referencia)
+      const { error } = await supabase.from('despesas').insert([{
+        descricao: descFinal,
+        categoria: '⚠️ Por Classificar', 
+        valor: valorReal,
+        fornecedor: fornecedorFormatado,
+        data_despesa: dataDespesaGravar,
+        mes_referencia: mesRef,
+        pago: true // Como o Rafael disse: Todas já estão pagas!
+      }]);
+
+      if (error) throw new Error(`Erro na Base de Dados ao gravar o item "${nomeRealDoItem}": ${error.message}`);
     }
   };
 
   const iniciarAuditoria = async () => {
     if (files.length === 0) return alert('Por favor, anexe pelo menos um ficheiro.');
-    setProcessando(true);
-    setProgresso({ atual: 1, total: files.length });
+    setProcessando(true); setProgresso({ atual: 1, total: files.length });
 
     try {
       for (let i = 0; i < files.length; i++) {
@@ -158,61 +149,51 @@ export default function ConciliacaoPage() {
         setStatusTexto(`A analisar ficheiro ${i + 1} de ${files.length}...`);
 
         const jaExiste = historico.some(h => h.resumo?.fileName === file.name || JSON.stringify(h.resumo || {}).includes(file.name));
-        if (jaExiste) {
-          alert(`⚠️ A fatura "${file.name}" já se encontra no sistema! Vamos saltar este ficheiro para não duplicar custos.`);
-          continue; 
-        }
+        if (jaExiste) continue; 
 
         const nomeFile = file.name.toLowerCase();
         let catIndividual = categoria; 
         if (autoDetectado) {
           if (nomeFile.includes('glovo')) catIndividual = 'Glovo';
           else if (nomeFile.includes('palm') || nomeFile.includes('palmbites')) catIndividual = 'Palmbites';
-          else if (nomeFile.includes('extrato') || nomeFile.includes('banco') || nomeFile.includes('cgd')) catIndividual = 'Extrato';
+          else if (nomeFile.includes('extrato') || nomeFile.includes('banco')) catIndividual = 'Extrato';
           else catIndividual = 'Fatura';
         }
 
         const base64Real = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.readAsDataURL(file);
-          reader.onload = () => resolve(reader.result);
-          reader.onerror = error => reject(error);
+          const reader = new FileReader(); reader.readAsDataURL(file);
+          reader.onload = () => resolve(reader.result); reader.onerror = error => reject(error);
         });
 
         const res = await fetch('/admin/conciliacao/api', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ fileBase64: base64Real, fileName: file.name, fileType: file.type, tipoArquivo: catIndividual, periodoRef: periodo })
         });
 
         const dataAPI = await res.json();
-        if (!res.ok) {
-           console.error(`Erro ao processar ${file.name}:`, dataAPI.error);
-        } else {
-           if (dataAPI.dadosLidos) {
-             let itensParaProcessar = dataAPI.dadosLidos.itens || dataAPI.dadosLidos.produtos || [];
-             if (itensParaProcessar.length === 0 && dataAPI.dadosLidos.valorTotal) {
-                itensParaProcessar = [{ nome_extraido: `Fatura Lote (${catIndividual})`, tipo: catIndividual === 'Glovo' || catIndividual === 'Palmbites' ? 'comissao' : 'geral', quantidade: 1, unidade: 'un', valor_total: dataAPI.dadosLidos.valorTotal }];
-             }
-             if (itensParaProcessar.length > 0) {
-                const dataFaturaDoc = dataAPI.dadosLidos.data || dataAPI.dadosLidos.data_fatura || '';
-                await processarInsercaoGlobal(itensParaProcessar, dataAPI.dadosLidos.fornecedor, periodo, file.name, catIndividual, false, dataFaturaDoc);
-             }
+        if (res.ok && dataAPI.dadosLidos) {
+           let itensParaProcessar = extrairListaItens(dataAPI.dadosLidos);
+           if (itensParaProcessar.length === 0 && dataAPI.dadosLidos.valorTotal) {
+              itensParaProcessar = [{ nome_extraido: `Fatura Lote (${catIndividual})`, tipo: 'geral', quantidade: 1, unidade: 'un', valor_total: dataAPI.dadosLidos.valorTotal }];
+           }
+           if (itensParaProcessar.length > 0) {
+              const dataFaturaDoc = dataAPI.dadosLidos.data || dataAPI.dadosLidos.data_fatura || '';
+              await processarInsercaoGlobal(itensParaProcessar, dataAPI.dadosLidos.fornecedor, periodo, file.name, catIndividual, false, dataFaturaDoc);
            }
         }
         if (i < files.length - 1) {
-          setStatusTexto(`A arrefecer a IA... (A aguardar 15s)`);
+          setStatusTexto(`A aguardar IA (15s)...`);
           await new Promise(resolve => setTimeout(resolve, 15000));
         }
       }
-      alert('Lote finalizado! As despesas (item a item) foram enviadas como Rascunho para a página de Despesas! 🎉');
+      alert('Lote finalizado e Rascunhos enviados com sucesso! 🎉');
       setFiles([]); setAutoDetectado(false); carregarHistorico(); 
-    } catch (err: any) { alert(`Erro fatal: ${err.message}`); } finally { setProcessando(false); setProgresso({ atual: 0, total: 0 }); setStatusTexto('A extrair itens e faturas...'); }
+    } catch (err: any) { alert(`Erro fatal: ${err.message}`); } finally { setProcessando(false); setProgresso({ atual: 0, total: 0 }); setStatusTexto('A extrair itens...'); }
   };
 
   const reprocessarParaDespesas = async () => {
     if (selecionados.length === 0) return;
-    if (!confirm(`Deseja desmembrar as ${selecionados.length} faturas selecionadas e enviar todos os itens para as Despesas para classificar à mão?`)) return;
+    if (!confirm(`Deseja desmembrar as ${selecionados.length} faturas selecionadas e enviá-las para as Despesas?`)) return;
     setProcessando(true); setProgresso({ atual: 1, total: selecionados.length }); setStatusTexto('A extrair rascunhos...');
     try {
       for (let i = 0; i < selecionados.length; i++) {
@@ -222,138 +203,87 @@ export default function ConciliacaoPage() {
         setProgresso({ atual: i + 1, total: selecionados.length });
 
         const dados = sessao.resumo || {};
-        const catIndividual = sessao.tipo_arquivo;
-        let itensParaProcessar = dados?.itens || dados?.produtos || dados?.line_items || dados?.dadosExtraidos?.itens || dados?.dadosExtraidos?.produtos || (Array.isArray(dados) ? dados : []);
+        let itensParaProcessar = extrairListaItens(dados);
         let valorTotalBruto = dados?.dadosExtraidos?.valorTotal || dados?.valorTotal || dados?.total || 0;
         
         if (itensParaProcessar.length === 0 && valorTotalBruto > 0) {
-           itensParaProcessar = [{ nome_extraido: `Fatura Antiga (${catIndividual})`, tipo: 'geral', quantidade: 1, unidade: 'un', valor_total: valorTotalBruto }];
+           itensParaProcessar = [{ nome_extraido: `Fatura Antiga (${sessao.tipo_arquivo})`, tipo: 'geral', quantidade: 1, unidade: 'un', valor_total: valorTotalBruto }];
         }
         if (itensParaProcessar.length > 0) {
            const dataFaturaDoc = dados?.dadosExtraidos?.data || dados?.data || dados?.data_fatura || '';
-           await processarInsercaoGlobal(itensParaProcessar, dados?.dadosExtraidos?.fornecedor || dados?.fornecedor || 'Fornecedor Desconhecido', sessao.periodo_ref, dados?.fileName || dados?.nome_arquivo || '', catIndividual, true, dataFaturaDoc);
+           await processarInsercaoGlobal(itensParaProcessar, dados?.dadosExtraidos?.fornecedor || dados?.fornecedor || 'Fornecedor Desconhecido', sessao.periodo_ref, dados?.fileName || dados?.nome_arquivo || '', sessao.tipo_arquivo, true, dataFaturaDoc);
         }
       }
-      alert('Mágico! Todos os itens das faturas antigas estão nas Despesas prontos a classificar! 🎉');
+      alert('Mágico! Todos os itens das faturas foram inseridos nas Despesas! Pode ir lá classificar. 🎉');
       setSelecionados([]);
-    } catch (err: any) { alert(`Erro: ${err.message}`); } finally { setProcessando(false); setProgresso({ atual: 0, total: 0 }); setStatusTexto('A extrair itens...'); }
+    } catch (err: any) { alert(`Erro ao inserir no Supabase: ${err.message}`); } finally { setProcessando(false); setProgresso({ atual: 0, total: 0 }); setStatusTexto('A extrair itens...'); }
   };
 
   const toggleSelecionado = (id: string) => { setSelecionados(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]); };
   const toggleTodos = () => { setSelecionados(selecionados.length === historico.length ? [] : historico.map(h => h.id)); };
   const apagarSelecionados = async () => {
     if (selecionados.length === 0) return;
-    if (!confirm(`Tem a certeza que deseja eliminar ${selecionados.length} documento(s)?`)) return;
-    const { error } = await supabase.from('auditoria_sessoes').delete().in('id', selecionados);
-    if (!error) { setHistorico(prev => prev.filter(item => !selecionados.includes(item.id))); setSelecionados([]); } 
-    else alert("Erro ao eliminar documentos: " + error.message);
-  };
-  const mudarCategoria = async (id: string, novaCategoria: string) => {
-    const { error } = await supabase.from('auditoria_sessoes').update({ tipo_arquivo: novaCategoria }).eq('id', id);
-    if (!error) setHistorico(prev => prev.map(item => item.id === id ? { ...item, tipo_arquivo: novaCategoria } : item));
+    if (!confirm(`Deseja eliminar ${selecionados.length} documento(s)?`)) return;
+    await supabase.from('auditoria_sessoes').delete().in('id', selecionados);
+    setHistorico(prev => prev.filter(item => !selecionados.includes(item.id))); setSelecionados([]);
   };
 
   return (
     <div className="p-8 font-sans max-w-7xl mx-auto relative">
       <div className="mb-8 border-b border-zinc-800 pb-4">
         <h1 className="text-3xl font-bold text-orange-500 flex items-center gap-3">
-          Conciliador Inteligente <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full">v5 Desmembramento</span>
+          Conciliador Inteligente <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full">v6 Garantia Total</span>
         </h1>
-        <p className="text-zinc-400 text-sm mt-2">Extração detalhada linha a linha. Separação de Itens, Quantidades e Valores para Rascunho.</p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* COLUNA ESQUERDA (UPLOAD) */}
         <div className="lg:col-span-1 space-y-6">
           <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-2xl shadow-xl">
-            <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider mb-4">Anexar Lote de Documentos</h3>
-            <div className="border-2 border-dashed border-zinc-700 hover:border-orange-500 bg-zinc-950 rounded-xl p-8 text-center transition-colors relative mb-4">
+            <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider mb-4">Anexar Lote</h3>
+            <div className="border-2 border-dashed border-zinc-700 hover:border-orange-500 bg-zinc-950 rounded-xl p-8 text-center relative mb-4">
               <input type="file" multiple onChange={handleFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" accept=".pdf,.png,.jpg,.jpeg,.csv" />
               <div className="text-4xl mb-2">📂</div>
-              {files.length > 0 ? (
-                <div className="flex flex-col items-center">
-                  <p className="text-sm font-bold text-green-500">{files.length} ficheiro(s) selecionado(s)</p>
-                  <p className="text-xs text-zinc-500 mt-1 line-clamp-2 px-2">{files.map(f => f.name).join(', ')}</p>
-                </div>
-              ) : (<p className="text-sm font-bold text-zinc-300">Escolha vários ficheiros ou arraste</p>)}
+              {files.length > 0 ? (<p className="text-sm font-bold text-green-500">{files.length} ficheiro(s)</p>) : (<p className="text-sm font-bold text-zinc-300">Escolher ficheiros</p>)}
             </div>
-            <div className="mb-4">
-              <label className="block text-xs font-bold text-zinc-400 uppercase mb-2">Mês de Referência</label>
-              <input type="month" value={periodo} onChange={(e) => setPeriodo(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 outline-none" />
-            </div>
-            <div className="mb-6">
-              <label className="block text-xs font-bold text-zinc-400 uppercase mb-2 flex justify-between">
-                <span>Categoria (Base)</span>
-                {autoDetectado && <span className="text-green-500 text-[10px] animate-pulse">✨ Lote Automático</span>}
-              </label>
-              <select value={categoria} onChange={(e) => { setCategoria(e.target.value); setAutoDetectado(false); }} className={`w-full bg-zinc-950 border ${autoDetectado ? 'border-green-500 text-green-400' : 'border-zinc-800 text-zinc-200'} rounded-lg px-3 py-2 text-sm outline-none`}>
-                {categoriasDisponiveis.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-              </select>
-            </div>
-            <button onClick={iniciarAuditoria} disabled={processando || files.length === 0} className={`w-full py-3 rounded-xl text-sm font-bold transition-all ${processando || files.length === 0 ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-700 text-white shadow-[0_0_15px_rgba(147,51,234,0.3)]'}`}>
-              Ler Faturas & Extrair Dados 🚀
-            </button>
+            <button onClick={iniciarAuditoria} disabled={processando || files.length === 0} className="w-full py-3 rounded-xl text-sm font-bold bg-purple-600 hover:bg-purple-700 text-white transition-all disabled:opacity-50">Ler Faturas & Extrair Dados 🚀</button>
           </div>
         </div>
 
-        {/* COLUNA DIREITA (HISTÓRICO) */}
         <div className="lg:col-span-2">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl shadow-xl flex flex-col h-full overflow-hidden min-h-[500px]">
-            <div className="p-5 border-b border-zinc-800 bg-zinc-900/80 flex flex-col sm:flex-row justify-between items-center gap-4">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl shadow-xl flex flex-col h-full min-h-[500px]">
+            <div className="p-5 border-b border-zinc-800 bg-zinc-900/80 flex justify-between items-center">
               <div className="flex items-center gap-4">
-                <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider flex items-center gap-2">🗄️ Histórico de Faturas</h3>
+                <h3 className="text-sm font-bold text-zinc-300 uppercase">🗄️ Histórico de Faturas</h3>
                 {selecionados.length > 0 && (
                   <div className="flex gap-2">
-                    <button onClick={reprocessarParaDespesas} className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2 shadow-lg shadow-emerald-900/20">
-                      💸 Enviar Rascunhos ({selecionados.length})
-                    </button>
-                    <button onClick={apagarSelecionados} className="bg-red-600 hover:bg-red-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors flex items-center gap-2 shadow-lg shadow-red-900/20">🗑️ Eliminar</button>
+                    <button onClick={reprocessarParaDespesas} className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg">💸 Enviar Rascunhos ({selecionados.length})</button>
+                    <button onClick={apagarSelecionados} className="bg-red-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg">🗑️ Eliminar</button>
                   </div>
                 )}
               </div>
-              <div className="flex items-center gap-2 bg-zinc-950 px-3 py-1.5 rounded-lg border border-zinc-700">
-                <span className="text-[10px] text-zinc-400 font-bold uppercase">Mês:</span>
-                <input type="month" value={filtroMes} onChange={(e) => setFiltroMes(e.target.value)} className="bg-transparent text-sm text-white focus:outline-none cursor-pointer" />
-                {filtroMes && (<button onClick={() => setFiltroMes('')} className="text-orange-500 hover:text-orange-400 font-bold ml-2 text-xs">VER TODOS</button>)}
-              </div>
+              <input type="month" value={filtroMes} onChange={(e) => setFiltroMes(e.target.value)} className="bg-zinc-950 px-3 py-1.5 border border-zinc-700 rounded-lg text-sm text-white" />
             </div>
             
             <div className="p-5 flex-1 overflow-y-auto bg-zinc-950/30">
-              {loading ? (<div className="flex justify-center items-center h-full text-zinc-500">A carregar registos...</div>) : historico.length === 0 ? (<div className="flex flex-col justify-center items-center h-full text-zinc-600"><span className="text-5xl mb-4">📂</span><p className="text-sm">Nenhum documento encontrado neste mês.</p></div>) : (
+              {loading ? (<div className="text-center text-zinc-500">A carregar...</div>) : historico.length === 0 ? (<div className="text-center text-zinc-600 py-10">Nenhum documento.</div>) : (
                 <div className="space-y-3">
                   <div className="flex items-center px-4 py-2 border-b border-zinc-800 mb-2">
-                     <input type="checkbox" checked={selecionados.length === historico.length && historico.length > 0} onChange={toggleTodos} className="w-4 h-4 rounded border-zinc-700 bg-zinc-950 accent-orange-500 cursor-pointer" />
+                     <input type="checkbox" checked={selecionados.length === historico.length && historico.length > 0} onChange={toggleTodos} className="w-4 h-4 rounded border-zinc-700 bg-zinc-950 accent-orange-500" />
                      <span className="text-xs text-zinc-500 font-bold uppercase ml-3">Selecionar Todos</span>
                   </div>
                   {historico.map((sessao) => {
                     const dados = sessao.resumo || {};
-                    const listaItens = dados.itens || dados.produtos || dados.line_items || dados.dadosExtraidos?.itens || dados.dadosExtraidos?.produtos || (Array.isArray(dados) ? dados : []);
-                    const qtdItensListados = listaItens.length > 0 ? listaItens.length : (dados.dadosExtraidos ? 1 : 0);
-                    const nomeFicheiroOriginal = dados.fileName || dados.nome_arquivo || dados.file_name || 'Fatura';
-                    const fornecedor = dados.dadosExtraidos?.fornecedor || dados.fornecedor || 'Fornecedor Desconhecido';
-                    const dataFatura = dados.dadosExtraidos?.data || dados.data || dados.data_fatura || 'Sem Data';
-                    
-                    let valorTotal = Number(dados.dadosExtraidos?.valorTotal || dados.valorTotal || dados.total || 0);
-                    if (valorTotal === 0 && listaItens.length > 0) valorTotal = listaItens.reduce((acc: number, it: any) => acc + Number(it.valor_total || it.valor || it.preco || 0), 0);
-                    
-                    let emoji = '🧾';
-                    if (sessao.tipo_arquivo === 'Glovo') emoji = '🛵'; else if (sessao.tipo_arquivo === 'Palmbites') emoji = '🌴'; else if (sessao.tipo_arquivo === 'Extrato') emoji = '🏦';
+                    const listaItens = extrairListaItens(dados);
+                    const nomeFicheiro = dados.fileName || dados.nome_arquivo || 'Fatura';
+                    const fornecedor = dados.dadosExtraidos?.fornecedor || dados.fornecedor || 'Desconhecido';
+                    const valorTotal = Number(dados.dadosExtraidos?.valorTotal || dados.valorTotal || dados.total || 0).toFixed(2);
 
                     return (
-                      <div key={sessao.id} onClick={() => setSessaoDetalhe(sessao)} className={`bg-zinc-900 border p-4 rounded-xl flex justify-between items-center cursor-pointer hover:border-orange-500/50 transition-all ${selecionados.includes(sessao.id) ? 'border-orange-500 shadow-sm shadow-orange-900/20' : 'border-zinc-700'}`}>
-                        <div className="flex items-start gap-4 flex-1 min-w-0 pr-4" onClick={(e) => e.stopPropagation()}>
-                          <input type="checkbox" checked={selecionados.includes(sessao.id)} onChange={() => toggleSelecionado(sessao.id)} className="w-5 h-5 mt-1 rounded border-zinc-700 bg-zinc-950 accent-orange-500 cursor-pointer flex-shrink-0" />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-1"><span className="text-[10px] text-orange-400 font-bold bg-orange-950 px-2 py-0.5 rounded">{sessao.periodo_ref}</span></div>
-                            <h4 className="text-sm font-bold text-white mt-1 truncate w-full" title={nomeFicheiroOriginal}>{emoji} {nomeFicheiroOriginal}</h4>
-                            <div className="mt-2 space-y-1"><p className="text-xs text-zinc-300 truncate"><span className="text-zinc-500">Fornecedor:</span> {fornecedor}</p><div className="flex gap-4 text-xs"><p className="text-zinc-300"><span className="text-zinc-500">Data Fatura:</span> {dataFatura}</p><p className="text-red-400 font-bold"><span className="text-zinc-500 font-normal">Valor:</span> {valorTotal.toFixed(2)}€</p></div></div>
-                            {qtdItensListados > 0 ? (<p className="text-[10px] font-mono text-green-400 mt-2">✓ {qtdItensListados} item(ns) detalhado(s) lidos</p>) : (<p className="text-[10px] font-mono text-zinc-500 mt-2">Clique para inspecionar</p>)}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
-                          <select value={sessao.tipo_arquivo} onChange={(e) => mudarCategoria(sessao.id, e.target.value)} className="bg-zinc-950 border border-zinc-700 rounded-lg px-2 py-1.5 text-xs text-zinc-300 outline-none focus:border-orange-500">
-                            {categoriasDisponiveis.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-                          </select>
+                      <div key={sessao.id} onClick={() => setSessaoDetalhe(sessao)} className={`bg-zinc-900 border p-4 rounded-xl flex items-center cursor-pointer transition-all ${selecionados.includes(sessao.id) ? 'border-orange-500 bg-orange-950/20' : 'border-zinc-700'}`}>
+                        <input type="checkbox" checked={selecionados.includes(sessao.id)} onChange={() => toggleSelecionado(sessao.id)} onClick={(e)=>e.stopPropagation()} className="w-5 h-5 mr-4 accent-orange-500" />
+                        <div className="flex-1">
+                          <h4 className="text-sm font-bold text-white">🧾 {nomeFicheiro}</h4>
+                          <p className="text-xs text-zinc-400 mt-1">{fornecedor} | {valorTotal}€ | ✓ {listaItens.length} itens extraídos</p>
                         </div>
                       </div>
                     );
@@ -366,53 +296,40 @@ export default function ConciliacaoPage() {
       </div>
 
       {sessaoDetalhe && (
-        <div className="fixed inset-0 bg-black/80 z-[120] flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-zinc-900 border border-zinc-700 w-full max-w-2xl rounded-3xl p-6 shadow-2xl flex flex-col max-h-[85vh]">
+        <div className="fixed inset-0 bg-black/80 z-[120] flex items-center justify-center p-4">
+          <div className="bg-zinc-900 w-full max-w-2xl rounded-3xl p-6 shadow-2xl flex flex-col max-h-[85vh]">
             <div className="flex justify-between items-start border-b border-zinc-800 pb-4 mb-4">
-              <div className="pr-4">
-                <span className="text-xs font-bold text-orange-400 bg-orange-950 px-2 py-1 rounded inline-block mb-2">Sessão: {sessaoDetalhe.periodo_ref}</span>
-                <h3 className="text-xl font-black text-white break-words">{sessaoDetalhe.resumo?.fileName ? `📑 Documento: ${sessaoDetalhe.resumo.fileName}` : 'Detalhes do Documento'}</h3>
-              </div>
-              <button onClick={() => setSessaoDetalhe(null)} className="bg-zinc-800 hover:bg-zinc-700 text-white w-8 h-8 rounded-full font-bold flex items-center justify-center">✕</button>
+              <h3 className="text-xl font-black text-white">Detalhes da Fatura</h3>
+              <button onClick={() => setSessaoDetalhe(null)} className="bg-zinc-800 text-white w-8 h-8 rounded-full font-bold">✕</button>
             </div>
-            <div className="flex-1 overflow-y-auto space-y-4 pr-1 custom-scrollbar">
-              <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800 grid grid-cols-2 gap-4">
-                <div><span className="text-[10px] text-zinc-500 font-bold uppercase block mb-1">Fornecedor</span><span className="text-sm font-black text-white">{sessaoDetalhe.resumo?.dadosExtraidos?.fornecedor || sessaoDetalhe.resumo?.fornecedor || 'Desconhecido'}</span></div>
-                <div><span className="text-[10px] text-zinc-500 font-bold uppercase block mb-1">Data Fatura</span><span className="text-sm font-bold text-zinc-300">{sessaoDetalhe.resumo?.dadosExtraidos?.data || sessaoDetalhe.resumo?.data || sessaoDetalhe.resumo?.data_fatura || 'Não encontrada'}</span></div>
-                <div className="col-span-2 pt-2 border-t border-zinc-800 flex justify-between items-center"><span className="text-[10px] text-zinc-500 font-bold uppercase block">Valor Total</span><span className="text-xl font-black text-orange-500 font-mono">{Number(sessaoDetalhe.resumo?.dadosExtraidos?.valorTotal || sessaoDetalhe.resumo?.valorTotal || sessaoDetalhe.resumo?.total || 0).toFixed(2)}€</span></div>
-              </div>
-              <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest pl-1 border-l-2 border-orange-500">Itens Desmembrados da Fatura</h4>
+            <div className="flex-1 overflow-y-auto space-y-4">
+              <h4 className="text-xs font-bold text-zinc-400 uppercase">Itens Desmembrados da Fatura</h4>
               {(() => {
-                const dados = sessaoDetalhe.resumo || {};
-                const listaItens = dados.itens || dados.produtos || dados.line_items || dados.dadosExtraidos?.itens || dados.dadosExtraidos?.produtos || (Array.isArray(dados) ? dados : []);
-                if (!listaItens || listaItens.length === 0) return (<div className="text-center py-8 text-zinc-500 text-sm"><p>Sem itens discriminados.</p></div>);
+                const listaItens = extrairListaItens(sessaoDetalhe.resumo);
+                if (listaItens.length === 0) return <p className="text-zinc-500 text-sm py-4">Sem itens detalhados. A IA leu apenas o total.</p>;
                 return (
                   <div className="space-y-2">
                     {listaItens.map((item: any, idx: number) => (
-                      <div key={idx} className="bg-zinc-900/60 border border-zinc-800 p-4 rounded-xl flex justify-between items-center hover:border-zinc-600 transition-colors">
+                      <div key={idx} className="bg-zinc-950 border border-zinc-800 p-3 rounded-xl flex justify-between items-center">
                         <div>
-                          <h4 className="text-sm font-bold text-zinc-200">{item.nome_extraido || item.nome || item.descricao || item.item || 'Item Descrito'}</h4>
-                          <div className="flex items-center gap-2 mt-1.5"><span className="text-[9px] font-bold px-2 py-0.5 rounded uppercase bg-zinc-800 text-zinc-300">{item.tipo || 'geral'}</span><span className="text-xs text-orange-400 font-mono font-bold">Qtd: {item.quantidade || item.qtd || 1} {item.unidade || 'un'}</span></div>
+                          <h4 className="text-sm font-bold text-zinc-200">{item.nome_extraido || item.nome || item.descricao || 'Item Descrito'}</h4>
+                          <span className="text-[10px] text-zinc-500">Qtd: {item.quantidade || 1} {item.unidade || 'un'}</span>
                         </div>
-                        <div className="text-right"><span className="text-base font-black text-white">{(Number(item.valor_total || item.valor || item.preco || 0)).toFixed(2)}€</span><span className="text-[9px] text-zinc-500 block uppercase mt-0.5">Total Linha</span></div>
+                        <span className="text-sm font-black text-orange-400">{(Number(item.valor_total || item.valor || item.preco || 0)).toFixed(2)}€</span>
                       </div>
                     ))}
                   </div>
                 );
               })()}
             </div>
-            <div className="border-t border-zinc-800 pt-4 mt-4 flex justify-between items-center">
-              <span className="text-[10px] font-mono text-zinc-600">ID: {sessaoDetalhe.id.split('-')[0]}</span>
-              <button onClick={() => setSessaoDetalhe(null)} className="bg-orange-600 hover:bg-orange-500 text-white text-xs font-bold px-6 py-2.5 rounded-xl shadow-lg">Fechar</button>
+            <div className="border-t border-zinc-800 pt-4 mt-4 text-center">
+              <button onClick={() => setSessaoDetalhe(null)} className="bg-orange-600 text-white text-xs font-bold px-6 py-2.5 rounded-xl">Fechar Detalhes</button>
             </div>
           </div>
         </div>
       )}
       {processando && (
-        <div className="fixed inset-0 bg-black/90 z-[120] flex flex-col items-center justify-center backdrop-blur-md">
-          <div className="w-16 h-16 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mb-6"></div>
-          <h2 className="text-2xl font-bold text-white mb-2 text-center px-4">{statusTexto}</h2><p className="text-zinc-400">A processar <span className="font-bold text-white">{progresso.atual}</span> de <span className="font-bold text-white">{progresso.total}</span> ficheiros.</p>
-        </div>
+        <div className="fixed inset-0 bg-black/90 z-[120] flex flex-col items-center justify-center"><div className="w-16 h-16 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mb-6"></div><h2 className="text-2xl font-bold text-white">{statusTexto}</h2></div>
       )}
     </div>
   );
