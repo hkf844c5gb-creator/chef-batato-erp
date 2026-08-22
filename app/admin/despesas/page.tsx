@@ -56,10 +56,51 @@ export default function GestaoDespesas() {
 
   useEffect(() => { carregarDespesas(); }, []);
 
+  // --- FUNÇÃO PARA EXTRAIR O FORNECEDOR DA DESCRIÇÃO (SEM PRECISAR DE COLUNA NA BD) ---
+  const extrairFornecedor = (descricao: string) => {
+    if (!descricao) return 'Desconhecido';
+    if (descricao.includes(' | ')) {
+      const partes = descricao.split(' | ');
+      return partes[1]?.split(' 📄')[0]?.trim() || 'Desconhecido';
+    }
+    if (descricao.includes(' - ')) {
+      const partes = descricao.split(' - ');
+      const ultima = partes[partes.length - 1];
+      if (!ultima.includes('un]') && !ultima.includes(')')) {
+        return ultima.split(' 📄')[0]?.trim() || 'Desconhecido';
+      }
+    }
+    return 'Fornecedor Diverso';
+  };
+
+  // --- FILTROS E MATEMÁTICA ANALÍTICA ---
   const despesasPorClassificarGlobais = despesasDB.filter(d => d.categoria === '⚠️ Por Classificar');
   const despesasFiltradas = modoRascunhosGlobais ? despesasPorClassificarGlobais : despesasDB.filter(d => d.data_despesa && d.data_despesa.startsWith(mesFiltro)); 
+  
   const totalGastoMes = despesasFiltradas.reduce((sum, d) => sum + Number(d.valor), 0);
 
+  // 1. Agrupar por Categoria
+  const gastosPorCategoria = despesasFiltradas.reduce((acc, d) => {
+    if (d.categoria !== '⚠️ Por Classificar') {
+      acc[d.categoria] = (acc[d.categoria] || 0) + Number(d.valor);
+    }
+    return acc;
+  }, {} as Record<string, number>);
+  
+  const categoriasOrdenadas = Object.entries(gastosPorCategoria).sort((a, b) => b[1] - a[1]);
+
+  // 2. Agrupar por Fornecedor
+  const gastosPorFornecedor = despesasFiltradas.reduce((acc, d) => {
+    if (d.categoria !== '⚠️ Por Classificar') {
+      const forn = extrairFornecedor(d.descricao);
+      acc[forn] = (acc[forn] || 0) + Number(d.valor);
+    }
+    return acc;
+  }, {} as Record<string, number>);
+
+  const fornecedoresOrdenados = Object.entries(gastosPorFornecedor).sort((a, b) => b[1] - a[1]).slice(0, 5); // Top 5 Fornecedores
+
+  // --- SELEÇÕES EM MASSA E CRUD ---
   const toggleSelecionado = (id: string) => { setSelecionados(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]); };
   const toggleTodos = () => { setSelecionados(selecionados.length === despesasFiltradas.length ? [] : despesasFiltradas.map(d => d.id)); };
 
@@ -89,7 +130,7 @@ export default function GestaoDespesas() {
       } else {
         if (!formDespesa.descricao.trim() || formDespesa.valor <= 0) throw new Error('Preencha a descrição e um valor válido.');
         
-        // ⚠️ REMOVIDO O 'fornecedor' DO PAYLOAD AQUI PARA NÃO DAR ERRO NO SUPABASE
+        // Removido o campo fornecedor para não quebrar a base de dados
         const dados = { 
           descricao: formDespesa.descricao, 
           categoria: formDespesa.categoria, 
@@ -127,25 +168,91 @@ export default function GestaoDespesas() {
   return (
     <div className="min-h-screen bg-zinc-950 text-white font-sans flex flex-col pb-24">
       <header className="bg-zinc-950/80 border-b border-zinc-800/60 px-5 py-5 flex justify-between items-center">
-        <div><h1 className="text-2xl font-black text-white">Custos & Despesas</h1></div>
+        <div><h1 className="text-2xl font-black text-white">Gestão Analítica de Despesas</h1></div>
       </header>
 
-      <main className="flex-1 w-full max-w-[1200px] mx-auto p-5 space-y-8">
+      <main className="flex-1 w-full max-w-[1200px] mx-auto p-5 space-y-6">
+        
+        {/* BARRA DE FILTRO */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <h2 className="text-sm font-black uppercase text-zinc-300">
-              {modoRascunhosGlobais ? '⚠️ A Visualizar Rascunhos' : 'Resumo do Mês'}
+              {modoRascunhosGlobais ? '⚠️ A Visualizar Rascunhos' : 'Resumo Financeiro do Mês'}
             </h2>
             {!modoRascunhosGlobais && despesasPorClassificarGlobais.length > 0 && (
-              <button onClick={() => { setModoRascunhosGlobais(true); setSelecionados([]); }} className="bg-amber-500 text-zinc-950 text-[10px] font-black px-3 py-1.5 rounded-full animate-pulse">
-                🔍 {despesasPorClassificarGlobais.length} rascunhos perdidos!
+              <button onClick={() => { setModoRascunhosGlobais(true); setSelecionados([]); }} className="bg-amber-500 text-zinc-950 text-[10px] font-black px-3 py-1.5 rounded-full animate-pulse shadow-[0_0_15px_rgba(245,158,11,0.4)]">
+                🔍 {despesasPorClassificarGlobais.length} rascunhos por classificar!
               </button>
             )}
-            {modoRascunhosGlobais && (<button onClick={() => { setModoRascunhosGlobais(false); setSelecionados([]); }} className="bg-zinc-800 text-white text-[10px] font-bold px-3 py-1.5 rounded-full">⬅ Voltar</button>)}
+            {modoRascunhosGlobais && (<button onClick={() => { setModoRascunhosGlobais(false); setSelecionados([]); }} className="bg-zinc-800 text-white text-[10px] font-bold px-3 py-1.5 rounded-full hover:bg-zinc-700">⬅ Voltar ao Resumo Analítico</button>)}
           </div>
           <input type="month" value={mesFiltro} onChange={(e) => { setMesFiltro(e.target.value); setModoRascunhosGlobais(false); setSelecionados([]); }} className="bg-zinc-900 border border-zinc-800 px-4 py-2 rounded-lg text-sm text-white" />
         </div>
 
+        {/* ========================================================================= */}
+        {/* DASHBOARD ANALÍTICO (O RAIO-X FINANCEIRO) */}
+        {/* ========================================================================= */}
+        {!modoRascunhosGlobais && (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            
+            {/* BLOCO 1: TOTAL */}
+            <div className="bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-800/80 p-6 rounded-[32px] shadow-xl flex flex-col justify-center">
+              <span className="text-[10px] font-bold text-red-500/80 uppercase tracking-widest">Total Gasto no Mês</span>
+              <div className="text-5xl font-black text-white font-mono mt-2 tracking-tighter">
+                {totalGastoMes.toFixed(2)}<span className="text-2xl text-red-500 ml-1">€</span>
+              </div>
+              <p className="text-xs text-zinc-500 mt-4">Composto por {despesasFiltradas.filter(d => d.categoria !== '⚠️ Por Classificar').length} registos validados.</p>
+            </div>
+
+            {/* BLOCO 2: GASTOS POR CATEGORIA (CENTROS DE CUSTO) */}
+            <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-[32px] shadow-xl">
+              <span className="text-[10px] font-bold text-orange-400 uppercase tracking-widest block mb-4">Centros de Custo (Top Categorias)</span>
+              <div className="space-y-3">
+                {categoriasOrdenadas.length === 0 ? <p className="text-zinc-600 italic text-xs">Sem categorias classificadas.</p> : null}
+                {categoriasOrdenadas.map(([cat, valor]) => {
+                  const percentagem = totalGastoMes > 0 ? (valor / totalGastoMes) * 100 : 0;
+                  return (
+                    <div key={cat}>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="font-bold text-zinc-200">{cat}</span>
+                        <span className="font-mono text-zinc-400">{valor.toFixed(2)}€</span>
+                      </div>
+                      <div className="w-full bg-zinc-950 rounded-full h-1.5">
+                        <div className="bg-orange-500 h-1.5 rounded-full" style={{ width: `${percentagem}%` }}></div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* BLOCO 3: GASTOS POR FORNECEDOR (QUEM LEVA O SEU DINHEIRO) */}
+            <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-[32px] shadow-xl">
+              <span className="text-[10px] font-bold text-green-400 uppercase tracking-widest block mb-4">Top 5 Fornecedores</span>
+              <div className="space-y-3">
+                {fornecedoresOrdenados.length === 0 ? <p className="text-zinc-600 italic text-xs">Sem fornecedores identificados.</p> : null}
+                {fornecedoresOrdenados.map(([forn, valor]) => {
+                  const percentagem = totalGastoMes > 0 ? (valor / totalGastoMes) * 100 : 0;
+                  return (
+                    <div key={forn}>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="font-bold text-zinc-200 truncate w-3/4">{forn}</span>
+                        <span className="font-mono text-zinc-400">{valor.toFixed(2)}€</span>
+                      </div>
+                      <div className="w-full bg-zinc-950 rounded-full h-1.5">
+                        <div className="bg-green-500 h-1.5 rounded-full" style={{ width: `${percentagem}%` }}></div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+          </div>
+        )}
+        {/* ========================================================================= */}
+
+        {/* BARRA DE AÇÕES EM MASSA */}
         {selecionados.length > 0 && (
           <div className="bg-orange-600/20 border border-orange-500 p-4 rounded-2xl flex justify-between items-center shadow-lg">
             <span className="text-orange-400 font-bold text-sm">{selecionados.length} item(ns) selecionado(s)</span>
@@ -162,7 +269,8 @@ export default function GestaoDespesas() {
               <tr>
                 <th className="p-4 w-10"><input type="checkbox" checked={despesasFiltradas.length > 0 && selecionados.length === despesasFiltradas.length} onChange={toggleTodos} className="w-4 h-4 rounded accent-orange-500" /></th>
                 <th className="p-4">Data</th>
-                <th className="p-4">Descrição do Item / Fatura</th>
+                <th className="p-4">Fornecedor Lógico</th>
+                <th className="p-4">Descrição Original</th>
                 <th className="p-4">Categoria</th>
                 <th className="p-4 text-center">Estado</th>
                 <th className="p-4 text-right">Valor</th>
@@ -172,11 +280,18 @@ export default function GestaoDespesas() {
             <tbody className="divide-y divide-zinc-800/50 text-sm">
               {despesasFiltradas.map(desp => {
                 const isRascunho = desp.categoria === '⚠️ Por Classificar';
+                const fornecedorLogico = extrairFornecedor(desp.descricao);
+                
                 return (
                   <tr key={desp.id} className={`${selecionados.includes(desp.id) ? 'bg-orange-950/30' : isRascunho ? 'bg-amber-950/10' : ''}`} onClick={() => toggleSelecionado(desp.id)}>
                     <td className="p-4"><input type="checkbox" checked={selecionados.includes(desp.id)} onChange={() => toggleSelecionado(desp.id)} className="w-4 h-4 accent-orange-500" /></td>
                     <td className="p-4 text-zinc-400 font-mono text-xs">{desp.data_despesa}</td>
-                    <td className="p-4 text-white font-bold whitespace-normal">{desp.descricao}</td>
+                    
+                    {/* Fornecedor extraído pela nossa função */}
+                    <td className="p-4 text-zinc-300 max-w-[150px] truncate font-bold text-[11px] uppercase tracking-wider">{fornecedorLogico}</td>
+                    
+                    <td className="p-4 text-zinc-300 whitespace-normal text-xs">{desp.descricao}</td>
+                    
                     <td className="p-4"><span className={`text-[10px] px-2 py-1 rounded font-bold uppercase ${isRascunho ? 'bg-amber-500/20 text-amber-400' : 'bg-zinc-800 text-zinc-300'}`}>{desp.categoria}</span></td>
                     <td className="p-4 text-center">{desp.pago ? <span className="text-green-400 text-[10px] font-bold">✓ PAGO</span> : <span className="text-red-400 text-[10px] font-bold">PENDENTE</span>}</td>
                     <td className="p-4 text-right font-black text-red-400">{Number(desp.valor).toFixed(2)}€</td>
@@ -194,7 +309,7 @@ export default function GestaoDespesas() {
           <div className="bg-zinc-900 w-full max-w-xl rounded-3xl p-6 flex flex-col max-h-[90vh]">
             <h2 className="text-xl font-black mb-4">{modoBulk ? '📦 Classificação em Massa' : '✏️ Editar Fatura'}</h2>
             
-            <form onSubmit={salvarDespesa} className="flex-1 overflow-y-auto space-y-4">
+            <form onSubmit={salvarDespesa} className="flex-1 overflow-y-auto space-y-4 custom-scrollbar">
               {!modoBulk && (
                 <>
                   <input required type="text" value={formDespesa.descricao} onChange={e => setFormDespesa({...formDespesa, descricao: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm text-zinc-300" />
@@ -219,7 +334,7 @@ export default function GestaoDespesas() {
                   <h4 className="text-[10px] font-black text-zinc-400 mb-2 uppercase">🧾 Raio-X da Fatura: {faturaRef} (Total: {valorTotalDestaFatura.toFixed(2)}€)</h4>
                   {itensDaMesmaFatura.map(rel => (
                     <div key={rel.id} className="flex justify-between text-[11px] py-1 border-b border-zinc-800/30">
-                       <span className="truncate pr-2 w-3/4">{rel.descricao.split('📄')[0]}</span>
+                       <span className={`truncate pr-2 w-3/4 ${rel.id === formDespesa.id ? 'text-orange-400 font-bold' : ''}`}>{rel.descricao.split('📄')[0]}</span>
                        <span className="text-orange-400 font-bold">{Number(rel.valor).toFixed(2)}€</span>
                     </div>
                   ))}
