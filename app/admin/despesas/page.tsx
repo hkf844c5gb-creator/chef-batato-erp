@@ -22,6 +22,7 @@ const categoriasDespesas = [
   'Devoluções & Reembolsos',
   'Fatura Física',
   'Extrato Bancário',
+  'Taxas e Comissões (Glovo/Uber)',
   'Outros'
 ];
 
@@ -117,11 +118,9 @@ export default function GestaoDespesas() {
       if (formDespesa.id) {
         const { error } = await supabase.from('despesas').update(dados).eq('id', formDespesa.id);
         if (error) throw error;
-        alert('Despesa atualizada!');
       } else {
         const { error } = await supabase.from('despesas').insert([dados]);
         if (error) throw error;
-        alert('Despesa registada com sucesso!');
       }
 
       setModalAberto(false);
