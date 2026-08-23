@@ -9,7 +9,8 @@ interface Despesa {
   categoria: string;
   valor: number;
   data_despesa: string;
-  pago: boolean; 
+  metodo_pagamento: string;
+  status: string; 
 }
 
 const categoriasDespesas = [
@@ -41,7 +42,7 @@ export default function GestaoDespesas() {
 
   const [formDespesa, setFormDespesa] = useState<Despesa>({
     id: '', descricao: '', categoria: 'Ingredientes & Mercadoria', valor: 0,
-    data_despesa: new Date().toISOString().split('T')[0], pago: true 
+    data_despesa: new Date().toISOString().split('T')[0], metodo_pagamento: 'Conciliação Automática', status: 'Validado' 
   });
 
   async function carregarDespesas() {
@@ -99,13 +100,13 @@ export default function GestaoDespesas() {
   const abrirClassificacaoEmMassa = () => {
     if (selecionados.length === 0) return;
     setModoBulk(true);
-    setFormDespesa({ id: '', descricao: '', valor: 0, data_despesa: '', categoria: 'Ingredientes & Mercadoria', pago: true });
+    setFormDespesa({ id: '', descricao: '', valor: 0, data_despesa: '', metodo_pagamento: 'Conciliação Automática', categoria: 'Ingredientes & Mercadoria', status: 'Validado' });
     setModalAberto(true);
   };
 
   const abrirEditarDespesa = (d: Despesa) => {
     setModoBulk(false);
-    setFormDespesa({ ...d, pago: d.pago !== false }); 
+    setFormDespesa({ ...d, status: d.status || 'Validado' }); 
     setModalAberto(true);
   };
 
@@ -116,19 +117,20 @@ export default function GestaoDespesas() {
     try {
       if (modoBulk) {
         if (formDespesa.categoria === '⚠️ Por Classificar') throw new Error("Escolha uma categoria.");
-        const { error } = await supabase.from('despesas').update({ categoria: formDespesa.categoria, pago: formDespesa.pago }).in('id', selecionados);
+        const { error } = await supabase.from('despesas').update({ categoria: formDespesa.categoria, status: formDespesa.status }).in('id', selecionados);
         if (error) throw error;
         setSelecionados([]);
       } else {
         if (!formDespesa.descricao.trim() || formDespesa.valor <= 0) throw new Error('Preencha a descrição e um valor válido.');
         
-        // REMOVIDO: mes_referencia e fornecedor
+        // COLUNAS RÍGIDAS (IGUAIS AO SEU SUPABASE)
         const dados = { 
           descricao: formDespesa.descricao, 
           categoria: formDespesa.categoria, 
           valor: formDespesa.valor, 
           data_despesa: formDespesa.data_despesa, 
-          pago: formDespesa.pago 
+          metodo_pagamento: formDespesa.metodo_pagamento,
+          status: formDespesa.status 
         };
 
         if (formDespesa.id) {
@@ -150,6 +152,13 @@ export default function GestaoDespesas() {
     if (!confirm(`Deseja excluir as ${selecionados.length} despesas?`)) return;
     await supabase.from('despesas').delete().in('id', selecionados);
     setSelecionados([]); carregarDespesas();
+  };
+
+  const renderizarStatus = (status: string) => {
+    if (status === 'Validado') return <span className="bg-green-500/10 text-green-400 border border-green-500/20 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider">✓ PAGA</span>;
+    if (status === 'Falta Fatura') return <span className="bg-red-500/10 text-red-400 border border-red-500/20 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider">⚠️ FALTA DOC</span>;
+    if (status === 'Falta Pagamento' || status === 'Pendente') return <span className="bg-orange-500/10 text-orange-400 border border-orange-500/20 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider">⏳ PENDENTE</span>;
+    return <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider animate-pulse">📝 CLASSIFICAR</span>;
   };
 
   const faturaRef = formDespesa.descricao.includes('📄') ? formDespesa.descricao.split('📄')[1].trim() : null;
@@ -255,7 +264,7 @@ export default function GestaoDespesas() {
                     <td className="p-4 text-zinc-300 max-w-[150px] truncate font-bold text-[11px] uppercase tracking-wider">{fornecedorLogico}</td>
                     <td className="p-4 text-zinc-300 whitespace-normal text-xs">{desp.descricao}</td>
                     <td className="p-4"><span className={`text-[10px] px-2 py-1 rounded font-bold uppercase ${isRascunho ? 'bg-amber-500/20 text-amber-400' : 'bg-zinc-800 text-zinc-300'}`}>{desp.categoria}</span></td>
-                    <td className="p-4 text-center">{desp.pago ? <span className="text-green-400 text-[10px] font-bold">✓ PAGO</span> : <span className="text-red-400 text-[10px] font-bold">PENDENTE</span>}</td>
+                    <td className="p-4 text-center">{renderizarStatus(desp.status)}</td>
                     <td className="p-4 text-right font-black text-red-400">{Number(desp.valor).toFixed(2)}€</td>
                     <td className="p-4 text-center"><button onClick={(e) => { e.stopPropagation(); abrirEditarDespesa(desp); }} className="bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 rounded-lg text-xs font-bold">{isRascunho ? 'Classificar' : 'Editar'}</button></td>
                   </tr>
@@ -286,9 +295,10 @@ export default function GestaoDespesas() {
               </select>
 
               <label className="block text-xs font-bold text-zinc-400 mt-4">Estado do Pagamento</label>
-              <select value={formDespesa.pago ? 'true' : 'false'} onChange={e => setFormDespesa({...formDespesa, pago: e.target.value === 'true'})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm text-green-400 font-bold">
-                <option value="true">✓ Sim, já está Paga</option>
-                <option value="false">⏳ Não, falta Pagar</option>
+              <select value={formDespesa.status} onChange={e => setFormDespesa({...formDespesa, status: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm text-green-400 font-bold">
+                <option value="Validado">✓ Sim, já está Paga</option>
+                <option value="Pendente">⏳ Não, falta Pagar</option>
+                <option value="Falta Fatura">⚠️ Falta anexar Fatura</option>
               </select>
 
               {!modoBulk && faturaRef && itensDaMesmaFatura.length > 0 && (

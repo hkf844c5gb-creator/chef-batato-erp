@@ -124,13 +124,14 @@ export default function ConciliacaoPage() {
         try { dataDespesaGravar = new Date(dataFaturaDoc).toISOString().split('T')[0]; } catch(e) {}
       }
 
-      // REMOVIDO: mes_referencia e fornecedor
+      // USO ESTRITO DAS COLUNAS EXISTENTES NO SEU BANCO DE DADOS
       const { error } = await supabase.from('despesas').insert([{
         descricao: descFinal,
         categoria: '⚠️ Por Classificar', 
         valor: valorReal,
         data_despesa: dataDespesaGravar,
-        pago: true 
+        metodo_pagamento: 'Conciliação Automática',
+        status: 'Validado' // Garante que entram como pagas!
       }]);
 
       if (error) throw new Error(`Erro na Base de Dados ao gravar o item "${nomeRealDoItem}": ${error.message}`);
@@ -231,7 +232,7 @@ export default function ConciliacaoPage() {
     <div className="p-8 font-sans max-w-7xl mx-auto relative">
       <div className="mb-8 border-b border-zinc-800 pb-4">
         <h1 className="text-3xl font-bold text-orange-500 flex items-center gap-3">
-          Conciliador Inteligente <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full">v7 Resiliente</span>
+          Conciliador Inteligente <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full">v8 Estável</span>
         </h1>
       </div>
 
