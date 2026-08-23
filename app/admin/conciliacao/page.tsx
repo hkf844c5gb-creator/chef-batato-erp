@@ -117,7 +117,6 @@ export default function ConciliacaoPage() {
       const nomeRealDoItem = item.nome_extraido || item.nome || item.descricao || 'Despesa Extraída';
       const nomeDaFaturaSeguro = arquivoNome ? arquivoNome : 'Doc. Extraído';
       
-      // Juntei o fornecedor à descrição para a informação não se perder!
       const descFinal = `[${qtdItem} ${unidItem}] ${nomeRealDoItem} | ${fornecedorFormatado} 📄 ${nomeDaFaturaSeguro}`;
       
       let dataDespesaGravar = new Date().toISOString().split('T')[0];
@@ -125,13 +124,12 @@ export default function ConciliacaoPage() {
         try { dataDespesaGravar = new Date(dataFaturaDoc).toISOString().split('T')[0]; } catch(e) {}
       }
 
-      // ⚠️ REMOVIDO O 'fornecedor' AQUI TAMBÉM
+      // REMOVIDO: mes_referencia e fornecedor
       const { error } = await supabase.from('despesas').insert([{
         descricao: descFinal,
         categoria: '⚠️ Por Classificar', 
         valor: valorReal,
         data_despesa: dataDespesaGravar,
-        mes_referencia: mesRef,
         pago: true 
       }]);
 
@@ -233,7 +231,7 @@ export default function ConciliacaoPage() {
     <div className="p-8 font-sans max-w-7xl mx-auto relative">
       <div className="mb-8 border-b border-zinc-800 pb-4">
         <h1 className="text-3xl font-bold text-orange-500 flex items-center gap-3">
-          Conciliador Inteligente <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full">v6 Garantia Total</span>
+          Conciliador Inteligente <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full">v7 Resiliente</span>
         </h1>
       </div>
 
