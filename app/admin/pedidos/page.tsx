@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
 export const imprimirReciboTermico = (pedido: any) => {
@@ -19,7 +19,6 @@ const getHojeLisboa = () => {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Lisbon' }).format(new Date());
 };
 
-// ✂️ MODO CRU: Lê EXATAMENTE os caracteres do data_pedido ignorando qualquer conversão de horas!
 const extrairDataEstatica = (dataIso: string) => {
   if (!dataIso) return '';
   return dataIso.substring(0, 10);
@@ -46,24 +45,45 @@ export default function GestaoPedidos() {
 
   const supabase = createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 
-  async function carregarDadosIniciais() {
+  // CARREGA APENAS CONFIGURAÇÕES ESTÁTICAS UMA VEZ
+  useEffect(() => {
+    const carregarConfiguracoes = async () => {
+      try {
+        const { data: dataProds } = await supabase.from('produtos').select('*').eq('ativo', true);
+        if (dataProds) setProdutosDB(dataProds);
+
+        const { data: dataEsts } = await supabase.from('estafetas').select('nome').eq('ativo', true).order('nome', { ascending: true });
+        if (dataEsts) setListaEstafetas(dataEsts);
+
+        const { data: dataCombos } = await supabase.from('combos').select(`*, combo_grupos (*, combo_grupo_produtos (*, produto:produtos (*)))`).eq('ativo', true).eq('esgotado', false);
+        if (dataCombos) {
+          const combosOrdenados = dataCombos.map(cb => ({
+            ...cb, combo_grupos: (cb.combo_grupos || []).sort((a: any, b: any) => a.ordem - b.ordem)
+          }));
+          setCombosDB(combosOrdenados);
+        }
+      } catch (err) {
+        console.error('Erro ao carregar configurações:', err);
+      }
+    };
+    carregarConfiguracoes();
+  }, []);
+
+  // ⚠️ OTIMIZAÇÃO CRÍTICA: O Filtro é feito AGORA na própria Base de Dados!
+  const buscarPedidosDaBase = useCallback(async () => {
     setLoading(true);
     try {
-      const { data: dataProds } = await supabase.from('produtos').select('*').eq('ativo', true);
-      if (dataProds) setProdutosDB(dataProds);
+      let query = supabase.from('pedidos').select(`*, itens:itens_pedido (*)`).order('numero_pedido', { ascending: false });
 
-      const { data: dataEsts } = await supabase.from('estafetas').select('nome').eq('ativo', true).order('nome', { ascending: true });
-      if (dataEsts) setListaEstafetas(dataEsts);
-
-      const { data: dataCombos } = await supabase.from('combos').select(`*, combo_grupos (*, combo_grupo_produtos (*, produto:produtos (*)))`).eq('ativo', true).eq('esgotado', false);
-      if (dataCombos) {
-        const combosOrdenados = dataCombos.map(cb => ({
-          ...cb, combo_grupos: (cb.combo_grupos || []).sort((a: any, b: any) => a.ordem - b.ordem)
-        }));
-        setCombosDB(combosOrdenados);
+      // O Supabase filtra antes de enviar para o seu computador (NÃO TRAVA MAIS!)
+      if (dataInicio) {
+        query = query.gte('data_pedido', dataInicio);
+      }
+      if (dataFim) {
+        query = query.lte('data_pedido', dataFim);
       }
 
-      const { data, error } = await supabase.from('pedidos').select(`*, itens:itens_pedido (*)`).order('numero_pedido', { ascending: false });
+      const { data, error } = await query;
       if (error) throw error;
 
       if (data && data.length > 0) {
@@ -72,8 +92,6 @@ export default function GestaoPedidos() {
           const chaveNum = String(linha.numero_pedido);
           const taxa = Number(linha.taxa_entrega || 0);
           const descontoLinha = Number(linha.desconto || 0);
-          
-          // 🎯 FORÇA ESTRITA: O sistema agora só olha para a 'data_pedido' e NUNCA para o 'criado_em' se a 'data_pedido' existir.
           const dataApenasDia = linha.data_pedido ? extrairDataEstatica(linha.data_pedido) : extrairDataEstatica(linha.criado_em);
 
           const itensDestaLinha = (linha.itens || []).map((item: any) => {
@@ -117,11 +135,22 @@ export default function GestaoPedidos() {
         setPedidos([]);
       }
     } catch (err) {
-      console.error('Erro ao carregar dados:', err);
+      console.error('Erro ao buscar pedidos:', err);
     } finally {
       setLoading(false);
     }
-  }
+  }, [dataInicio, dataFim]); // Recarrega SEMPRE que as datas mudam!
+
+  useEffect(() => {
+    buscarPedidosDaBase();
+    
+    // Atualiza automaticamente se alguém lançar um pedido novo na mesma data
+    const canalAtualizacao = supabase.channel('schema-db-changes').on('postgres_changes', { event: '*', schema: 'public', table: 'pedidos' }, () => { 
+      buscarPedidosDaBase(); 
+    }).subscribe();
+    
+    return () => { supabase.removeChannel(canalAtualizacao); };
+  }, [buscarPedidosDaBase]);
 
   const liquidarCaderninho = async (pedidoNum: number) => {
     try {
@@ -319,38 +348,26 @@ export default function GestaoPedidos() {
       }
 
       setModalEditar(false);
-      carregarDadosIniciais();
+      buscarPedidosDaBase();
     } catch (err: any) { alert(`Erro ao salvar edição: ${err.message}`); } finally { setSalvando(false); }
   };
 
-  useEffect(() => {
-    carregarDadosIniciais();
-    const canalAtualizacao = supabase.channel('schema-db-changes').on('postgres_changes', { event: '*', schema: 'public', table: 'pedidos' }, () => { carregarDadosIniciais(); }).subscribe();
-    return () => { supabase.removeChannel(canalAtualizacao); };
-  }, []);
-
-  const pedidosFiltrados = useMemo(() => {
-    const temFiltroAtivo = dataInicio !== '' || dataFim !== '' || termoPesquisa.trim() !== '';
-    if (!temFiltroAtivo) return [];
-
-    return pedidos.filter(pedido => {
-      // Usa a data estritamente como está guardada
-      const dataPedidoLimpa = extrairDataEstatica(pedido.data_pedido); 
-      
-      if (dataInicio && dataPedidoLimpa < dataInicio) return false;
-      if (dataFim && dataPedidoLimpa > dataFim) return false;
-      if (termoPesquisa.trim() !== '') {
-        const termo = termoPesquisa.toLowerCase().trim();
+  // O Filtro Local agora serve APENAS para pesquisa de Nome e Ordem, a data já vem certa da BD.
+  const pedidosExibidos = useMemo(() => {
+    let filtrados = [...pedidos];
+    if (termoPesquisa.trim() !== '') {
+      const termo = termoPesquisa.toLowerCase().trim();
+      filtrados = filtrados.filter(pedido => {
         const nomeCliente = (pedido.cliente || '').toLowerCase();
         const numPedidoStr = String(pedido.numero_pedido);
-        if (!nomeCliente.includes(termo) && !numPedidoStr.includes(termo)) return false;
-      }
-      return true;
-    }).sort((a, b) => {
+        return nomeCliente.includes(termo) || numPedidoStr.includes(termo);
+      });
+    }
+    return filtrados.sort((a, b) => {
       if (ordemDirecao === 'desc') return b.numero_pedido - a.numero_pedido;
       return a.numero_pedido - b.numero_pedido;
     });
-  }, [pedidos, dataInicio, dataFim, termoPesquisa, ordemDirecao]);
+  }, [pedidos, termoPesquisa, ordemDirecao]);
 
   const limparFiltros = () => { setDataInicio(''); setDataFim(''); setTermoPesquisa(''); };
   const selecionarHoje = () => {
@@ -358,9 +375,9 @@ export default function GestaoPedidos() {
     setDataInicio(hoje); setDataFim(hoje);
   };
 
-  const faturamentoTotal = pedidosFiltrados.reduce((acc, p) => acc + p.total_geral, 0);
-  const totalDescontos = pedidosFiltrados.reduce((acc, p) => acc + p.desconto, 0);
-  const pendenteCaderninho = pedidosFiltrados.filter(p => !p.pago).reduce((acc, p) => acc + p.total_geral, 0);
+  const faturamentoTotal = pedidosExibidos.reduce((acc, p) => acc + p.total_geral, 0);
+  const totalDescontos = pedidosExibidos.reduce((acc, p) => acc + p.desconto, 0);
+  const pendenteCaderninho = pedidosExibidos.filter(p => !p.pago).reduce((acc, p) => acc + p.total_geral, 0);
 
   const getCorCanal = (canal: string) => {
     if (canal === 'Glovo') return 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20';
@@ -377,7 +394,7 @@ export default function GestaoPedidos() {
           <span className="text-2xl">📓</span>
           <h1 className="text-xl font-bold tracking-wide">Registo e Controlo de Vendas</h1>
         </div>
-        <button onClick={carregarDadosIniciais} className="bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold px-4 py-2 rounded-xl border border-zinc-700 transition-all">
+        <button onClick={buscarPedidosDaBase} className="bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold px-4 py-2 rounded-xl border border-zinc-700 transition-all">
           🔄 Sincronizar Dados
         </button>
       </header>
@@ -410,7 +427,7 @@ export default function GestaoPedidos() {
             </div>
             <div className="flex items-center gap-2">
               <button type="button" onClick={selecionarHoje} className="bg-orange-600 hover:bg-orange-500 text-xs font-bold px-4 py-2.5 rounded-xl transition-all shadow-md">Hoje</button>
-              <button type="button" onClick={limparFiltros} disabled={!dataInicio && !dataFim && !termoPesquisa} className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-xs font-bold px-4 py-2.5 rounded-xl border border-zinc-700 transition-all">Limpar Filtros</button>
+              <button type="button" onClick={limparFiltros} disabled={!dataInicio && !dataFim && !termoPesquisa} className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-xs font-bold px-4 py-2.5 rounded-xl border border-zinc-700 transition-all">Limpar</button>
             </div>
           </div>
         </div>
@@ -429,14 +446,14 @@ export default function GestaoPedidos() {
       </div>
 
       <main className="flex-1 px-6 pb-6 overflow-y-auto">
-        {loading ? ( <div className="text-center text-zinc-500 py-24">A carregar registos...</div> ) : pedidosFiltrados.length === 0 ? (
+        {loading ? ( <div className="text-center text-zinc-500 py-24">A carregar registos...</div> ) : pedidosExibidos.length === 0 ? (
           <div className="text-center text-zinc-500 py-24 bg-zinc-900/20 border border-dashed border-zinc-800 rounded-2xl max-w-xl mx-auto space-y-2">
             <p className="text-base font-bold text-zinc-300">Nenhum pedido para exibir</p>
             <p className="text-xs text-zinc-500">Utilize os filtros para visualizar os pedidos desta data.</p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {pedidosFiltrados.map(ped => (
+            {pedidosExibidos.map(ped => (
               <div key={ped.id} className="bg-zinc-900 border border-zinc-800/80 rounded-2xl p-4 flex flex-col justify-between shadow-md hover:border-zinc-700/60 transition-all relative group">
                 <div className="absolute top-3 right-3 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button onClick={() => imprimirReciboTermico(ped)} className="w-7 h-7 bg-zinc-800 hover:bg-green-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Imprimir Talão">🖨️</button>

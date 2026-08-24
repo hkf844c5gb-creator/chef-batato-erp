@@ -7,12 +7,9 @@ import { createBrowserClient } from '@supabase/ssr';
 // 🖨️ MOTOR DE IMPRESSÃO TÉRMICA (MODO ESC/POS DIRETO - MODO PALMBITES)
 // ============================================================================
 export const imprimirReciboTermico = (pedido: any) => {
-  // VERIFICA SE ESTAMOS A CORRER NA APP ELECTRON DO WINDOWS
   if (typeof window !== 'undefined' && (window as any).imprimirSilencioso) {
-    // Envia os dados reais do pedido em formato JSON puro para o main.js tratar!
     (window as any).imprimirSilencioso(JSON.stringify(pedido));
   } else {
-    // Caso seja aberto num telemóvel/browser normal, avisa que não imprime.
     alert("ERRO: O Motor ESC/POS profissional só funciona dentro do sistema instalado no Windows.");
   }
 };
@@ -85,9 +82,7 @@ export default function CaixaPDV() {
   const [taxaEntrega, setTaxaEntrega] = useState('0.00');
   const [descontoManual, setDescontoManual] = useState('0.00');
   
-  // ✅ COMEÇA SEMPRE DESMARCADO (false)
   const [imprimirAtivado, setImprimirAtivado] = useState(false);
-  
   const [isProcessando, setIsProcessando] = useState(false);
 
   const [mostrarModalCombo, setMostrarModalCombo] = useState(false);
@@ -147,25 +142,14 @@ export default function CaixaPDV() {
         categoria: (p.categoria || p.tipo || '').toLowerCase().trim(),
         ativo: true
       })).filter((p: any) => 
-        p.codigo !== 'ADI001' && 
-        p.categoria !== 'embalagem' && 
-        p.categoria !== 'material' &&
-        p.categoria !== 'uso interno'
+        p.codigo !== 'ADI001' && p.categoria !== 'embalagem' && p.categoria !== 'material' && p.categoria !== 'uso interno'
       );
 
       setProdutos(produtosFormatados);
 
+      // ⚠️ OTIMIZAÇÃO: Removemos a leitura pesada da tabela de Pedidos aqui.
+      // Vamos ler APENAS a tabela de clientes cadastrados, que é muito mais leve e rápida.
       const clientesMap = new Map();
-      const { data: dataPedidos } = await supabase.from('pedidos').select('cliente, contacto_cliente');
-      if (dataPedidos) {
-        dataPedidos.forEach((p: any) => {
-          const nome = p.cliente ? p.cliente.trim() : '';
-          if (nome && !clientesMap.has(nome.toLowerCase())) {
-            clientesMap.set(nome.toLowerCase(), { id: `hist_${nome}`, nome: nome, contacto: p.contacto_cliente || '', morada: '' });
-          }
-        });
-      }
-
       const { data: dataClientesTable } = await supabase.from('clientes').select('*');
       if (dataClientesTable) {
         dataClientesTable.forEach((c: any) => {
@@ -209,6 +193,7 @@ export default function CaixaPDV() {
     }
   }
 
+  // Só corre 1 vez ao abrir a página (ou mudar de canal), poupando muita memória!
   useEffect(() => { carregarMenuCompleto(); }, [canal]);
 
   const getPrecoPorCanal = (prod: any) => {
@@ -459,10 +444,17 @@ export default function CaixaPDV() {
         await supabase.from('clientes').insert([{ nome: nomeDoCliente, contacto: contactoCliente.trim(), morada: moradaCliente.trim() }]);
       }
 
-      const { data: todosPedidos } = await supabase.from('pedidos').select('numero_pedido');
+      // ⚠️ OTIMIZAÇÃO DE ALTA PERFORMANCE (Evita Travamentos): 
+      // Busca apenas os últimos 50 pedidos em vez da base inteira, para descobrir o maior número.
+      const { data: ultimosPedidos } = await supabase
+        .from('pedidos')
+        .select('numero_pedido')
+        .order('id', { ascending: false })
+        .limit(50);
+        
       let maiorNumero = 365;
-      if (todosPedidos) {
-        todosPedidos.forEach(p => {
+      if (ultimosPedidos) {
+        ultimosPedidos.forEach(p => {
           const num = parseInt(p.numero_pedido, 10);
           if (!isNaN(num) && num > maiorNumero) maiorNumero = num;
         });
@@ -523,9 +515,7 @@ export default function CaixaPDV() {
           
           if (errStripe) console.error("Aviso: Falha ao lançar despesa Stripe, mas pedido foi salvo:", errStripe);
         }
-        // ============================================================================
 
-        // ✅ IMPRESSÃO CONDICIONAL NO MODO ESC/POS DIRETO
         if (imprimirAtivado) {
           const dadosRecibo = {
             numero_pedido: novoNumeroStr,
@@ -549,14 +539,22 @@ export default function CaixaPDV() {
         }
       }
       
-      alert(`Pedido #${novoNumeroStr} registado com sucesso!`);
+      // ⚠️ OTIMIZAÇÃO: Limpa a tela localmente sem precisar de puxar a base de dados toda de novo!
       setCarrinho([]); 
       setCliente(''); 
       setContactoCliente(''); 
       setMoradaCliente('');
       setTaxaEntrega('0.00'); 
       setDescontoManual('0.00');
-      carregarMenuCompleto();
+      
+      // Adiciona o cliente novo à lista de sugestões imediatamente na memória (se não existir)
+      setListaClientesCadastrados(prev => {
+        if (!prev.some(c => c.nome.toLowerCase() === nomeDoCliente.toLowerCase())) {
+          return [...prev, { id: 'novo', nome: nomeDoCliente, contacto: contactoCliente.trim(), morada: moradaCliente.trim() }];
+        }
+        return prev;
+      });
+
     } catch (err: any) { 
       alert(`Erro ao gravar pedido: ${err.message}`); 
     } finally {
