@@ -108,17 +108,20 @@ export default function CaixaPDV() {
       { value: 'Dinheiro', label: 'Dinheiro' },
       { value: 'MBWay', label: 'MBWay' },
       { value: 'Multibanco', label: 'Multibanco' },
+      { value: 'Stripe', label: '💳 Stripe (Cartão/Online)' },
       { value: 'Caderninho', label: '📓 Caderninho (Pagar depois)' }
     ],
     'Palmbites': [
       { value: 'Dinheiro', label: 'Dinheiro' },
       { value: 'MBWay', label: 'MBWay' },
-      { value: 'Multibanco', label: 'Multibanco' }
+      { value: 'Multibanco', label: 'Multibanco' },
+      { value: 'Stripe', label: '💳 Stripe (Cartão/Online)' }
     ],
     'Balcão': [
       { value: 'Dinheiro', label: 'Dinheiro' },
       { value: 'MBWay', label: 'MBWay' },
       { value: 'Multibanco', label: 'Multibanco' },
+      { value: 'Stripe', label: '💳 Stripe (Cartão/Online)' },
       { value: 'Caderninho', label: '📓 Caderninho (Pagar depois)' }
     ]
   };
@@ -501,6 +504,27 @@ export default function CaixaPDV() {
         
         await descontarStockAutomaticamente(carrinho, novoNumeroStr);
 
+        // ============================================================================
+        // 💳 AUTOMAÇÃO: LANÇAR TAXA STRIPE NAS DESPESAS (0.25€ + 1.5%)
+        // ============================================================================
+        if (formaPagamento === 'Stripe') {
+          const taxaFixa = 0.25;
+          const taxaVariavel = totalGeral * 0.015;
+          const custoStripeFinal = Number((taxaFixa + taxaVariavel).toFixed(2));
+
+          const { error: errStripe } = await supabase.from('despesas').insert([{
+            descricao: `Comissão Stripe | Stripe 📄 Pedido #${novoNumeroStr}`,
+            categoria: 'Taxas e Comissões (Glovo/Uber)',
+            valor: custoStripeFinal,
+            data_despesa: dataPedido,
+            metodo_pagamento: 'Débito Automático Stripe',
+            status: 'Validado' // A taxa já foi cobrada na fonte!
+          }]);
+          
+          if (errStripe) console.error("Aviso: Falha ao lançar despesa Stripe, mas pedido foi salvo:", errStripe);
+        }
+        // ============================================================================
+
         // ✅ IMPRESSÃO CONDICIONAL NO MODO ESC/POS DIRETO
         if (imprimirAtivado) {
           const dadosRecibo = {
@@ -749,7 +773,17 @@ export default function CaixaPDV() {
               <div className="flex justify-between items-center text-zinc-400 text-xs"><span>Subtotal:</span><span className="text-white font-medium">{subtotalProdutos.toFixed(2)}€</span></div>
               {parseFloat(descontoManual) > 0 && <div className="flex justify-between items-center text-red-400 text-xs"><span>Desconto:</span><span>-{parseFloat(descontoManual).toFixed(2)}€</span></div>}
               <div className="flex justify-between items-center text-zinc-400 text-xs"><span>Taxa de Entrega:</span><span className="text-white font-medium">{parseFloat(taxaEntrega).toFixed(2)}€</span></div>
+              
+              {/* ALERTA DE TAXA STRIPE NO PDV */}
+              {formaPagamento === 'Stripe' && (
+                <div className="flex justify-between items-center text-amber-500/80 text-[10px] border-t border-zinc-800/50 pt-2">
+                  <span>Custo Stripe (Auto):</span>
+                  <span>- {((totalGeral * 0.015) + 0.25).toFixed(2)}€</span>
+                </div>
+              )}
+
               <div className="flex justify-between items-center border-t border-zinc-800 pt-2 text-zinc-300 text-sm"><span>Total a Cobrar:</span><span className="text-orange-500 font-black text-xl">{totalGeral.toFixed(2)}€</span></div>
+              
               <button 
                 onClick={finalizarVenda} 
                 disabled={isProcessando}
