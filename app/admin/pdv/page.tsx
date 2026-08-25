@@ -147,9 +147,12 @@ export default function CaixaPDV() {
 
       setProdutos(produtosFormatados);
 
-      // ⚠️ OTIMIZAÇÃO: Removemos a leitura pesada da tabela de Pedidos aqui.
-      // Vamos ler APENAS a tabela de clientes cadastrados, que é muito mais leve e rápida.
+      // =========================================================================
+      // ⚠️ CORREÇÃO AUTOCOMPLETE DE CLIENTES
+      // =========================================================================
       const clientesMap = new Map();
+      
+      // 1. Puxa os clientes oficiais da tabela
       const { data: dataClientesTable } = await supabase.from('clientes').select('*');
       if (dataClientesTable) {
         dataClientesTable.forEach((c: any) => {
@@ -160,7 +163,24 @@ export default function CaixaPDV() {
         });
       }
 
+      // 2. Puxa APENAS nome e contacto dos últimos pedidos (Leve e Rápido) para garantir o histórico
+      const { data: dataPedidosRecentes } = await supabase
+        .from('pedidos')
+        .select('cliente, contacto_cliente, endereco')
+        .order('criado_em', { ascending: false })
+        .limit(1000);
+
+      if (dataPedidosRecentes) {
+        dataPedidosRecentes.forEach((p: any) => {
+          const nome = p.cliente ? p.cliente.trim() : '';
+          if (nome && !clientesMap.has(nome.toLowerCase())) {
+            clientesMap.set(nome.toLowerCase(), { id: `hist_${nome}`, nome: nome, contacto: p.contacto_cliente || '', morada: p.endereco || '' });
+          }
+        });
+      }
+
       setListaClientesCadastrados(Array.from(clientesMap.values()));
+      // =========================================================================
 
       const { data: dataCombos, error: errCombos } = await supabase
         .from('combos')
@@ -193,7 +213,6 @@ export default function CaixaPDV() {
     }
   }
 
-  // Só corre 1 vez ao abrir a página (ou mudar de canal), poupando muita memória!
   useEffect(() => { carregarMenuCompleto(); }, [canal]);
 
   const getPrecoPorCanal = (prod: any) => {
@@ -444,23 +463,25 @@ export default function CaixaPDV() {
         await supabase.from('clientes').insert([{ nome: nomeDoCliente, contacto: contactoCliente.trim(), morada: moradaCliente.trim() }]);
       }
 
-      // ⚠️ OTIMIZAÇÃO DE ALTA PERFORMANCE (Evita Travamentos): 
-      // Busca apenas os últimos 50 pedidos em vez da base inteira, para descobrir o maior número.
-      const { data: ultimosPedidos } = await supabase
+      // =========================================================================
+      // ⚠️ CORREÇÃO CRÍTICA DO CÁLCULO DO NÚMERO DO PEDIDO (Fim das Duplicações)
+      // =========================================================================
+      // Ao invés de limitar os resultados ou ordenar de forma errada,
+      // Puxamos APENAS a coluna 'numero_pedido' (é super leve, não trava) e achamos o máximo matemático!
+      const { data: todosPedidosNum } = await supabase
         .from('pedidos')
-        .select('numero_pedido')
-        .order('id', { ascending: false })
-        .limit(50);
+        .select('numero_pedido');
         
       let maiorNumero = 365;
-      if (ultimosPedidos) {
-        ultimosPedidos.forEach(p => {
+      if (todosPedidosNum) {
+        todosPedidosNum.forEach(p => {
           const num = parseInt(p.numero_pedido, 10);
           if (!isNaN(num) && num > maiorNumero) maiorNumero = num;
         });
       }
 
       const novoNumeroStr = String(maiorNumero + 1);
+      // =========================================================================
 
       const { data: pedidoGravado, error: erroPedido } = await supabase.from('pedidos').insert([{ 
           numero_pedido: novoNumeroStr, 
@@ -510,7 +531,7 @@ export default function CaixaPDV() {
             valor: custoStripeFinal,
             data_despesa: dataPedido,
             metodo_pagamento: 'Débito Automático Stripe',
-            status: 'Validado' // A taxa já foi cobrada na fonte!
+            status: 'Validado' 
           }]);
           
           if (errStripe) console.error("Aviso: Falha ao lançar despesa Stripe, mas pedido foi salvo:", errStripe);
@@ -539,7 +560,7 @@ export default function CaixaPDV() {
         }
       }
       
-      // ⚠️ OTIMIZAÇÃO: Limpa a tela localmente sem precisar de puxar a base de dados toda de novo!
+      // Limpa a tela localmente
       setCarrinho([]); 
       setCliente(''); 
       setContactoCliente(''); 
@@ -772,7 +793,6 @@ export default function CaixaPDV() {
               {parseFloat(descontoManual) > 0 && <div className="flex justify-between items-center text-red-400 text-xs"><span>Desconto:</span><span>-{parseFloat(descontoManual).toFixed(2)}€</span></div>}
               <div className="flex justify-between items-center text-zinc-400 text-xs"><span>Taxa de Entrega:</span><span className="text-white font-medium">{parseFloat(taxaEntrega).toFixed(2)}€</span></div>
               
-              {/* ALERTA DE TAXA STRIPE NO PDV */}
               {formaPagamento === 'Stripe' && (
                 <div className="flex justify-between items-center text-amber-500/80 text-[10px] border-t border-zinc-800/50 pt-2">
                   <span>Custo Stripe (Auto):</span>
