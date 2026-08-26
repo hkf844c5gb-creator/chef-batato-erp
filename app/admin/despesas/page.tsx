@@ -262,6 +262,11 @@ export default function GestaoDespesas() {
 
   }, [despesasFiltradas, ordenacao]); 
 
+  // NOVO: Cálculo das Faturas Únicas Selecionadas
+  const faturasSelecionadasCount = useMemo(() => {
+    return despesasAgrupadas.filter(g => g.todasIds.some(id => selecionados.includes(id))).length;
+  }, [despesasAgrupadas, selecionados]);
+
   const totalGastoMes = despesasAgrupadas.reduce((sum, g) => sum + g.valorTotal, 0);
 
   const gastosPorCategoria = despesasFiltradas.reduce((acc, d) => {
@@ -438,9 +443,12 @@ export default function GestaoDespesas() {
           </div>
         )}
 
+        {/* 🛡️ BANNER DE MÚLTIPLAS SELEÇÕES COM CONTAGEM DE FATURAS */}
         {selecionados.length > 0 && (
-          <div className="bg-orange-600/20 border border-orange-500 p-4 rounded-2xl flex justify-between items-center shadow-lg sticky top-4 z-10">
-            <span className="text-orange-400 font-bold text-sm">{selecionados.length} item(ns) individual(ais) selecionado(s)</span>
+          <div className="bg-orange-600/20 border border-orange-500 p-4 rounded-2xl flex justify-between items-center shadow-lg sticky top-4 z-10 backdrop-blur-md">
+            <span className="text-orange-400 font-bold text-sm">
+              {faturasSelecionadasCount} fatura(s) selecionada(s) / <span className="text-zinc-300 font-normal">({selecionados.length} itens no total)</span>
+            </span>
             <div className="flex gap-2">
               <button onClick={abrirClassificacaoEmMassa} className="bg-orange-600 text-white text-xs font-bold px-4 py-2 rounded-xl">📝 Classificar Em Massa</button>
               <button onClick={excluirSelecionados} className="bg-red-950 text-red-400 border border-red-900 text-xs font-bold px-4 py-2 rounded-xl">🗑️ Eliminar</button>
@@ -448,7 +456,6 @@ export default function GestaoDespesas() {
           </div>
         )}
 
-        {/* 🛡️ CORREÇÃO PRINCIPAL: Tabela com Scroll Horizontal Seguro */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl">
           <div className="overflow-x-auto custom-scrollbar pb-2">
             <table className="w-full text-left text-xs whitespace-nowrap">
