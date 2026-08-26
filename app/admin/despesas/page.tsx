@@ -70,6 +70,9 @@ export default function GestaoDespesas() {
   const [mesFiltro, setMesFiltro] = useState(new Date().toISOString().slice(0, 7)); 
   const [modoRascunhosGlobais, setModoRascunhosGlobais] = useState(false);
 
+  // 🔄 NOVO ESTADO: Filtro de Ordenação
+  const [ordenacao, setOrdenacao] = useState<'data_desc' | 'data_asc' | 'fornecedor_asc' | 'fornecedor_desc' | 'valor_desc' | 'valor_asc'>('data_desc');
+
   const [formDespesa, setFormDespesa] = useState<Despesa>({
     id: '', descricao: '', categoria: 'Ingredientes & Mercadoria', valor: 0,
     data_despesa: new Date().toISOString().split('T')[0], metodo_pagamento: 'Conciliação Automática', status: 'Validado' 
@@ -170,7 +173,7 @@ export default function GestaoDespesas() {
   const despesasFiltradas = modoRascunhosGlobais ? despesasPorClassificarGlobais : despesasDB.filter(d => d.data_despesa && d.data_despesa.startsWith(mesFiltro)); 
 
   // =========================================================================
-  // 🔄 AGRUPAMENTO DE FATURAS E SOMAS SEGURAS
+  // 🔄 AGRUPAMENTO DE FATURAS E ORDENAÇÃO DINÂMICA
   // =========================================================================
   const despesasAgrupadas = useMemo(() => {
     const grupos = new Map<string, GrupoDespesa>();
@@ -207,8 +210,34 @@ export default function GestaoDespesas() {
       g.todasIds.push(desp.id);
     });
 
-    return Array.from(grupos.values());
-  }, [despesasFiltradas]);
+    const arrayFinal = Array.from(grupos.values());
+
+    // 🚀 MOTOR DE ORDENAÇÃO DINÂMICO
+    return arrayFinal.sort((a, b) => {
+      if (ordenacao === 'data_desc') {
+        if (a.data_despesa !== b.data_despesa) return b.data_despesa.localeCompare(a.data_despesa);
+        return b.valorTotal - a.valorTotal; // Desempate pelo valor
+      }
+      if (ordenacao === 'data_asc') {
+        if (a.data_despesa !== b.data_despesa) return a.data_despesa.localeCompare(b.data_despesa);
+        return b.valorTotal - a.valorTotal; 
+      }
+      if (ordenacao === 'fornecedor_asc') {
+        return a.fornecedorLogico.localeCompare(b.fornecedorLogico);
+      }
+      if (ordenacao === 'fornecedor_desc') {
+        return b.fornecedorLogico.localeCompare(a.fornecedorLogico);
+      }
+      if (ordenacao === 'valor_desc') {
+        return b.valorTotal - a.valorTotal;
+      }
+      if (ordenacao === 'valor_asc') {
+        return a.valorTotal - b.valorTotal;
+      }
+      return 0;
+    });
+
+  }, [despesasFiltradas, ordenacao]); // Atualiza sempre que a ordenação muda
 
   const totalGastoMes = despesasAgrupadas.reduce((sum, g) => sum + g.valorTotal, 0);
 
@@ -325,7 +354,24 @@ export default function GestaoDespesas() {
             )}
             {modoRascunhosGlobais && (<button onClick={() => { setModoRascunhosGlobais(false); setSelecionados([]); }} className="bg-zinc-800 text-white text-[10px] font-bold px-3 py-1.5 rounded-full hover:bg-zinc-700">⬅ Voltar ao Resumo Analítico</button>)}
           </div>
-          <input type="month" value={mesFiltro} onChange={(e) => { setMesFiltro(e.target.value); setModoRascunhosGlobais(false); setSelecionados([]); }} className="bg-zinc-900 border border-zinc-800 px-4 py-2 rounded-lg text-sm text-white" />
+          
+          {/* MENU DE ORDENAÇÃO E FILTRO DE MÊS */}
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] uppercase font-bold text-zinc-500 pl-1">Ordenar:</span>
+            <select 
+              value={ordenacao} 
+              onChange={(e) => setOrdenacao(e.target.value as any)}
+              className="bg-zinc-900 border border-zinc-700 text-xs text-white px-3 py-2 rounded-lg outline-none focus:border-orange-500 cursor-pointer"
+            >
+              <option value="data_desc">Data (Mais Recentes)</option>
+              <option value="data_asc">Data (Mais Antigas)</option>
+              <option value="fornecedor_asc">Fornecedor (A-Z)</option>
+              <option value="fornecedor_desc">Fornecedor (Z-A)</option>
+              <option value="valor_desc">Valor (Maior para Menor)</option>
+              <option value="valor_asc">Valor (Menor para Maior)</option>
+            </select>
+            <input type="month" value={mesFiltro} onChange={(e) => { setMesFiltro(e.target.value); setModoRascunhosGlobais(false); setSelecionados([]); }} className="bg-zinc-900 border border-zinc-800 px-4 py-2 rounded-lg text-sm text-white" />
+          </div>
         </div>
 
         {!modoRascunhosGlobais && (
@@ -513,6 +559,7 @@ export default function GestaoDespesas() {
         </div>
       </main>
 
+      {/* MODAL DE EDIÇÃO */}
       {modalAberto && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[100]">
           <div className="bg-zinc-900 w-full max-w-xl rounded-3xl p-6 flex flex-col max-h-[90vh] shadow-2xl border border-zinc-800">
