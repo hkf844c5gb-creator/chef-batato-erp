@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
 interface ProdutoEstoque {
@@ -21,7 +21,7 @@ interface MovimentoKardex {
   saldo_atualizado: number;
   origem: string;
   observacoes: string;
-  data_movimento: string | null; // Pode ser nulo nos antigos
+  data_movimento: string | null; 
 }
 
 export default function GestaoEstoqueProdutos() {
@@ -41,6 +41,9 @@ export default function GestaoEstoqueProdutos() {
   const [modalHistorico, setModalHistorico] = useState<ProdutoEstoque | null>(null);
   const [historicoProduto, setHistoricoProduto] = useState<MovimentoKardex[]>([]);
   const [loadingHistorico, setLoadingHistorico] = useState(false);
+  
+  // NOVA STATE: Ordenação do Histórico
+  const [ordemHistorico, setOrdemHistorico] = useState<'data_desc' | 'data_asc' | 'pedido_desc' | 'pedido_asc'>('data_desc');
 
   // NOVOS MODAIS (CRUD)
   const [mostrarModalNovo, setMostrarModalNovo] = useState(false);
@@ -71,7 +74,6 @@ export default function GestaoEstoqueProdutos() {
       if (errProds) throw errProds;
       setProdutos(prods || []);
 
-      // ORDENA POR ID PARA GARANTIR QUE PUXA OS ANTIGOS QUE NÃO TÊM DATA
       const { data: hist, error: errHist } = await supabase
         .from('movimentos_estoque')
         .select('*')
@@ -262,16 +264,16 @@ export default function GestaoEstoqueProdutos() {
 
   const verHistoricoProduto = async (produto: ProdutoEstoque) => {
     setModalHistorico(produto);
+    setOrdemHistorico('data_desc'); // Resetar a ordem ao abrir
     setLoadingHistorico(true);
     setHistoricoProduto([]); 
     try {
-      // ORDENA POR ID PARA RESGATAR REGISTOS ANTIGOS SEM DATA
       const { data, error } = await supabase
         .from('movimentos_estoque')
         .select('*')
         .eq('nome_produto', produto.nome) 
         .order('id', { ascending: false }) 
-        .limit(50);
+        .limit(100); // Aumentei o limite para ter mais dados na ordenação
       
       if (error) throw error;
       setHistoricoProduto(data || []);
@@ -281,6 +283,48 @@ export default function GestaoEstoqueProdutos() {
       setLoadingHistorico(false);
     }
   };
+
+  // =========================================================================
+  // 🔄 LÓGICA DE ORDENAÇÃO INTELIGENTE (Data e Número do Pedido)
+  // =========================================================================
+  const historicoProdutoOrdenado = useMemo(() => {
+    if (!historicoProduto) return [];
+
+    const extrairData = (h: MovimentoKardex) => {
+      if (h.data_movimento) return new Date(h.data_movimento).getTime();
+      if (h.observacoes && h.observacoes.includes('Data Registo:')) {
+        const match = h.observacoes.match(/Data Registo:\s*([\d-]+)/);
+        if (match) return new Date(match[1]).getTime();
+      }
+      return 0; // Se não tiver data de todo
+    };
+
+    const extrairNumPedido = (h: MovimentoKardex) => {
+      const match = h.observacoes?.match(/Pedido #(\d+)/i);
+      return match ? parseInt(match[1], 10) : 0;
+    };
+
+    return [...historicoProduto].sort((a, b) => {
+      if (ordemHistorico === 'data_desc') return extrairData(b) - extrairData(a);
+      if (ordemHistorico === 'data_asc') return extrairData(a) - extrairData(b);
+      
+      if (ordemHistorico === 'pedido_desc') {
+        const pA = extrairNumPedido(a);
+        const pB = extrairNumPedido(b);
+        if (pA !== pB) return pB - pA; // Ordena por Pedido Maior
+        return extrairData(b) - extrairData(a); // Desempata com a data mais recente
+      }
+      
+      if (ordemHistorico === 'pedido_asc') {
+        const pA = extrairNumPedido(a);
+        const pB = extrairNumPedido(b);
+        if (pA !== pB) return pA - pB; // Ordena por Pedido Menor
+        return extrairData(a) - extrairData(b); // Desempata com a data
+      }
+
+      return 0;
+    });
+  }, [historicoProduto, ordemHistorico]);
 
   const produtosEmAlerta = produtos.filter(p => p.ativo && (p.estoque_atual || 0) <= (p.estoque_minimo || 5));
   
@@ -352,7 +396,6 @@ export default function GestaoEstoqueProdutos() {
               {historicoGlobal.map(h => {
                 const isEntrada = h.tipo_movimento === 'ENTRADA';
                 
-                // LÓGICA SEGURA PARA AS DATAS
                 let dataFormatada = 'Antigo';
                 if (h.data_movimento) {
                   dataFormatada = new Date(h.data_movimento).toLocaleDateString('pt-PT', { day: '2-digit', month: 'short' });
@@ -588,16 +631,34 @@ export default function GestaoEstoqueProdutos() {
 
       {modalHistorico && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-3xl rounded-3xl p-6 shadow-2xl relative max-h-[90vh] flex flex-col">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-4xl rounded-3xl p-6 shadow-2xl relative max-h-[90vh] flex flex-col">
             <button onClick={() => setModalHistorico(null)} className="absolute top-5 right-5 text-zinc-400 hover:text-white bg-zinc-800 w-8 h-8 rounded-full flex items-center justify-center">✕</button>
             
-            <h2 className="text-lg font-black text-white pr-8">🕒 Histórico de Movimentos (Extrato)</h2>
-            <p className="text-xs text-blue-400 mb-6 font-bold">{modalHistorico.nome}</p>
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center border-b border-zinc-800 pb-4 mb-4 pr-8 gap-4">
+              <div>
+                <h2 className="text-lg font-black text-white">🕒 Histórico de Movimentos (Extrato)</h2>
+                <p className="text-xs text-blue-400 font-bold mt-1">{modalHistorico.nome}</p>
+              </div>
+              
+              <div className="flex items-center gap-2 bg-zinc-950 p-2 rounded-xl border border-zinc-800">
+                <span className="text-[10px] uppercase font-bold text-zinc-500 pl-1">Ordenar:</span>
+                <select 
+                  value={ordemHistorico} 
+                  onChange={(e) => setOrdemHistorico(e.target.value as any)}
+                  className="bg-zinc-900 border border-zinc-700 text-xs text-white px-3 py-1.5 rounded-lg outline-none focus:border-orange-500 cursor-pointer"
+                >
+                  <option value="data_desc">Data (Mais Recente)</option>
+                  <option value="data_asc">Data (Mais Antigo)</option>
+                  <option value="pedido_desc">Nº Pedido (Maior para Menor)</option>
+                  <option value="pedido_asc">Nº Pedido (Menor para Maior)</option>
+                </select>
+              </div>
+            </div>
 
             <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
               {loadingHistorico ? (
                 <p className="text-xs text-zinc-500 text-center py-8">A consultar base de dados...</p>
-              ) : historicoProduto.length === 0 ? (
+              ) : historicoProdutoOrdenado.length === 0 ? (
                 <p className="text-xs text-zinc-500 text-center py-8">Nenhum movimento registado para este item.</p>
               ) : (
                 <table className="w-full text-left text-xs">
@@ -611,10 +672,9 @@ export default function GestaoEstoqueProdutos() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-800/40">
-                    {historicoProduto.map(h => {
+                    {historicoProdutoOrdenado.map(h => {
                       const isEntrada = h.tipo_movimento === 'ENTRADA';
                       
-                      // LÓGICA SEGURA PARA AS DATAS DOS PRODUTOS
                       let dataExibicao = 'Registo Antigo';
                       if (h.data_movimento) {
                         dataExibicao = new Date(h.data_movimento).toLocaleString('pt-PT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });

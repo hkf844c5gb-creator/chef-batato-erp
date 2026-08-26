@@ -147,12 +147,7 @@ export default function CaixaPDV() {
 
       setProdutos(produtosFormatados);
 
-      // =========================================================================
-      // ⚠️ CORREÇÃO AUTOCOMPLETE DE CLIENTES
-      // =========================================================================
       const clientesMap = new Map();
-      
-      // 1. Puxa os clientes oficiais da tabela
       const { data: dataClientesTable } = await supabase.from('clientes').select('*');
       if (dataClientesTable) {
         dataClientesTable.forEach((c: any) => {
@@ -163,7 +158,6 @@ export default function CaixaPDV() {
         });
       }
 
-      // 2. Puxa APENAS nome e contacto dos últimos pedidos (Leve e Rápido) para garantir o histórico
       const { data: dataPedidosRecentes } = await supabase
         .from('pedidos')
         .select('cliente, contacto_cliente, endereco')
@@ -180,7 +174,6 @@ export default function CaixaPDV() {
       }
 
       setListaClientesCadastrados(Array.from(clientesMap.values()));
-      // =========================================================================
 
       const { data: dataCombos, error: errCombos } = await supabase
         .from('combos')
@@ -463,11 +456,6 @@ export default function CaixaPDV() {
         await supabase.from('clientes').insert([{ nome: nomeDoCliente, contacto: contactoCliente.trim(), morada: moradaCliente.trim() }]);
       }
 
-      // =========================================================================
-      // ⚠️ CORREÇÃO CRÍTICA DO CÁLCULO DO NÚMERO DO PEDIDO (Fim das Duplicações)
-      // =========================================================================
-      // Ao invés de limitar os resultados ou ordenar de forma errada,
-      // Puxamos APENAS a coluna 'numero_pedido' (é super leve, não trava) e achamos o máximo matemático!
       const { data: todosPedidosNum } = await supabase
         .from('pedidos')
         .select('numero_pedido');
@@ -481,7 +469,6 @@ export default function CaixaPDV() {
       }
 
       const novoNumeroStr = String(maiorNumero + 1);
-      // =========================================================================
 
       const { data: pedidoGravado, error: erroPedido } = await supabase.from('pedidos').insert([{ 
           numero_pedido: novoNumeroStr, 
@@ -517,9 +504,6 @@ export default function CaixaPDV() {
         
         await descontarStockAutomaticamente(carrinho, novoNumeroStr);
 
-        // ============================================================================
-        // 💳 AUTOMAÇÃO: LANÇAR TAXA STRIPE NAS DESPESAS (0.25€ + 1.5%)
-        // ============================================================================
         if (formaPagamento === 'Stripe') {
           const taxaFixa = 0.25;
           const taxaVariavel = totalGeral * 0.015;
@@ -534,7 +518,7 @@ export default function CaixaPDV() {
             status: 'Validado' 
           }]);
           
-          if (errStripe) console.error("Aviso: Falha ao lançar despesa Stripe, mas pedido foi salvo:", errStripe);
+          if (errStripe) console.error("Aviso: Falha ao lançar despesa Stripe:", errStripe);
         }
 
         if (imprimirAtivado) {
@@ -560,7 +544,6 @@ export default function CaixaPDV() {
         }
       }
       
-      // Limpa a tela localmente
       setCarrinho([]); 
       setCliente(''); 
       setContactoCliente(''); 
@@ -568,7 +551,6 @@ export default function CaixaPDV() {
       setTaxaEntrega('0.00'); 
       setDescontoManual('0.00');
       
-      // Adiciona o cliente novo à lista de sugestões imediatamente na memória (se não existir)
       setListaClientesCadastrados(prev => {
         if (!prev.some(c => c.nome.toLowerCase() === nomeDoCliente.toLowerCase())) {
           return [...prev, { id: 'novo', nome: nomeDoCliente, contacto: contactoCliente.trim(), morada: moradaCliente.trim() }];
@@ -617,16 +599,38 @@ export default function CaixaPDV() {
           
           <div className="relative col-span-2">
             <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Cliente / Nome</label>
-            <input 
-              type="text" 
-              value={cliente} 
-              onChange={(e) => { setCliente(e.target.value); setMostrarSugestoes(true); }} 
-              onFocus={() => setMostrarSugestoes(true)}
-              onBlur={() => setTimeout(() => setMostrarSugestoes(false), 200)}
-              placeholder="Nome ou Telemóvel..." 
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none text-white font-bold transition-all"
-              autoComplete="off" 
-            />
+            <div className="relative">
+              <input 
+                type="text" 
+                value={cliente} 
+                onChange={(e) => { setCliente(e.target.value); setMostrarSugestoes(true); }} 
+                onFocus={() => setMostrarSugestoes(true)}
+                onBlur={() => setTimeout(() => setMostrarSugestoes(false), 200)}
+                placeholder="Nome ou Telemóvel..." 
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-3 pr-10 py-2 text-sm focus:border-orange-500 outline-none text-white font-bold transition-all"
+                autoComplete="off" 
+              />
+              {/* BOTÃO MÁGICO DE COLAR */}
+              <button
+                type="button"
+                onMouseDown={async (e) => {
+                  e.preventDefault(); 
+                  try {
+                    const textoColado = await navigator.clipboard.readText();
+                    if (textoColado) {
+                      setCliente(textoColado);
+                      setMostrarSugestoes(true);
+                    }
+                  } catch (err) {
+                    alert("Por favor, permita o acesso à área de transferência no seu navegador para usar este botão.");
+                  }
+                }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center bg-zinc-900 rounded-lg border border-zinc-700 hover:bg-orange-600 hover:text-white transition-all text-xs text-zinc-400 cursor-pointer"
+                title="Colar (Sem precisar de Ctrl+V)"
+              >
+                📋
+              </button>
+            </div>
 
             {mostrarSugestoes && cliente.trim().length > 0 && (
               <div className="absolute left-0 right-0 top-full mt-2 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-[100] max-h-60 overflow-y-auto custom-scrollbar">
