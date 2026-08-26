@@ -19,24 +19,23 @@ const SOCIOS_MBWAY = {
 
 export async function POST(req: Request) {
   try {
-    // 🛡️ CORREÇÃO MÁXIMA: LER COMO FORMDATA NATIVO (Ignora o limite de JSON da Vercel)
-    const formData = await req.formData();
-    const file = formData.get('file') as File;
-    const tipoArquivo = formData.get('tipoArquivo') as string;
-    const periodoRef = formData.get('periodoRef') as string;
+    const body = await req.json();
+    const { fileBase64, tipoArquivo, periodoRef } = body;
 
-    if (!file) {
+    if (!fileBase64 || fileBase64.length < 100) {
       throw new Error("O ficheiro recebido está vazio ou corrompido.");
     }
 
-    // Só convertemos para Base64 já dentro do servidor, poupando a viagem na internet!
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    const base64Data = buffer.toString('base64');
-    const detectedMimeType = file.type || 'application/pdf';
+    let base64Data = fileBase64;
+    if (fileBase64.includes(',')) base64Data = fileBase64.split(',')[1];
+
+    let detectedMimeType = 'application/pdf';
+    if (base64Data.startsWith('/9j/')) detectedMimeType = 'image/jpeg';
+    else if (base64Data.startsWith('iVBORw0KGgo')) detectedMimeType = 'image/png';
+    else if (base64Data.startsWith('JVBER')) detectedMimeType = 'application/pdf';
 
     const geminiKey = process.env.GEMINI_API_KEY;
-    if (!geminiKey) throw new Error("Chave de API não configurada.");
+    if (!geminiKey) throw new Error("Chave de API não configurada no servidor.");
 
     const genAI = new GoogleGenerativeAI(geminiKey);
     const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
@@ -67,151 +66,65 @@ export async function POST(req: Request) {
           { "data": "YYYY-MM-DD", "descricao": string, "valor": number, "tipo": "entrada" | "saida" }
         ] 
       }
-
-      Mantém números de telefone MBWAY na descrição dos movimentos quando aplicável.
     `;
 
     const imageParts = [{ inlineData: { data: base64Data, mimeType: detectedMimeType } }];
     const result = await model.generateContent([promptContexto, ...imageParts]);
     const cleanJson = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
-    const dadosExtraidos = JSON.parse(cleanJson);
+    
+    let dadosExtraidos;
+    try {
+      dadosExtraidos = JSON.parse(cleanJson);
+    } catch (parseError) {
+      throw new Error(`A Inteligência Artificial falhou ao ler a fatura. O documento pode estar ilegível ou protegido. Resposta da IA: ${cleanJson.substring(0, 150)}...`);
+    }
 
     const divergencias: any[] = [];
     const retiradasSocios: any[] = [];
     const conciliacoes: any[] = [];
 
-    // --- ALIMENTAÇÃO AUTOMÁTICA DA DESPENSA (TABELA insumos) ---
+    // --- ALIMENTAÇÃO DA DESPENSA ---
     if (tipoArquivo === 'Fatura' && dadosExtraidos.itens && Array.isArray(dadosExtraidos.itens)) {
       for (const item of dadosExtraidos.itens) {
         if (!item.nome_extraido) continue;
-
         const qtdComprada = Number(item.quantidade || 1);
         const custoTotalItem = Number(item.valor_total || 0);
         const custoUnitCalc = qtdComprada > 0 ? custoTotalItem / qtdComprada : 0;
 
-        const { data: insumoExistente } = await supabase
-          .from('insumos')
-          .select('id, quantidade_atual')
-          .ilike('nome', `%${item.nome_extraido.trim()}%`)
-          .limit(1)
-          .maybeSingle();
+        const { data: insumoExistente } = await supabase.from('insumos').select('id, quantidade_atual').ilike('nome', `%${item.nome_extraido.trim()}%`).limit(1).maybeSingle();
 
         if (insumoExistente) {
           const novaQtd = Number(insumoExistente.quantidade_atual || 0) + qtdComprada;
-          await supabase.from('insumos').update({
-            quantidade_atual: novaQtd,
-            custo_por_unidade: custoUnitCalc > 0 ? custoUnitCalc : undefined
-          }).eq('id', insumoExistente.id);
+          await supabase.from('insumos').update({ quantidade_atual: novaQtd, custo_por_unidade: custoUnitCalc > 0 ? custoUnitCalc : undefined }).eq('id', insumoExistente.id);
         } else {
-          await supabase.from('insumos').insert([{
-            nome: item.nome_extraido.trim(),
-            unidade_medida: item.unidade || 'unid',
-            quantidade_atual: qtdComprada,
-            quantidade_alerta: 2,
-            custo_por_unidade: custoUnitCalc
-          }]);
+          await supabase.from('insumos').insert([{ nome: item.nome_extraido.trim(), unidade_medida: item.unidade || 'unid', quantidade_atual: qtdComprada, quantidade_alerta: 2, custo_por_unidade: custoUnitCalc }]);
         }
       }
     }
 
-    // --- CRUZAMENTO DE DESPESAS ---
+    // --- CRUZAMENTO ---
     if (tipoArquivo === 'Fatura') {
       const valorTotalFatura = Number(dadosExtraidos.valorTotal || 0);
-
-      const { data: despesaExistente } = await supabase
-        .from('despesas')
-        .select('*')
-        .gte('valor', valorTotalFatura - 1)
-        .lte('valor', valorTotalFatura + 1)
-        .maybeSingle();
+      const { data: despesaExistente } = await supabase.from('despesas').select('*').gte('valor', valorTotalFatura - 1).lte('valor', valorTotalFatura + 1).maybeSingle();
 
       if (!despesaExistente) {
         const novoId = crypto.randomUUID();
-        await supabase.from('despesas').insert([{
-          id: novoId,
-          data_despesa: dadosExtraidos.data || new Date().toISOString().split('T')[0],
-          descricao: dadosExtraidos.fornecedor || 'Fatura Desconhecida',
-          categoria: 'Fatura Física',
-          valor: valorTotalFatura,
-          status: 'Falta Pagamento'
-        }]);
-        conciliacoes.push({ detalhe: `Fatura de ${dadosExtraidos.fornecedor || 'Fornecedor'} registada aguardando pagamento.`, status: 'Inserida' });
+        await supabase.from('despesas').insert([{ id: novoId, data_despesa: dadosExtraidos.data || new Date().toISOString().split('T')[0], descricao: dadosExtraidos.fornecedor || 'Fatura Desconhecida', categoria: 'Fatura Física', valor: valorTotalFatura, status: 'Falta Pagamento' }]);
+        conciliacoes.push({ detalhe: `Fatura inserida aguardando pagamento.`, status: 'Inserida' });
       } else {
-        await supabase.from('despesas').update({ 
-          status: 'Validado',
-          descricao: `[VALIDADO] ${dadosExtraidos.fornecedor || 'Fornecedor'}` 
-        }).eq('id', despesaExistente.id);
-        
-        conciliacoes.push({ detalhe: `Fatura de ${dadosExtraidos.fornecedor || 'Fornecedor'} cruzada com movimento bancário!`, status: 'Validado' });
+        await supabase.from('despesas').update({ status: 'Validado', descricao: `[VALIDADO] ${dadosExtraidos.fornecedor || 'Fornecedor'}` }).eq('id', despesaExistente.id);
+        conciliacoes.push({ detalhe: `Fatura validada com movimento bancário!`, status: 'Validado' });
       }
     } 
-    else if (['Extrato', 'Glovo', 'Palmbites'].includes(tipoArquivo)) {
-      if (dadosExtraidos.movimentos) {
-        for (const mov of dadosExtraidos.movimentos) {
-          if (mov.tipo === 'saida') {
-            let socioEncontrado = false;
-            const descLimpa = mov.descricao.replace(/\s+/g, '');
 
-            for (const [numero, nome] of Object.entries(SOCIOS_MBWAY)) {
-              if (descLimpa.includes(numero)) {
-                retiradasSocios.push({
-                  data: mov.data, socio: nome, numero_mbway: numero, valor: mov.valor, descricao: mov.descricao
-                });
-                socioEncontrado = true;
-                break;
-              }
-            }
+    const resumo: any = { status: `Auditoria Concluída`, dadosExtraidos, itens: dadosExtraidos.itens || [], relatorio_socios: retiradasSocios.length > 0 ? retiradasSocios : "Limpo", conciliacoes: conciliacoes.length > 0 ? conciliacoes : "Nenhum cruzamento exato encontrado." };
 
-            if (!socioEncontrado) {
-              const { data: despesaCorresp } = await supabase
-                .from('despesas')
-                .select('*')
-                .gte('valor', mov.valor - 0.5)
-                .lte('valor', mov.valor + 0.5)
-                .maybeSingle();
-
-              if (despesaCorresp) {
-                await supabase.from('despesas').update({ status: 'Validado' }).eq('id', despesaCorresp.id);
-                conciliacoes.push({ detalhe: `Pagamento de ${mov.valor}€ validou a fatura ${despesaCorresp.descricao}`, status: 'Validado' });
-              } else {
-                const novoId = crypto.randomUUID();
-                await supabase.from('despesas').insert([{
-                  id: novoId,
-                  data_despesa: mov.data,
-                  descricao: mov.descricao,
-                  categoria: 'Extrato Bancário',
-                  valor: mov.valor,
-                  status: 'Falta Fatura'
-                }]);
-                divergencias.push({ alerta: 'Saída bancária sem fatura correspondente.', detalhe: mov.descricao, tipo: 'Falta Fatura' });
-              }
-            }
-          }
-        }
-      }
-    }
-
-    const resumo: any = { 
-      status: `Auditoria Concluída`, 
-      dadosExtraidos,
-      itens: dadosExtraidos.itens || [],
-      relatorio_socios: retiradasSocios.length > 0 ? retiradasSocios : "Nenhuma retirada detetada.",
-      conciliacoes: conciliacoes.length > 0 ? conciliacoes : "Nenhum cruzamento exato encontrado."
-    };
-
-    const { data: sessao, error } = await supabase.from('auditoria_sessoes').insert([{
-      tipo_arquivo: tipoArquivo,
-      periodo_ref: periodoRef,
-      resumo,
-      divergencias
-    }]).select().single();
-
+    const { data: sessao, error } = await supabase.from('auditoria_sessoes').insert([{ tipo_arquivo: tipoArquivo, periodo_ref: periodoRef, resumo, divergencias }]).select().single();
     if (error) throw error;
 
     return NextResponse.json({ sucesso: true, sessao, dadosLidos: dadosExtraidos });
 
   } catch (error: unknown) {
-    console.error("🔥 ERRO NA API:", error);
     const erroMsg = error instanceof Error ? error.message : JSON.stringify(error);
     return NextResponse.json({ error: erroMsg }, { status: 500 });
   }

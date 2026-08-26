@@ -136,7 +136,6 @@ export default function ConciliacaoPage() {
 
       const nomeRealDoItem = item.nome_extraido || item.nome || item.descricao || 'Despesa Extraída';
       const nomeDaFaturaSeguro = arquivoNome ? arquivoNome : 'Doc. Extraído';
-      
       const descFinal = `[${qtdItem} ${unidItem}] ${nomeRealDoItem} | ${fornecedorFormatado} 📄 ${nomeDaFaturaSeguro}`;
       
       let dataDespesaGravar = new Date().toISOString().split('T')[0];
@@ -144,14 +143,7 @@ export default function ConciliacaoPage() {
         try { dataDespesaGravar = new Date(dataFaturaDoc).toISOString().split('T')[0]; } catch(e) {}
       }
 
-      const { data: checkDuplicado } = await supabase
-        .from('despesas')
-        .select('id')
-        .eq('descricao', descFinal)
-        .eq('valor', valorReal)
-        .eq('data_despesa', dataDespesaGravar)
-        .eq('metodo_pagamento', 'Conciliação Automática')
-        .limit(1);
+      const { data: checkDuplicado } = await supabase.from('despesas').select('id').eq('descricao', descFinal).eq('valor', valorReal).eq('data_despesa', dataDespesaGravar).eq('metodo_pagamento', 'Conciliação Automática').limit(1);
 
       if (checkDuplicado && checkDuplicado.length > 0) {
         totalDuplicados++;
@@ -159,16 +151,10 @@ export default function ConciliacaoPage() {
       }
 
       const { error } = await supabase.from('despesas').insert([{
-        descricao: descFinal,
-        categoria: categoriaAutomatica,
-        valor: valorReal,
-        data_despesa: dataDespesaGravar,
-        metodo_pagamento: 'Conciliação Automática',
-        status: 'Validado' 
+        descricao: descFinal, categoria: categoriaAutomatica, valor: valorReal, data_despesa: dataDespesaGravar, metodo_pagamento: 'Conciliação Automática', status: 'Validado' 
       }]);
 
       if (error) throw new Error(`Erro ao gravar o item "${nomeRealDoItem}": ${error.message}`);
-      
       totalInseridos++;
     }
     
@@ -191,6 +177,13 @@ export default function ConciliacaoPage() {
         const jaExiste = historico.some(h => h.resumo?.fileName === file.name || JSON.stringify(h.resumo || {}).includes(file.name));
         if (jaExiste) continue; 
 
+        // 🛡️ A BALANÇA DE SEGURANÇA DA VERCEL
+        const maxMB = 3.3; 
+        if (file.size > maxMB * 1024 * 1024) {
+          alert(`🚫 RECUSADO: A fatura "${file.name}" tem ${(file.size / (1024*1024)).toFixed(1)}MB.\n\nPara impedir que o servidor vá abaixo, a Vercel exige documentos com menos de 3.3MB.\n\n👉 Solução: Tire um Print / Captura de ecrã à fatura e envie essa Imagem em vez do PDF!`);
+          continue; // Salta este monstro e vai para o próximo ficheiro!
+        }
+
         const nomeFile = file.name.toLowerCase();
         let catIndividual = categoria; 
         if (autoDetectado) {
@@ -200,28 +193,28 @@ export default function ConciliacaoPage() {
           else catIndividual = 'Fatura';
         }
 
-        // 🛡️ CORREÇÃO MÁXIMA: Usar FormData Nativo (Impede o ficheiro de inchar e ser bloqueado)
-        const uploadData = new FormData();
-        uploadData.append('file', file); // Passa o ficheiro puro! Sem conversões pesadas!
-        uploadData.append('tipoArquivo', catIndividual);
-        uploadData.append('periodoRef', periodo);
-
-        const res = await fetch('/admin/conciliacao/api', {
-          method: 'POST',
-          body: uploadData // Não precisamos de JSON nem de Content-Type. O Browser faz isto perfeitamente.
+        const base64Real = await new Promise((resolve, reject) => {
+          const reader = new FileReader(); 
+          reader.readAsDataURL(file);
+          reader.onload = () => resolve(reader.result); 
+          reader.onerror = error => reject(error);
         });
 
+        const res = await fetch('/admin/conciliacao/api', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fileBase64: base64Real, fileName: file.name, fileType: file.type, tipoArquivo: catIndividual, periodoRef: periodo })
+        });
+
+        // 🛡️ O RAIO-X DE ERROS
         if (!res.ok) {
           const erroTexto = await res.text();
-          let aviso = `Erro ao processar o ficheiro: ${file.name}`;
+          let msgServidor = erroTexto;
+          try {
+             const jsonErro = JSON.parse(erroTexto);
+             msgServidor = jsonErro.error || jsonErro.message || erroTexto;
+          } catch(e) {}
           
-          if (erroTexto.includes('Request Entity Too Large') || erroTexto.includes('Request En')) {
-            aviso = `⚠️ O ficheiro "${file.name}" continua a ser colossalmente gigante para a Vercel. Utilize o "Truque do Print/Foto" como alternativa final.`;
-          } else if (erroTexto.includes('504') || erroTexto.includes('Timeout')) {
-             aviso = `⏳ A IA demorou demasiado tempo a ler o ficheiro "${file.name}".`;
-          }
-          
-          alert(`${aviso}\n\nO sistema vai saltar este documento e continuar a processar os restantes!`);
+          alert(`🚨 FALHA EXATA NO DOCUMENTO: ${file.name}\n\nMotivo do Servidor:\n"${msgServidor}"\n\nPor favor, tire uma foto deste erro para podermos aniquilar a causa!`);
           continue; 
         }
 
@@ -304,7 +297,7 @@ export default function ConciliacaoPage() {
     <div className="p-8 font-sans max-w-7xl mx-auto relative">
       <div className="mb-8 border-b border-zinc-800 pb-4">
         <h1 className="text-3xl font-bold text-orange-500 flex items-center gap-3">
-          Conciliador Inteligente <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full">v9 Nativo</span>
+          Conciliador Inteligente <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full">v10 Blindado</span>
         </h1>
       </div>
 
