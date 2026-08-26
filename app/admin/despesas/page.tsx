@@ -13,7 +13,6 @@ interface Despesa {
   status: string; 
 }
 
-// 🛡️ AQUI ESTÁ A CORREÇÃO: Ensinamos o TypeScript o que é o nosso Grupo (Acordeão)
 interface GrupoDespesa {
   idAgrupado: string;
   data_despesa: string;
@@ -69,6 +68,7 @@ export default function GestaoDespesas() {
 
   useEffect(() => { carregarDespesas(); }, []);
 
+  // 🧠 MELHORIA: Extrator de Fornecedores mais inteligente para faturas antigas
   const extrairFornecedor = (descricao: string) => {
     if (!descricao) return 'Desconhecido';
     if (descricao.includes(' | ')) {
@@ -82,11 +82,27 @@ export default function GestaoDespesas() {
         return ultima.split(' 📄')[0]?.trim() || 'Desconhecido';
       }
     }
+    if (!descricao.startsWith('[')) {
+      return descricao.split(' 📄')[0]?.trim() || 'Fornecedor Diverso';
+    }
     return 'Fornecedor Diverso';
   };
 
-  const extrairNomeItemOriginal = (descricao: string) => {
-    return descricao.split(' | ')[0].trim();
+  // 🧠 NOVO: Separa a Quantidade do Nome do Produto para criar colunas limpas
+  const extrairDetalhesItem = (descricao: string) => {
+    let qtd = "1 un";
+    let nome = descricao;
+    
+    if (descricao.startsWith('[')) {
+      const fimColchete = descricao.indexOf(']');
+      if (fimColchete > -1) {
+        qtd = descricao.substring(1, fimColchete).trim();
+        nome = descricao.substring(fimColchete + 1).split(' | ')[0].trim();
+      }
+    } else {
+       nome = descricao.split(' | ')[0].trim();
+    }
+    return { qtd, nome };
   };
 
   const despesasPorClassificarGlobais = despesasDB.filter(d => d.categoria === '⚠️ Por Classificar');
@@ -96,7 +112,6 @@ export default function GestaoDespesas() {
   // 🔄 AGRUPAMENTO INTELIGENTE DE FATURAS COM TIPAGEM ESTRITA
   // =========================================================================
   const despesasAgrupadas = useMemo(() => {
-    // 🛡️ Dizemos explicitamente ao TypeScript que isto é um Mapa de GrupoDespesa
     const grupos = new Map<string, GrupoDespesa>();
     
     despesasFiltradas.forEach(desp => {
@@ -113,7 +128,7 @@ export default function GestaoDespesas() {
           idAgrupado: chave,
           data_despesa: desp.data_despesa,
           fornecedorLogico: fornecedor,
-          faturaRef: faturaRef || desp.descricao,
+          faturaRef: faturaRef || 'Registo Manual / Avulso',
           itens: [],
           valorTotal: 0,
           isAvulsa: !faturaRef,
@@ -234,7 +249,7 @@ export default function GestaoDespesas() {
         <div><h1 className="text-2xl font-black text-white">Gestão Analítica de Despesas</h1></div>
       </header>
 
-      <main className="flex-1 w-full max-w-[1200px] mx-auto p-5 space-y-6">
+      <main className="flex-1 w-full max-w-[1300px] mx-auto p-5 space-y-6">
         
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -303,16 +318,16 @@ export default function GestaoDespesas() {
 
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl">
           <table className="w-full text-left text-xs whitespace-nowrap">
-            <thead className="bg-zinc-950 border-b border-zinc-800 text-[9px] font-bold text-zinc-400 uppercase">
+            <thead className="bg-zinc-950 border-b border-zinc-800 text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
               <tr>
                 <th className="p-4 w-10"><input type="checkbox" checked={despesasFiltradas.length > 0 && selecionados.length === despesasFiltradas.length} onChange={toggleTodos} className="w-4 h-4 rounded accent-orange-500" /></th>
                 <th className="p-4 w-10"></th>
                 <th className="p-4">Data</th>
-                <th className="p-4">Fornecedor / Entidade</th>
-                <th className="p-4">Ref. Fatura (Documento)</th>
-                <th className="p-4">Categoria (Centro de Custo)</th>
+                <th className="p-4">Entidade / Quantidade</th>
+                <th className="p-4">Documento / Detalhe do Item</th>
+                <th className="p-4">Classificação (Centro de Custo)</th>
                 <th className="p-4 text-center">Estado</th>
-                <th className="p-4 text-right">Valor Total</th>
+                <th className="p-4 text-right">Valor (€)</th>
                 <th className="p-4 text-center">Ações Rápidas</th>
               </tr>
             </thead>
@@ -325,7 +340,6 @@ export default function GestaoDespesas() {
                 const temRascunhos = grupo.itens.some(i => i.categoria === '⚠️ Por Classificar');
                 const categoriasUnicas = Array.from(new Set(grupo.itens.map(i => i.categoria)));
                 
-                // 🛡️ AQUI: Forçamos o TypeScript a perceber que é uma 'string' segura para desenhar
                 let categoriaExibir: string = categoriasUnicas.length > 0 ? String(categoriasUnicas[0]) : 'Sem Categoria';
                 
                 if (temRascunhos) categoriaExibir = '⚠️ Contém Itens por Classificar';
@@ -337,7 +351,7 @@ export default function GestaoDespesas() {
                 return (
                   <React.Fragment key={grupo.idAgrupado}>
                     
-                    {/* 🔹 LINHA PRINCIPAL (AGRUPADORA) */}
+                    {/* 🔹 LINHA PRINCIPAL DA FATURA (AGRUPADORA) */}
                     <tr className={`border-b border-zinc-800 transition-colors ${isExpandido ? 'bg-zinc-800/40' : 'bg-zinc-900 hover:bg-zinc-800/70'} ${todosItensSelecionados ? 'bg-orange-950/20' : ''}`}>
                       
                       <td className="p-4">
@@ -362,9 +376,15 @@ export default function GestaoDespesas() {
                       <td className="p-4 font-black uppercase text-zinc-100">{grupo.fornecedorLogico}</td>
                       
                       <td className="p-4 cursor-pointer" onClick={() => toggleExpandir(grupo.idAgrupado)}>
-                        <div className="flex flex-col">
-                          <span className="font-bold text-blue-400">{grupo.faturaRef}</span>
-                          {!grupo.isAvulsa && <span className="text-[10px] text-zinc-500 font-bold">{grupo.itens.length} itens extraídos</span>}
+                        <div className="flex flex-col whitespace-normal max-w-sm">
+                          {grupo.isAvulsa ? (
+                             <span className="font-medium text-zinc-300 text-[11px]">{extrairDetalhesItem(grupo.itens[0].descricao).nome}</span>
+                          ) : (
+                            <>
+                              <span className="font-bold text-blue-400">{grupo.faturaRef}</span>
+                              <span className="text-[10px] text-zinc-500 font-bold mt-0.5">📦 {grupo.itens.length} itens agrupados</span>
+                            </>
+                          )}
                         </div>
                       </td>
                       
@@ -387,19 +407,23 @@ export default function GestaoDespesas() {
                       </td>
                     </tr>
 
-                    {/* 🔹 SUB-LINHAS (ITENS DA FATURA - ACORDEÃO) */}
+                    {/* 🔹 SUB-LINHAS DOS ITENS (APARECEM QUANDO CLICA NO ▶️) */}
                     {isExpandido && !grupo.isAvulsa && grupo.itens.map((item: Despesa) => {
                       const isItemRascunho = item.categoria === '⚠️ Por Classificar';
+                      const detalhes = extrairDetalhesItem(item.descricao);
                       
                       return (
-                        <tr key={item.id} className={`bg-zinc-950/60 border-b border-zinc-900/50 hover:bg-zinc-900/80 transition-all ${selecionados.includes(item.id) ? 'bg-orange-950/10' : ''}`}>
-                          <td className="p-3 pl-8 text-center border-l-2 border-orange-500/30">
+                        <tr key={item.id} className={`bg-zinc-950/80 hover:bg-zinc-900 transition-all border-b border-zinc-900 ${selecionados.includes(item.id) ? 'bg-orange-950/10' : ''}`}>
+                          <td className="p-3 pl-8 text-center border-l-2 border-orange-500/50">
                             <input type="checkbox" checked={selecionados.includes(item.id)} onChange={() => toggleSelecionadoIndividual(item.id)} className="w-3.5 h-3.5 accent-orange-500 cursor-pointer" />
                           </td>
-                          <td colSpan={2}></td>
-                          <td colSpan={2} className="p-3 text-[11px] text-zinc-400 pl-4 border-l border-zinc-800/50 flex items-center gap-2">
-                             <span className="text-zinc-600">↳</span> 
-                             <span className="font-medium text-zinc-300 truncate max-w-sm">{extrairNomeItemOriginal(item.descricao)}</span>
+                          <td className="p-3 text-center text-zinc-600 font-bold">↳</td>
+                          <td className="p-3"></td> {/* Coluna da Data fica vazia na sub-linha */}
+                          <td className="p-3 font-mono text-[11px] text-zinc-400">
+                            <span className="bg-zinc-800/80 px-2 py-1 rounded border border-zinc-700">{detalhes.qtd}</span>
+                          </td>
+                          <td className="p-3 text-[11px] font-medium text-zinc-300 whitespace-normal max-w-sm">
+                            {detalhes.nome}
                           </td>
                           <td className="p-3">
                             <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${isItemRascunho ? 'bg-amber-500/10 text-amber-500' : 'text-zinc-500 border border-zinc-800'}`}>
@@ -412,7 +436,7 @@ export default function GestaoDespesas() {
                           </td>
                           <td className="p-3 text-center">
                             <button onClick={() => abrirEditarDespesa(item)} className="text-zinc-500 hover:text-orange-400 text-[10px] font-bold underline transition-colors">
-                              Editar Item
+                              Classificar / Editar
                             </button>
                           </td>
                         </tr>
@@ -436,7 +460,7 @@ export default function GestaoDespesas() {
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[100]">
           <div className="bg-zinc-900 w-full max-w-xl rounded-3xl p-6 flex flex-col max-h-[90vh] shadow-2xl border border-zinc-800">
             <h2 className="text-xl font-black mb-4 flex items-center justify-between text-white">
-              {modoBulk ? '📦 Classificação em Massa da Fatura' : '✏️ Editar Item Específico'}
+              {modoBulk ? '📦 Classificação em Massa' : '✏️ Editar Item Específico'}
               <button onClick={() => setModalAberto(false)} className="text-zinc-500 hover:text-white bg-zinc-950 w-8 h-8 rounded-full flex items-center justify-center transition-colors">✕</button>
             </h2>
             
