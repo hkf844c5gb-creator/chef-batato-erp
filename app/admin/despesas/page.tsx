@@ -3,22 +3,40 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
+// =========================================================================
+// 🛡️ INTERFACES (TIPAGEM ESTRITA PARA EVITAR ERROS DE COMPILAÇÃO)
+// =========================================================================
 interface Despesa {
   id: string;
   descricao: string;
   categoria: string;
-  valor: number;
+  valor: number | string; // Aceita strings do banco caso existam vírgulas
   data_despesa: string;
   metodo_pagamento: string;
   status: string; 
+}
+
+interface ParseResult {
+  qtd: string;
+  und: string;
+  nome: string;
+  fornecedor: string;
+  fatura: string;
+  nif: string;
+}
+
+interface DespesaExtendida extends Despesa {
+  parsed: ParseResult;
+  valorLimpo: number;
 }
 
 interface GrupoDespesa {
   idAgrupado: string;
   data_despesa: string;
   fornecedorLogico: string;
+  nif: string;
   faturaRef: string;
-  itens: Despesa[];
+  itens: DespesaExtendida[];
   valorTotal: number;
   isAvulsa: boolean;
   todasIds: string[];
@@ -68,77 +86,105 @@ export default function GestaoDespesas() {
 
   useEffect(() => { carregarDespesas(); }, []);
 
-  // 🧠 MELHORIA: Extrator de Fornecedores mais inteligente para faturas antigas
-  const extrairFornecedor = (descricao: string) => {
-    if (!descricao) return 'Desconhecido';
-    if (descricao.includes(' | ')) {
-      const partes = descricao.split(' | ');
-      return partes[1]?.split(' 📄')[0]?.trim() || 'Desconhecido';
-    }
-    if (descricao.includes(' - ')) {
-      const partes = descricao.split(' - ');
-      const ultima = partes[partes.length - 1];
-      if (!ultima.includes('un]') && !ultima.includes(')')) {
-        return ultima.split(' 📄')[0]?.trim() || 'Desconhecido';
-      }
-    }
-    if (!descricao.startsWith('[')) {
-      return descricao.split(' 📄')[0]?.trim() || 'Fornecedor Diverso';
-    }
-    return 'Fornecedor Diverso';
+  // =========================================================================
+  // 🧠 SUPER EXTRATOR (Lida com qualquer formato antigo ou novo)
+  // =========================================================================
+  const parseValor = (val: any): number => {
+    if (val === null || val === undefined || val === '') return 0;
+    if (typeof val === 'number') return val;
+    // Converte vírgulas para pontos e remove símbolos estranhos
+    const str = String(val).replace(',', '.').replace(/[^0-9.-]/g, '');
+    const num = parseFloat(str);
+    return isNaN(num) ? 0 : num;
   };
 
-  // 🧠 NOVO: Separa a Quantidade do Nome do Produto para criar colunas limpas
-  const extrairDetalhesItem = (descricao: string) => {
-    let qtd = "1 un";
-    let nome = descricao;
-    
-    if (descricao.startsWith('[')) {
-      const fimColchete = descricao.indexOf(']');
-      if (fimColchete > -1) {
-        qtd = descricao.substring(1, fimColchete).trim();
-        nome = descricao.substring(fimColchete + 1).split(' | ')[0].trim();
-      }
-    } else {
-       nome = descricao.split(' | ')[0].trim();
+  const parseDescricao = (descOriginal: string): ParseResult => {
+    let desc = descOriginal || "";
+    let qtd = "1", und = "un", nome = desc, fornecedor = "Fornecedor Diversos", fatura = "Registo Manual", nif = "";
+
+    // 1. Extrair Documento/Fatura
+    if (desc.includes('📄')) {
+      const parts = desc.split('📄');
+      fatura = parts[1]?.trim() || "Registo Manual";
+      desc = parts[0]?.trim() || "";
     }
-    return { qtd, nome };
+
+    // 2. Extrair Fornecedor
+    if (desc.includes(' | ')) {
+      const parts = desc.split(' | ');
+      fornecedor = parts.pop()?.trim() || "Fornecedor Diversos";
+      nome = parts.join(' | ').trim();
+    } else if (desc.includes(' - ') && !desc.startsWith('[')) {
+      // Se não tiver |, tenta encontrar pelo último hífen
+      const lastDash = desc.lastIndexOf(' - ');
+      if (lastDash > 0) {
+          fornecedor = desc.substring(lastDash + 3).trim();
+          nome = desc.substring(0, lastDash).trim();
+      }
+    }
+
+    // 3. Extrair NIF Inteligente
+    const nifMatch = fornecedor.match(/(?:NIF|Contribuinte|NIPC)?:?\s*([0-9]{9})/i);
+    if (nifMatch) {
+      nif = nifMatch[1];
+      fornecedor = fornecedor.replace(nifMatch[0], '').replace(/[()\-]/g, '').trim();
+      if (!fornecedor || fornecedor.length < 2) fornecedor = "Fornecedor Diversos";
+    }
+
+    // 4. Extrair Quantidades (ex: [5 un] ou [1.5 kg])
+    const qtdMatch = nome.match(/^\[([\d.,]+)\s*([a-zA-Z]*)]/);
+    if (qtdMatch) {
+      qtd = qtdMatch[1];
+      und = qtdMatch[2] || 'un';
+      nome = nome.replace(qtdMatch[0], '').trim();
+    }
+
+    // 5. Prevenção de campos vazios
+    if (!nome) nome = "Item sem nome identificado";
+    if (fornecedor.toUpperCase().includes('FORNECEDOR DIVERSO')) fornecedor = "Fornecedor Diversos";
+
+    return { qtd, und, nome, fornecedor, fatura, nif };
   };
 
   const despesasPorClassificarGlobais = despesasDB.filter(d => d.categoria === '⚠️ Por Classificar');
   const despesasFiltradas = modoRascunhosGlobais ? despesasPorClassificarGlobais : despesasDB.filter(d => d.data_despesa && d.data_despesa.startsWith(mesFiltro)); 
 
   // =========================================================================
-  // 🔄 AGRUPAMENTO INTELIGENTE DE FATURAS COM TIPAGEM ESTRITA
+  // 🔄 AGRUPAMENTO DE FATURAS E SOMAS SEGURAS
   // =========================================================================
   const despesasAgrupadas = useMemo(() => {
     const grupos = new Map<string, GrupoDespesa>();
     
     despesasFiltradas.forEach(desp => {
-      const fornecedor = extrairFornecedor(desp.descricao);
-      let faturaRef = '';
-      if (desp.descricao.includes('📄')) {
-        faturaRef = desp.descricao.split('📄')[1].trim();
-      }
+      const p = parseDescricao(desp.descricao);
+      const valorL = parseValor(desp.valor);
 
-      const chave = faturaRef ? `${fornecedor}-${desp.data_despesa}-${faturaRef}` : `avulso-${desp.id}`;
+      const itemExt: DespesaExtendida = { ...desp, parsed: p, valorLimpo: valorL };
+
+      const chave = p.fatura !== 'Registo Manual' 
+        ? `${p.fornecedor}-${desp.data_despesa}-${p.fatura}` 
+        : `avulso-${desp.id}`;
 
       if (!grupos.has(chave)) {
         grupos.set(chave, {
           idAgrupado: chave,
           data_despesa: desp.data_despesa,
-          fornecedorLogico: fornecedor,
-          faturaRef: faturaRef || 'Registo Manual / Avulso',
+          fornecedorLogico: p.fornecedor,
+          nif: p.nif,
+          faturaRef: p.fatura,
           itens: [],
           valorTotal: 0,
-          isAvulsa: !faturaRef,
+          isAvulsa: p.fatura === 'Registo Manual',
           todasIds: []
         });
       }
       
       const g = grupos.get(chave)!;
-      g.itens.push(desp);
-      g.valorTotal += Number(desp.valor);
+      // Se a fatura ainda não tem NIF, mas este item trouxe o NIF, guardamos para a Fatura!
+      if (!g.nif && p.nif) g.nif = p.nif;
+
+      g.itens.push(itemExt);
+      g.valorTotal += valorL; // Soma os valores purificados!
       g.todasIds.push(desp.id);
     });
 
@@ -149,7 +195,7 @@ export default function GestaoDespesas() {
 
   const gastosPorCategoria = despesasFiltradas.reduce((acc, d) => {
     if (d.categoria !== '⚠️ Por Classificar') {
-      acc[d.categoria] = (acc[d.categoria] || 0) + Number(d.valor);
+      acc[d.categoria] = (acc[d.categoria] || 0) + parseValor(d.valor);
     }
     return acc;
   }, {} as Record<string, number>);
@@ -157,8 +203,8 @@ export default function GestaoDespesas() {
 
   const gastosPorFornecedor = despesasFiltradas.reduce((acc, d) => {
     if (d.categoria !== '⚠️ Por Classificar') {
-      const forn = extrairFornecedor(d.descricao);
-      acc[forn] = (acc[forn] || 0) + Number(d.valor);
+      const forn = parseDescricao(d.descricao).fornecedor;
+      acc[forn] = (acc[forn] || 0) + parseValor(d.valor);
     }
     return acc;
   }, {} as Record<string, number>);
@@ -187,9 +233,11 @@ export default function GestaoDespesas() {
     setModalAberto(true);
   };
 
-  const abrirEditarDespesa = (d: Despesa) => {
+  const abrirEditarDespesa = (d: DespesaExtendida) => {
     setModoBulk(false);
-    setFormDespesa({ ...d, status: d.status || 'Validado' }); 
+    // Limpar propriedades extra antes de devolver ao form
+    const { parsed, valorLimpo, ...despesaPura } = d;
+    setFormDespesa({ ...despesaPura, valor: valorLimpo, status: d.status || 'Validado' }); 
     setModalAberto(true);
   };
 
@@ -204,7 +252,7 @@ export default function GestaoDespesas() {
         if (error) throw error;
         setSelecionados([]);
       } else {
-        if (!formDespesa.descricao.trim() || formDespesa.valor <= 0) throw new Error('Preencha a descrição e um valor válido.');
+        if (!formDespesa.descricao.trim() || Number(formDespesa.valor) <= 0) throw new Error('Preencha a descrição e um valor válido.');
         
         const dados = { 
           descricao: formDespesa.descricao, 
@@ -249,7 +297,7 @@ export default function GestaoDespesas() {
         <div><h1 className="text-2xl font-black text-white">Gestão Analítica de Despesas</h1></div>
       </header>
 
-      <main className="flex-1 w-full max-w-[1300px] mx-auto p-5 space-y-6">
+      <main className="flex-1 w-full max-w-[1400px] mx-auto p-5 space-y-6">
         
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
@@ -323,12 +371,12 @@ export default function GestaoDespesas() {
                 <th className="p-4 w-10"><input type="checkbox" checked={despesasFiltradas.length > 0 && selecionados.length === despesasFiltradas.length} onChange={toggleTodos} className="w-4 h-4 rounded accent-orange-500" /></th>
                 <th className="p-4 w-10"></th>
                 <th className="p-4">Data</th>
-                <th className="p-4">Entidade / Quantidade</th>
+                <th className="p-4 w-[250px]">Entidade / Quantidade</th>
                 <th className="p-4">Documento / Detalhe do Item</th>
-                <th className="p-4">Classificação (Centro de Custo)</th>
+                <th className="p-4">Classificação (Custo)</th>
                 <th className="p-4 text-center">Estado</th>
                 <th className="p-4 text-right">Valor (€)</th>
-                <th className="p-4 text-center">Ações Rápidas</th>
+                <th className="p-4 text-center">Ações</th>
               </tr>
             </thead>
             <tbody className="text-sm text-zinc-300">
@@ -341,7 +389,6 @@ export default function GestaoDespesas() {
                 const categoriasUnicas = Array.from(new Set(grupo.itens.map(i => i.categoria)));
                 
                 let categoriaExibir: string = categoriasUnicas.length > 0 ? String(categoriasUnicas[0]) : 'Sem Categoria';
-                
                 if (temRascunhos) categoriaExibir = '⚠️ Contém Itens por Classificar';
                 else if (categoriasUnicas.length > 1) categoriaExibir = '📦 Múltiplas Categorias';
 
@@ -351,9 +398,8 @@ export default function GestaoDespesas() {
                 return (
                   <React.Fragment key={grupo.idAgrupado}>
                     
-                    {/* 🔹 LINHA PRINCIPAL DA FATURA (AGRUPADORA) */}
+                    {/* 🔹 LINHA PRINCIPAL DA FATURA */}
                     <tr className={`border-b border-zinc-800 transition-colors ${isExpandido ? 'bg-zinc-800/40' : 'bg-zinc-900 hover:bg-zinc-800/70'} ${todosItensSelecionados ? 'bg-orange-950/20' : ''}`}>
-                      
                       <td className="p-4">
                         <input 
                           type="checkbox" 
@@ -363,7 +409,6 @@ export default function GestaoDespesas() {
                           className="w-4 h-4 accent-orange-500 cursor-pointer" 
                         />
                       </td>
-                      
                       <td className="p-4 cursor-pointer text-orange-500 hover:text-orange-400" onClick={() => toggleExpandir(grupo.idAgrupado)}>
                         {!grupo.isAvulsa && (
                           <div className="w-6 h-6 rounded-md bg-zinc-950 border border-zinc-700 flex items-center justify-center transition-all">
@@ -371,59 +416,57 @@ export default function GestaoDespesas() {
                           </div>
                         )}
                       </td>
-                      
                       <td className="p-4 font-mono text-[11px] text-zinc-400">{grupo.data_despesa}</td>
-                      <td className="p-4 font-black uppercase text-zinc-100">{grupo.fornecedorLogico}</td>
-                      
+                      <td className="p-4">
+                         <div className="font-black uppercase text-zinc-100 truncate">{grupo.fornecedorLogico}</div>
+                         {grupo.nif && <div className="text-[9px] text-zinc-500 font-mono mt-0.5">NIF: {grupo.nif}</div>}
+                      </td>
                       <td className="p-4 cursor-pointer" onClick={() => toggleExpandir(grupo.idAgrupado)}>
-                        <div className="flex flex-col whitespace-normal max-w-sm">
+                        <div className="flex flex-col whitespace-normal max-w-[280px]">
                           {grupo.isAvulsa ? (
-                             <span className="font-medium text-zinc-300 text-[11px]">{extrairDetalhesItem(grupo.itens[0].descricao).nome}</span>
+                             <span className="font-medium text-zinc-300 text-[11px]">{grupo.itens[0].parsed.nome}</span>
                           ) : (
                             <>
                               <span className="font-bold text-blue-400">{grupo.faturaRef}</span>
-                              <span className="text-[10px] text-zinc-500 font-bold mt-0.5">📦 {grupo.itens.length} itens agrupados</span>
+                              <span className="text-[10px] text-zinc-500 font-bold mt-0.5">📦 {grupo.itens.length} itens extraídos</span>
                             </>
                           )}
                         </div>
                       </td>
-                      
                       <td className="p-4">
                         <span className={`text-[10px] px-2 py-1 rounded font-bold uppercase ${temRascunhos ? 'bg-amber-500/20 text-amber-400 animate-pulse' : (categoriasUnicas.length > 1 ? 'bg-purple-500/20 text-purple-400' : 'bg-zinc-800 text-zinc-300')}`}>
                           {categoriaExibir}
                         </span>
                       </td>
-                      
                       <td className="p-4 text-center">{renderizarStatus(statusGeralExibir)}</td>
-                      
                       <td className="p-4 text-right font-black text-xl text-red-500 tracking-tighter">
                         {grupo.valorTotal.toFixed(2)}€
                       </td>
-                      
                       <td className="p-4 text-center">
-                        <button onClick={() => { toggleSelecionadoGrupo(grupo.todasIds); abrirClassificacaoEmMassa(); }} className="bg-zinc-950 hover:bg-orange-600 border border-zinc-800 hover:border-orange-500 px-3 py-1.5 rounded-lg text-xs font-bold transition-all text-white">
-                          {temRascunhos ? 'Classificar Fatura' : 'Editar Fatura'}
+                        <button onClick={() => { toggleSelecionadoGrupo(grupo.todasIds); abrirClassificacaoEmMassa(); }} className="bg-zinc-950 hover:bg-orange-600 border border-zinc-800 hover:border-orange-500 px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider font-bold transition-all text-white">
+                          {temRascunhos ? 'Classificar' : 'Editar Fatura'}
                         </button>
                       </td>
                     </tr>
 
-                    {/* 🔹 SUB-LINHAS DOS ITENS (APARECEM QUANDO CLICA NO ▶️) */}
-                    {isExpandido && !grupo.isAvulsa && grupo.itens.map((item: Despesa) => {
+                    {/* 🔹 SUB-LINHAS DOS ITENS */}
+                    {isExpandido && !grupo.isAvulsa && grupo.itens.map((item: DespesaExtendida) => {
                       const isItemRascunho = item.categoria === '⚠️ Por Classificar';
-                      const detalhes = extrairDetalhesItem(item.descricao);
                       
                       return (
                         <tr key={item.id} className={`bg-zinc-950/80 hover:bg-zinc-900 transition-all border-b border-zinc-900 ${selecionados.includes(item.id) ? 'bg-orange-950/10' : ''}`}>
                           <td className="p-3 pl-8 text-center border-l-2 border-orange-500/50">
                             <input type="checkbox" checked={selecionados.includes(item.id)} onChange={() => toggleSelecionadoIndividual(item.id)} className="w-3.5 h-3.5 accent-orange-500 cursor-pointer" />
                           </td>
-                          <td className="p-3 text-center text-zinc-600 font-bold">↳</td>
-                          <td className="p-3"></td> {/* Coluna da Data fica vazia na sub-linha */}
+                          <td className="p-3"></td>
+                          <td className="p-3 text-right text-zinc-600 font-black">↳</td>
                           <td className="p-3 font-mono text-[11px] text-zinc-400">
-                            <span className="bg-zinc-800/80 px-2 py-1 rounded border border-zinc-700">{detalhes.qtd}</span>
+                            <span className="bg-zinc-800/80 px-2 py-1 rounded border border-zinc-700 text-zinc-200">
+                              {item.parsed.qtd} {item.parsed.und}
+                            </span>
                           </td>
                           <td className="p-3 text-[11px] font-medium text-zinc-300 whitespace-normal max-w-sm">
-                            {detalhes.nome}
+                            {item.parsed.nome}
                           </td>
                           <td className="p-3">
                             <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${isItemRascunho ? 'bg-amber-500/10 text-amber-500' : 'text-zinc-500 border border-zinc-800'}`}>
@@ -432,11 +475,11 @@ export default function GestaoDespesas() {
                           </td>
                           <td className="p-3 text-center opacity-80">{renderizarStatus(item.status)}</td>
                           <td className="p-3 text-right font-mono font-bold text-red-400/80 text-xs">
-                            {Number(item.valor).toFixed(2)}€
+                            {item.valorLimpo.toFixed(2)}€
                           </td>
                           <td className="p-3 text-center">
                             <button onClick={() => abrirEditarDespesa(item)} className="text-zinc-500 hover:text-orange-400 text-[10px] font-bold underline transition-colors">
-                              Classificar / Editar
+                              Editar Item
                             </button>
                           </td>
                         </tr>
@@ -456,11 +499,12 @@ export default function GestaoDespesas() {
         </div>
       </main>
 
+      {/* MODAL DE EDIÇÃO */}
       {modalAberto && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[100]">
           <div className="bg-zinc-900 w-full max-w-xl rounded-3xl p-6 flex flex-col max-h-[90vh] shadow-2xl border border-zinc-800">
             <h2 className="text-xl font-black mb-4 flex items-center justify-between text-white">
-              {modoBulk ? '📦 Classificação em Massa' : '✏️ Editar Item Específico'}
+              {modoBulk ? '📦 Classificação em Massa da Fatura' : '✏️ Editar Item Específico'}
               <button onClick={() => setModalAberto(false)} className="text-zinc-500 hover:text-white bg-zinc-950 w-8 h-8 rounded-full flex items-center justify-center transition-colors">✕</button>
             </h2>
             
@@ -473,7 +517,7 @@ export default function GestaoDespesas() {
                   </div>
                   <div className="flex gap-4">
                     <div className="flex-1">
-                      <label className="text-[10px] font-bold text-zinc-500 uppercase">Valor (€)</label>
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase">Valor Unitário (€)</label>
                       <input required type="number" step="0.01" value={formDespesa.valor || ''} onChange={e => setFormDespesa({...formDespesa, valor: parseFloat(e.target.value) || 0})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-red-400 font-bold mt-1" />
                     </div>
                     <div className="flex-1">
