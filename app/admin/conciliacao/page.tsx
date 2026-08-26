@@ -89,9 +89,6 @@ export default function ConciliacaoPage() {
     return [];
   };
 
-  // =========================================================================
-  // 🧠 NOVO: BARREIRA ANTI-DUPLICAÇÃO + AUTO-APRENDIZAGEM (MEMÓRIA IA)
-  // =========================================================================
   const processarInsercaoGlobal = async (itens: any[], fornecedor: string, mesRef: string, arquivoNome: string, tipoArquivo: string, apenasDespesas = false, dataFaturaDoc = '') => {
     if (!itens || itens.length === 0) return { inseridos: 0, duplicados: 0 };
 
@@ -99,23 +96,20 @@ export default function ConciliacaoPage() {
     let totalDuplicados = 0;
     const fornecedorFormatado = fornecedor || 'Fornecedor Diversos';
 
-    // 🧠 INTELIGÊNCIA ARTIFICIAL: MEMÓRIA DE FORNECEDORES (AUTO-APRENDIZAGEM)
-    // Procura a última vez que você classificou este fornecedor
     let categoriaAutomatica = '⚠️ Por Classificar';
     
     if (fornecedorFormatado !== 'Fornecedor Diversos' && fornecedorFormatado !== 'Desconhecido') {
-       // Procura pelo nome exato do fornecedor na descrição
        const { data: memoriaFornecedor } = await supabase
          .from('despesas')
          .select('categoria')
          .ilike('descricao', `%${fornecedorFormatado}%`)
          .neq('categoria', '⚠️ Por Classificar')
-         .order('id', { ascending: false }) // Pega na classificação mais recente
+         .order('id', { ascending: false }) 
          .limit(1)
          .maybeSingle();
          
        if (memoriaFornecedor && memoriaFornecedor.categoria) {
-         categoriaAutomatica = memoriaFornecedor.categoria; // Aprendeu!
+         categoriaAutomatica = memoriaFornecedor.categoria; 
        }
     }
 
@@ -150,7 +144,6 @@ export default function ConciliacaoPage() {
         try { dataDespesaGravar = new Date(dataFaturaDoc).toISOString().split('T')[0]; } catch(e) {}
       }
 
-      // 🛑 VERIFICAÇÃO ANTI-DUPLICAÇÃO
       const { data: checkDuplicado } = await supabase
         .from('despesas')
         .select('id')
@@ -165,10 +158,9 @@ export default function ConciliacaoPage() {
         continue;
       }
 
-      // ✅ SE PASSOU, GRAVA COM A CATEGORIA APRENDIDA
       const { error } = await supabase.from('despesas').insert([{
         descricao: descFinal,
-        categoria: categoriaAutomatica, // 🚀 A MÁGICA ACONTECE AQUI!
+        categoria: categoriaAutomatica,
         valor: valorReal,
         data_despesa: dataDespesaGravar,
         metodo_pagamento: 'Conciliação Automática',
@@ -182,7 +174,6 @@ export default function ConciliacaoPage() {
     
     return { inseridos: totalInseridos, duplicados: totalDuplicados };
   };
-  // =========================================================================
 
   const iniciarAuditoria = async () => {
     if (files.length === 0) return alert('Por favor, anexe pelo menos um ficheiro.');
@@ -210,8 +201,10 @@ export default function ConciliacaoPage() {
         }
 
         const base64Real = await new Promise((resolve, reject) => {
-          const reader = new FileReader(); reader.readAsDataURL(file);
-          reader.onload = () => resolve(reader.result); reader.onerror = error => reject(error);
+          const reader = new FileReader(); 
+          reader.readAsDataURL(file);
+          reader.onload = () => resolve(reader.result); 
+          reader.onerror = error => reject(error);
         });
 
         const res = await fetch('/admin/conciliacao/api', {
@@ -219,8 +212,24 @@ export default function ConciliacaoPage() {
           body: JSON.stringify({ fileBase64: base64Real, fileName: file.name, fileType: file.type, tipoArquivo: catIndividual, periodoRef: periodo })
         });
 
+        // 🛡️ AQUI ESTÁ A NOVA PROTEÇÃO CONTRA CRASHES DA VERCEL
+        if (!res.ok) {
+          const erroTexto = await res.text();
+          let aviso = `Erro ao processar o ficheiro: ${file.name}`;
+          
+          if (erroTexto.includes('Request Entity Too Large') || erroTexto.includes('Request En')) {
+            aviso = `⚠️ O ficheiro "${file.name}" é demasiado pesado (excedeu o limite da Vercel). Tente reduzi-lo ou comprimi-lo.`;
+          } else if (erroTexto.includes('504') || erroTexto.includes('Timeout')) {
+             aviso = `⏳ A IA demorou demasiado tempo a ler o ficheiro "${file.name}".`;
+          }
+          
+          alert(`${aviso}\n\nO sistema vai saltar este documento e continuar a processar os restantes!`);
+          continue; // Salta este ficheiro sem crashar a aplicação e vai para o próximo!
+        }
+
         const dataAPI = await res.json();
-        if (res.ok && dataAPI.dadosLidos) {
+        
+        if (dataAPI && dataAPI.dadosLidos) {
            let itensParaProcessar = extrairListaItens(dataAPI.dadosLidos);
            if (itensParaProcessar.length === 0 && dataAPI.dadosLidos.valorTotal) {
               itensParaProcessar = [{ nome_extraido: `Fatura Lote (${catIndividual})`, tipo: 'geral', quantidade: 1, unidade: 'un', valor_total: dataAPI.dadosLidos.valorTotal }];
@@ -232,6 +241,7 @@ export default function ConciliacaoPage() {
               finalDuplicados += resultado.duplicados;
            }
         }
+        
         if (i < files.length - 1) {
           setStatusTexto(`A aguardar IA (15s)...`);
           await new Promise(resolve => setTimeout(resolve, 15000));
@@ -240,7 +250,12 @@ export default function ConciliacaoPage() {
       
       alert(`Lote finalizado com sucesso! 🎉\n\n✅ Novos registos gravados: ${finalInseridos}\n⚠️ Registos ignorados (Duplicados): ${finalDuplicados}`);
       setFiles([]); setAutoDetectado(false); carregarHistorico(); 
-    } catch (err: any) { alert(`Erro fatal: ${err.message}`); } finally { setProcessando(false); setProgresso({ atual: 0, total: 0 }); setStatusTexto('A extrair itens...'); }
+    } catch (err: any) { 
+      // Se houver um erro extremo fora da API, ele apanha aqui mas tenta não travar tudo.
+      alert(`Aviso no processamento do Lote: ${err.message}`); 
+    } finally { 
+      setProcessando(false); setProgresso({ atual: 0, total: 0 }); setStatusTexto('A extrair itens...'); 
+    }
   };
 
   const reprocessarParaDespesas = async () => {
@@ -303,9 +318,9 @@ export default function ConciliacaoPage() {
             <div className="border-2 border-dashed border-zinc-700 hover:border-orange-500 bg-zinc-950 rounded-xl p-8 text-center relative mb-4">
               <input type="file" multiple onChange={handleFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" accept=".pdf,.png,.jpg,.jpeg,.csv" />
               <div className="text-4xl mb-2">📂</div>
-              {files.length > 0 ? (<p className="text-sm font-bold text-green-500">{files.length} ficheiro(s)</p>) : (<p className="text-sm font-bold text-zinc-300">Escolher ficheiros</p>)}
+              {files.length > 0 ? (<p className="text-sm font-bold text-green-500">{files.length} ficheiro(s)</p>) : (<p className="text-sm font-bold text-zinc-300">Escolher ficheiros (Max: 4MB cada)</p>)}
             </div>
-            <button onClick={iniciarAuditoria} disabled={processando || files.length === 0} className="w-full py-3 rounded-xl text-sm font-bold bg-purple-600 hover:bg-purple-700 text-white transition-all disabled:opacity-50">Ler Faturas & Extrair Dados 🚀</button>
+            <button onClick={iniciarAuditoria} disabled={processando || files.length === 0} className="w-full py-3 rounded-xl text-sm font-bold bg-purple-600 hover:bg-purple-700 text-white transition-all disabled:opacity-50 shadow-[0_0_15px_rgba(147,51,234,0.3)]">Ler Faturas & Extrair Dados 🚀</button>
           </div>
         </div>
 
@@ -316,8 +331,8 @@ export default function ConciliacaoPage() {
                 <h3 className="text-sm font-bold text-zinc-300 uppercase">🗄️ Histórico de Faturas</h3>
                 {selecionados.length > 0 && (
                   <div className="flex gap-2">
-                    <button onClick={reprocessarParaDespesas} className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg">💸 Enviar Rascunhos ({selecionados.length})</button>
-                    <button onClick={apagarSelecionados} className="bg-red-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg">🗑️ Eliminar</button>
+                    <button onClick={reprocessarParaDespesas} className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-md transition-all">💸 Enviar Rascunhos ({selecionados.length})</button>
+                    <button onClick={apagarSelecionados} className="bg-red-950 border border-red-900 text-red-400 text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-red-900 hover:text-white transition-all">🗑️ Eliminar</button>
                   </div>
                 )}
               </div>
@@ -328,7 +343,7 @@ export default function ConciliacaoPage() {
               {loading ? (<div className="text-center text-zinc-500">A carregar...</div>) : historico.length === 0 ? (<div className="text-center text-zinc-600 py-10">Nenhum documento.</div>) : (
                 <div className="space-y-3">
                   <div className="flex items-center px-4 py-2 border-b border-zinc-800 mb-2">
-                     <input type="checkbox" checked={selecionados.length === historico.length && historico.length > 0} onChange={toggleTodos} className="w-4 h-4 rounded border-zinc-700 bg-zinc-950 accent-orange-500" />
+                     <input type="checkbox" checked={selecionados.length === historico.length && historico.length > 0} onChange={toggleTodos} className="w-4 h-4 rounded border-zinc-700 bg-zinc-950 accent-orange-500 cursor-pointer" />
                      <span className="text-xs text-zinc-500 font-bold uppercase ml-3">Selecionar Todos</span>
                   </div>
                   {historico.map((sessao) => {
@@ -339,11 +354,11 @@ export default function ConciliacaoPage() {
                     const valorTotal = Number(dados.dadosExtraidos?.valorTotal || dados.valorTotal || dados.total || 0).toFixed(2);
 
                     return (
-                      <div key={sessao.id} onClick={() => setSessaoDetalhe(sessao)} className={`bg-zinc-900 border p-4 rounded-xl flex items-center cursor-pointer transition-all ${selecionados.includes(sessao.id) ? 'border-orange-500 bg-orange-950/20' : 'border-zinc-700'}`}>
-                        <input type="checkbox" checked={selecionados.includes(sessao.id)} onChange={() => toggleSelecionado(sessao.id)} onClick={(e)=>e.stopPropagation()} className="w-5 h-5 mr-4 accent-orange-500" />
+                      <div key={sessao.id} onClick={() => setSessaoDetalhe(sessao)} className={`bg-zinc-900 border p-4 rounded-xl flex items-center cursor-pointer transition-all hover:bg-zinc-800/50 ${selecionados.includes(sessao.id) ? 'border-orange-500 bg-orange-950/20' : 'border-zinc-700'}`}>
+                        <input type="checkbox" checked={selecionados.includes(sessao.id)} onChange={() => toggleSelecionado(sessao.id)} onClick={(e)=>e.stopPropagation()} className="w-5 h-5 mr-4 accent-orange-500 cursor-pointer" />
                         <div className="flex-1">
                           <h4 className="text-sm font-bold text-white">🧾 {nomeFicheiro}</h4>
-                          <p className="text-xs text-zinc-400 mt-1">{fornecedor} | {valorTotal}€ | ✓ {listaItens.length} itens extraídos</p>
+                          <p className="text-xs text-zinc-400 mt-1">{fornecedor} | <span className="text-zinc-200 font-bold">{valorTotal}€</span> | ✓ {listaItens.length} itens extraídos</p>
                         </div>
                       </div>
                     );
@@ -356,21 +371,21 @@ export default function ConciliacaoPage() {
       </div>
 
       {sessaoDetalhe && (
-        <div className="fixed inset-0 bg-black/80 z-[120] flex items-center justify-center p-4">
-          <div className="bg-zinc-900 w-full max-w-2xl rounded-3xl p-6 shadow-2xl flex flex-col max-h-[85vh]">
+        <div className="fixed inset-0 bg-black/80 z-[120] flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-zinc-900 w-full max-w-2xl rounded-3xl p-6 shadow-2xl flex flex-col max-h-[85vh] border border-zinc-800">
             <div className="flex justify-between items-start border-b border-zinc-800 pb-4 mb-4">
               <h3 className="text-xl font-black text-white">Detalhes da Fatura</h3>
-              <button onClick={() => setSessaoDetalhe(null)} className="bg-zinc-800 text-white w-8 h-8 rounded-full font-bold">✕</button>
+              <button onClick={() => setSessaoDetalhe(null)} className="bg-zinc-800 hover:bg-zinc-700 text-white w-8 h-8 rounded-full font-bold transition-colors">✕</button>
             </div>
-            <div className="flex-1 overflow-y-auto space-y-4">
-              <h4 className="text-xs font-bold text-zinc-400 uppercase">Itens Desmembrados da Fatura</h4>
+            <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar pr-2">
+              <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Itens Desmembrados da Fatura</h4>
               {(() => {
                 const listaItens = extrairListaItens(sessaoDetalhe.resumo);
                 if (listaItens.length === 0) return <p className="text-zinc-500 text-sm py-4">Sem itens detalhados. A IA leu apenas o total.</p>;
                 return (
                   <div className="space-y-2">
                     {listaItens.map((item: any, idx: number) => (
-                      <div key={idx} className="bg-zinc-950 border border-zinc-800 p-3 rounded-xl flex justify-between items-center">
+                      <div key={idx} className="bg-zinc-950 border border-zinc-800 p-3 rounded-xl flex justify-between items-center hover:border-zinc-700 transition-colors">
                         <div>
                           <h4 className="text-sm font-bold text-zinc-200">{item.nome_extraido || item.nome || item.descricao || 'Item Descrito'}</h4>
                           <span className="text-[10px] text-zinc-500">Qtd: {item.quantidade || 1} {item.unidade || 'un'}</span>
@@ -383,13 +398,17 @@ export default function ConciliacaoPage() {
               })()}
             </div>
             <div className="border-t border-zinc-800 pt-4 mt-4 text-center">
-              <button onClick={() => setSessaoDetalhe(null)} className="bg-orange-600 text-white text-xs font-bold px-6 py-2.5 rounded-xl">Fechar Detalhes</button>
+              <button onClick={() => setSessaoDetalhe(null)} className="bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-bold px-6 py-2.5 rounded-xl transition-all">Fechar Detalhes</button>
             </div>
           </div>
         </div>
       )}
       {processando && (
-        <div className="fixed inset-0 bg-black/90 z-[120] flex flex-col items-center justify-center"><div className="w-16 h-16 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mb-6"></div><h2 className="text-2xl font-bold text-white">{statusTexto}</h2></div>
+        <div className="fixed inset-0 bg-black/90 z-[120] flex flex-col items-center justify-center backdrop-blur-sm">
+           <div className="w-16 h-16 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mb-6 shadow-[0_0_20px_rgba(249,115,22,0.5)]"></div>
+           <h2 className="text-xl font-bold text-white tracking-wider">{statusTexto}</h2>
+           <p className="text-xs text-zinc-500 mt-2 font-mono">Processo nº {progresso.atual} / {progresso.total}</p>
+        </div>
       )}
     </div>
   );
