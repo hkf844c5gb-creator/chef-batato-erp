@@ -2,10 +2,6 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
-// =========================================================================
-// 🚀 SUPER PODERES VERCEL: Aumenta o tempo de resposta da API para o máximo
-// Isto impede que a Vercel corte a ligação a meio quando a IA está a ler PDFs pesados.
-// =========================================================================
 export const maxDuration = 60; 
 export const dynamic = 'force-dynamic';
 
@@ -23,19 +19,21 @@ const SOCIOS_MBWAY = {
 
 export async function POST(req: Request) {
   try {
-    const { fileBase64, tipoArquivo, periodoRef } = await req.json();
+    // 🛡️ CORREÇÃO MÁXIMA: LER COMO FORMDATA NATIVO (Ignora o limite de JSON da Vercel)
+    const formData = await req.formData();
+    const file = formData.get('file') as File;
+    const tipoArquivo = formData.get('tipoArquivo') as string;
+    const periodoRef = formData.get('periodoRef') as string;
 
-    if (!fileBase64 || fileBase64.length < 100) {
+    if (!file) {
       throw new Error("O ficheiro recebido está vazio ou corrompido.");
     }
 
-    let base64Data = fileBase64;
-    if (fileBase64.includes(',')) base64Data = fileBase64.split(',')[1];
-
-    let detectedMimeType = 'application/pdf';
-    if (base64Data.startsWith('/9j/')) detectedMimeType = 'image/jpeg';
-    else if (base64Data.startsWith('iVBORw0KGgo')) detectedMimeType = 'image/png';
-    else if (base64Data.startsWith('JVBER')) detectedMimeType = 'application/pdf';
+    // Só convertemos para Base64 já dentro do servidor, poupando a viagem na internet!
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const base64Data = buffer.toString('base64');
+    const detectedMimeType = file.type || 'application/pdf';
 
     const geminiKey = process.env.GEMINI_API_KEY;
     if (!geminiKey) throw new Error("Chave de API não configurada.");
