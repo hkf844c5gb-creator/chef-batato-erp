@@ -4,13 +4,13 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
 // =========================================================================
-// 🛡️ INTERFACES (TIPAGEM ESTRITA PARA EVITAR ERROS DE COMPILAÇÃO)
+// 🛡️ INTERFACES (TIPAGEM ESTRITA PARA EVITAR ERROS)
 // =========================================================================
 interface Despesa {
   id: string;
   descricao: string;
   categoria: string;
-  valor: number | string; // Aceita strings do banco caso existam vírgulas
+  valor: number | string; 
   data_despesa: string;
   metodo_pagamento: string;
   status: string; 
@@ -87,20 +87,24 @@ export default function GestaoDespesas() {
   useEffect(() => { carregarDespesas(); }, []);
 
   // =========================================================================
-  // 🧠 SUPER EXTRATOR (Lida com qualquer formato antigo ou novo)
+  // 🧠 SUPER EXTRATOR (Lida com qualquer formato antigo ou novo perfeitamente)
   // =========================================================================
   const parseValor = (val: any): number => {
-    if (val === null || val === undefined || val === '') return 0;
+    if (!val) return 0;
     if (typeof val === 'number') return val;
-    // Converte vírgulas para pontos e remove símbolos estranhos
-    const str = String(val).replace(',', '.').replace(/[^0-9.-]/g, '');
+    let str = String(val).replace(/€/g, '').replace(/\s/g, '');
+    str = str.replace(',', '.');
+    const parts = str.split('.');
+    if (parts.length > 2) {
+        str = parts.slice(0, -1).join('') + '.' + parts[parts.length - 1];
+    }
     const num = parseFloat(str);
     return isNaN(num) ? 0 : num;
   };
 
   const parseDescricao = (descOriginal: string): ParseResult => {
     let desc = descOriginal || "";
-    let qtd = "1", und = "un", nome = desc, fornecedor = "Fornecedor Diversos", fatura = "Registo Manual", nif = "";
+    let qtd = "1", und = "un", nome = desc, fornecedor = "", fatura = "Registo Manual", nif = "";
 
     // 1. Extrair Documento/Fatura
     if (desc.includes('📄')) {
@@ -112,26 +116,42 @@ export default function GestaoDespesas() {
     // 2. Extrair Fornecedor
     if (desc.includes(' | ')) {
       const parts = desc.split(' | ');
-      fornecedor = parts.pop()?.trim() || "Fornecedor Diversos";
+      fornecedor = parts.pop()?.trim() || "";
       nome = parts.join(' | ').trim();
     } else if (desc.includes(' - ') && !desc.startsWith('[')) {
-      // Se não tiver |, tenta encontrar pelo último hífen
       const lastDash = desc.lastIndexOf(' - ');
       if (lastDash > 0) {
           fornecedor = desc.substring(lastDash + 3).trim();
           nome = desc.substring(0, lastDash).trim();
       }
+    } else {
+      if (desc.startsWith('[')) {
+        fornecedor = "🏢 Entidade a Definir";
+        nome = desc;
+      } else {
+        fornecedor = desc.trim();
+        nome = desc.trim();
+      }
     }
 
-    // 3. Extrair NIF Inteligente
+    // 3. O Fim do "Fornecedor Diverso"
+    const fornUpper = fornecedor.toUpperCase();
+    if (fornUpper.includes('FORNECEDOR DIVERSO') || fornUpper === 'DESCONHECIDO' || fornUpper === '') {
+       if (!nome.startsWith('[')) {
+           fornecedor = nome; 
+       } else {
+           fornecedor = "🏢 Entidade a Definir";
+       }
+    }
+
+    // 4. Extrair NIF
     const nifMatch = fornecedor.match(/(?:NIF|Contribuinte|NIPC)?:?\s*([0-9]{9})/i);
     if (nifMatch) {
       nif = nifMatch[1];
-      fornecedor = fornecedor.replace(nifMatch[0], '').replace(/[()\-]/g, '').trim();
-      if (!fornecedor || fornecedor.length < 2) fornecedor = "Fornecedor Diversos";
+      fornecedor = fornecedor.replace(nifMatch[0], '').replace(/[()\-:]/g, '').trim();
     }
 
-    // 4. Extrair Quantidades (ex: [5 un] ou [1.5 kg])
+    // 5. Extrair Quantidades (ex: [5 un] ou [1.5 kg])
     const qtdMatch = nome.match(/^\[([\d.,]+)\s*([a-zA-Z]*)]/);
     if (qtdMatch) {
       qtd = qtdMatch[1];
@@ -139,9 +159,9 @@ export default function GestaoDespesas() {
       nome = nome.replace(qtdMatch[0], '').trim();
     }
 
-    // 5. Prevenção de campos vazios
-    if (!nome) nome = "Item sem nome identificado";
-    if (fornecedor.toUpperCase().includes('FORNECEDOR DIVERSO')) fornecedor = "Fornecedor Diversos";
+    if (!fornecedor || fornecedor.length < 2) fornecedor = "🏢 Entidade a Definir";
+    if (fornecedor.startsWith('- ')) fornecedor = fornecedor.substring(2).trim();
+    if (!nome) nome = "Despesa Genérica";
 
     return { qtd, und, nome, fornecedor, fatura, nif };
   };
@@ -180,11 +200,10 @@ export default function GestaoDespesas() {
       }
       
       const g = grupos.get(chave)!;
-      // Se a fatura ainda não tem NIF, mas este item trouxe o NIF, guardamos para a Fatura!
       if (!g.nif && p.nif) g.nif = p.nif;
 
       g.itens.push(itemExt);
-      g.valorTotal += valorL; // Soma os valores purificados!
+      g.valorTotal += valorL; 
       g.todasIds.push(desp.id);
     });
 
@@ -211,9 +230,7 @@ export default function GestaoDespesas() {
   const fornecedoresOrdenados = Object.entries(gastosPorFornecedor).sort((a, b) => b[1] - a[1]).slice(0, 5); 
 
   const toggleExpandir = (id: string) => { setExpandidos(prev => prev.includes(id) ? prev.filter(e => e !== id) : [...prev, id]); };
-  
   const toggleSelecionadoIndividual = (id: string) => { setSelecionados(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]); };
-  
   const toggleSelecionadoGrupo = (todasIds: string[]) => {
     const todosSelecionados = todasIds.every(id => selecionados.includes(id));
     if (todosSelecionados) {
@@ -223,7 +240,6 @@ export default function GestaoDespesas() {
       setSelecionados(prev => [...prev, ...novos]);
     }
   };
-
   const toggleTodos = () => { setSelecionados(selecionados.length === despesasFiltradas.length ? [] : despesasFiltradas.map(d => d.id)); };
 
   const abrirClassificacaoEmMassa = () => {
@@ -235,7 +251,6 @@ export default function GestaoDespesas() {
 
   const abrirEditarDespesa = (d: DespesaExtendida) => {
     setModoBulk(false);
-    // Limpar propriedades extra antes de devolver ao form
     const { parsed, valorLimpo, ...despesaPura } = d;
     setFormDespesa({ ...despesaPura, valor: valorLimpo, status: d.status || 'Validado' }); 
     setModalAberto(true);
@@ -244,7 +259,6 @@ export default function GestaoDespesas() {
   const salvarDespesa = async (e: React.FormEvent) => {
     e.preventDefault();
     setProcessando(true);
-    
     try {
       if (modoBulk) {
         if (formDespesa.categoria === '⚠️ Por Classificar') throw new Error("Escolha uma categoria.");
@@ -499,7 +513,6 @@ export default function GestaoDespesas() {
         </div>
       </main>
 
-      {/* MODAL DE EDIÇÃO */}
       {modalAberto && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[100]">
           <div className="bg-zinc-900 w-full max-w-xl rounded-3xl p-6 flex flex-col max-h-[90vh] shadow-2xl border border-zinc-800">
