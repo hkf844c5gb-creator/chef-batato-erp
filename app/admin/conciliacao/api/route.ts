@@ -2,6 +2,13 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
+// =========================================================================
+// 🚀 SUPER PODERES VERCEL: Aumenta o tempo de resposta da API para o máximo
+// Isto impede que a Vercel corte a ligação a meio quando a IA está a ler PDFs pesados.
+// =========================================================================
+export const maxDuration = 60; 
+export const dynamic = 'force-dynamic';
+
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -84,7 +91,6 @@ export async function POST(req: Request) {
         const custoTotalItem = Number(item.valor_total || 0);
         const custoUnitCalc = qtdComprada > 0 ? custoTotalItem / qtdComprada : 0;
 
-        // Procura insumo existente pelo nome exato ou semelhante
         const { data: insumoExistente } = await supabase
           .from('insumos')
           .select('id, quantidade_atual')
