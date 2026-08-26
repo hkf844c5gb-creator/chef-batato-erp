@@ -70,7 +70,7 @@ export default function GestaoDespesas() {
   const [mesFiltro, setMesFiltro] = useState(new Date().toISOString().slice(0, 7)); 
   const [modoRascunhosGlobais, setModoRascunhosGlobais] = useState(false);
 
-  // 🔄 FILTRO DE ORDENAÇÃO (Agora com Classificação/Categoria)
+  // Filtro de Ordenação
   const [ordenacao, setOrdenacao] = useState<'data_desc' | 'data_asc' | 'fornecedor_asc' | 'fornecedor_desc' | 'valor_desc' | 'valor_asc' | 'categoria_asc' | 'categoria_desc'>('data_desc');
 
   const [formDespesa, setFormDespesa] = useState<Despesa>({
@@ -222,7 +222,6 @@ export default function GestaoDespesas() {
 
     const arrayFinal = Array.from(grupos.values());
 
-    // Função auxiliar para determinar a classificação do grupo para efeitos de ordenação
     const getCategoriaGrupo = (g: GrupoDespesa) => {
       const temRascunhos = g.itens.some(i => i.categoria === '⚠️ Por Classificar');
       if (temRascunhos) return '⚠️ Contém Itens por Classificar';
@@ -449,138 +448,141 @@ export default function GestaoDespesas() {
           </div>
         )}
 
+        {/* 🛡️ CORREÇÃO PRINCIPAL: Tabela com Scroll Horizontal Seguro */}
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl">
-          <table className="w-full text-left text-xs whitespace-nowrap">
-            <thead className="bg-zinc-950 border-b border-zinc-800 text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
-              <tr>
-                <th className="p-4 w-10"><input type="checkbox" checked={despesasFiltradas.length > 0 && selecionados.length === despesasFiltradas.length} onChange={toggleTodos} className="w-4 h-4 rounded accent-orange-500" /></th>
-                <th className="p-4 w-10"></th>
-                <th className="p-4">Data</th>
-                <th className="p-4 w-[250px]">Entidade / Quantidade</th>
-                <th className="p-4">Documento / Detalhe do Item</th>
-                <th className="p-4">Classificação (Custo)</th>
-                <th className="p-4 text-center">Estado</th>
-                <th className="p-4 text-right">Valor (€)</th>
-                <th className="p-4 text-center">Ações</th>
-              </tr>
-            </thead>
-            <tbody className="text-sm text-zinc-300">
-              {despesasAgrupadas.map(grupo => {
-                const isExpandido = expandidos.includes(grupo.idAgrupado);
-                const todosItensSelecionados = grupo.todasIds.every(id => selecionados.includes(id));
-                const algumItemSelecionado = grupo.todasIds.some(id => selecionados.includes(id));
-                
-                const temRascunhos = grupo.itens.some(i => i.categoria === '⚠️ Por Classificar');
-                const categoriasUnicas = Array.from(new Set(grupo.itens.map(i => i.categoria)));
-                
-                let categoriaExibir: string = categoriasUnicas.length > 0 ? String(categoriasUnicas[0]) : 'Sem Categoria';
-                if (temRascunhos) categoriaExibir = '⚠️ Contém Itens por Classificar';
-                else if (categoriasUnicas.length > 1) categoriaExibir = '📦 Múltiplas Categorias';
-
-                const todosValidados = grupo.itens.every(i => i.status === 'Validado');
-                const statusGeralExibir = todosValidados ? 'Validado' : 'Pendente';
-
-                return (
-                  <React.Fragment key={grupo.idAgrupado}>
-                    
-                    {/* 🔹 LINHA PRINCIPAL DA FATURA */}
-                    <tr className={`border-b border-zinc-800 transition-colors ${isExpandido ? 'bg-zinc-800/40' : 'bg-zinc-900 hover:bg-zinc-800/70'} ${todosItensSelecionados ? 'bg-orange-950/20' : ''}`}>
-                      <td className="p-4">
-                        <input 
-                          type="checkbox" 
-                          checked={todosItensSelecionados} 
-                          ref={el => { if (el) el.indeterminate = algumItemSelecionado && !todosItensSelecionados; }}
-                          onChange={() => toggleSelecionadoGrupo(grupo.todasIds)} 
-                          className="w-4 h-4 accent-orange-500 cursor-pointer" 
-                        />
-                      </td>
-                      <td className="p-4 cursor-pointer text-orange-500 hover:text-orange-400" onClick={() => toggleExpandir(grupo.idAgrupado)}>
-                        {!grupo.isAvulsa && (
-                          <div className="w-6 h-6 rounded-md bg-zinc-950 border border-zinc-700 flex items-center justify-center transition-all">
-                            {isExpandido ? '🔽' : '▶️'}
-                          </div>
-                        )}
-                      </td>
-                      <td className="p-4 font-mono text-[11px] text-zinc-400">{grupo.data_despesa}</td>
-                      <td className="p-4">
-                         <div className="font-black uppercase text-zinc-100 truncate">{grupo.fornecedorLogico}</div>
-                         {grupo.nif && <div className="text-[9px] text-zinc-500 font-mono mt-0.5">NIF: {grupo.nif}</div>}
-                      </td>
-                      <td className="p-4 cursor-pointer" onClick={() => toggleExpandir(grupo.idAgrupado)}>
-                        <div className="flex flex-col whitespace-normal max-w-[280px]">
-                          {grupo.isAvulsa ? (
-                             <span className="font-medium text-zinc-300 text-[11px]">{grupo.itens[0].parsed.nome}</span>
-                          ) : (
-                            <>
-                              <span className="font-bold text-blue-400">{grupo.faturaRef}</span>
-                              <span className="text-[10px] text-zinc-500 font-bold mt-0.5">📦 {grupo.itens.length} itens extraídos</span>
-                            </>
-                          )}
-                        </div>
-                      </td>
-                      <td className="p-4">
-                        <span className={`text-[10px] px-2 py-1 rounded font-bold uppercase ${temRascunhos ? 'bg-amber-500/20 text-amber-400 animate-pulse' : (categoriasUnicas.length > 1 ? 'bg-purple-500/20 text-purple-400' : 'bg-zinc-800 text-zinc-300')}`}>
-                          {categoriaExibir}
-                        </span>
-                      </td>
-                      <td className="p-4 text-center">{renderizarStatus(statusGeralExibir)}</td>
-                      <td className="p-4 text-right font-black text-xl text-red-500 tracking-tighter">
-                        {grupo.valorTotal.toFixed(2)}€
-                      </td>
-                      <td className="p-4 text-center">
-                        <button onClick={() => { toggleSelecionadoGrupo(grupo.todasIds); abrirClassificacaoEmMassa(); }} className="bg-zinc-950 hover:bg-orange-600 border border-zinc-800 hover:border-orange-500 px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider font-bold transition-all text-white">
-                          {temRascunhos ? 'Classificar' : 'Editar Fatura'}
-                        </button>
-                      </td>
-                    </tr>
-
-                    {/* 🔹 SUB-LINHAS DOS ITENS */}
-                    {isExpandido && !grupo.isAvulsa && grupo.itens.map((item: DespesaExtendida) => {
-                      const isItemRascunho = item.categoria === '⚠️ Por Classificar';
-                      
-                      return (
-                        <tr key={item.id} className={`bg-zinc-950/80 hover:bg-zinc-900 transition-all border-b border-zinc-900 ${selecionados.includes(item.id) ? 'bg-orange-950/10' : ''}`}>
-                          <td className="p-3 pl-8 text-center border-l-2 border-orange-500/50">
-                            <input type="checkbox" checked={selecionados.includes(item.id)} onChange={() => toggleSelecionadoIndividual(item.id)} className="w-3.5 h-3.5 accent-orange-500 cursor-pointer" />
-                          </td>
-                          <td className="p-3"></td>
-                          <td className="p-3 text-right text-zinc-600 font-black">↳</td>
-                          <td className="p-3 font-mono text-[11px] text-zinc-400">
-                            <span className="bg-zinc-800/80 px-2 py-1 rounded border border-zinc-700 text-zinc-200">
-                              {item.parsed.qtd} {item.parsed.und}
-                            </span>
-                          </td>
-                          <td className="p-3 text-[11px] font-medium text-zinc-300 whitespace-normal max-w-sm">
-                            {item.parsed.nome}
-                          </td>
-                          <td className="p-3">
-                            <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${isItemRascunho ? 'bg-amber-500/10 text-amber-500' : 'text-zinc-500 border border-zinc-800'}`}>
-                              {item.categoria}
-                            </span>
-                          </td>
-                          <td className="p-3 text-center opacity-80">{renderizarStatus(item.status)}</td>
-                          <td className="p-3 text-right font-mono font-bold text-red-400/80 text-xs">
-                            {item.valorLimpo.toFixed(2)}€
-                          </td>
-                          <td className="p-3 text-center">
-                            <button onClick={() => abrirEditarDespesa(item)} className="text-zinc-500 hover:text-orange-400 text-[10px] font-bold underline transition-colors">
-                              Editar Item
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </React.Fragment>
-                );
-              })}
-              
-              {despesasAgrupadas.length === 0 && (
+          <div className="overflow-x-auto custom-scrollbar pb-2">
+            <table className="w-full text-left text-xs whitespace-nowrap">
+              <thead className="bg-zinc-950 border-b border-zinc-800 text-[10px] font-bold text-zinc-400 uppercase tracking-wider">
                 <tr>
-                  <td colSpan={9} className="p-12 text-center text-zinc-600 font-bold">Nenhum registo encontrado para este período.</td>
+                  <th className="p-4 w-10"><input type="checkbox" checked={despesasFiltradas.length > 0 && selecionados.length === despesasFiltradas.length} onChange={toggleTodos} className="w-4 h-4 rounded accent-orange-500" /></th>
+                  <th className="p-4 w-10"></th>
+                  <th className="p-4">Data</th>
+                  <th className="p-4 w-[250px] min-w-[200px]">Entidade / Quantidade</th>
+                  <th className="p-4 min-w-[250px]">Documento / Detalhe do Item</th>
+                  <th className="p-4 min-w-[150px]">Classificação (Custo)</th>
+                  <th className="p-4 text-center">Estado</th>
+                  <th className="p-4 text-right">Valor (€)</th>
+                  <th className="p-4 text-center min-w-[120px]">Ações</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="text-sm text-zinc-300">
+                {despesasAgrupadas.map(grupo => {
+                  const isExpandido = expandidos.includes(grupo.idAgrupado);
+                  const todosItensSelecionados = grupo.todasIds.every(id => selecionados.includes(id));
+                  const algumItemSelecionado = grupo.todasIds.some(id => selecionados.includes(id));
+                  
+                  const temRascunhos = grupo.itens.some(i => i.categoria === '⚠️ Por Classificar');
+                  const categoriasUnicas = Array.from(new Set(grupo.itens.map(i => i.categoria)));
+                  
+                  let categoriaExibir: string = categoriasUnicas.length > 0 ? String(categoriasUnicas[0]) : 'Sem Categoria';
+                  if (temRascunhos) categoriaExibir = '⚠️ Contém Itens por Classificar';
+                  else if (categoriasUnicas.length > 1) categoriaExibir = '📦 Múltiplas Categorias';
+
+                  const todosValidados = grupo.itens.every(i => i.status === 'Validado');
+                  const statusGeralExibir = todosValidados ? 'Validado' : 'Pendente';
+
+                  return (
+                    <React.Fragment key={grupo.idAgrupado}>
+                      
+                      {/* 🔹 LINHA PRINCIPAL DA FATURA */}
+                      <tr className={`border-b border-zinc-800 transition-colors ${isExpandido ? 'bg-zinc-800/40' : 'bg-zinc-900 hover:bg-zinc-800/70'} ${todosItensSelecionados ? 'bg-orange-950/20' : ''}`}>
+                        <td className="p-4">
+                          <input 
+                            type="checkbox" 
+                            checked={todosItensSelecionados} 
+                            ref={el => { if (el) el.indeterminate = algumItemSelecionado && !todosItensSelecionados; }}
+                            onChange={() => toggleSelecionadoGrupo(grupo.todasIds)} 
+                            className="w-4 h-4 accent-orange-500 cursor-pointer" 
+                          />
+                        </td>
+                        <td className="p-4 cursor-pointer text-orange-500 hover:text-orange-400" onClick={() => toggleExpandir(grupo.idAgrupado)}>
+                          {!grupo.isAvulsa && (
+                            <div className="w-6 h-6 rounded-md bg-zinc-950 border border-zinc-700 flex items-center justify-center transition-all">
+                              {isExpandido ? '🔽' : '▶️'}
+                            </div>
+                          )}
+                        </td>
+                        <td className="p-4 font-mono text-[11px] text-zinc-400">{grupo.data_despesa}</td>
+                        <td className="p-4">
+                           <div className="font-black uppercase text-zinc-100 truncate max-w-[250px]">{grupo.fornecedorLogico}</div>
+                           {grupo.nif && <div className="text-[9px] text-zinc-500 font-mono mt-0.5">NIF: {grupo.nif}</div>}
+                        </td>
+                        <td className="p-4 cursor-pointer" onClick={() => toggleExpandir(grupo.idAgrupado)}>
+                          <div className="flex flex-col whitespace-normal max-w-[300px]">
+                            {grupo.isAvulsa ? (
+                               <span className="font-medium text-zinc-300 text-[11px]">{grupo.itens[0].parsed.nome}</span>
+                            ) : (
+                              <>
+                                <span className="font-bold text-blue-400">{grupo.faturaRef}</span>
+                                <span className="text-[10px] text-zinc-500 font-bold mt-0.5">📦 {grupo.itens.length} itens extraídos</span>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                        <td className="p-4">
+                          <span className={`text-[10px] px-2 py-1 rounded font-bold uppercase ${temRascunhos ? 'bg-amber-500/20 text-amber-400 animate-pulse' : (categoriasUnicas.length > 1 ? 'bg-purple-500/20 text-purple-400' : 'bg-zinc-800 text-zinc-300')}`}>
+                            {categoriaExibir}
+                          </span>
+                        </td>
+                        <td className="p-4 text-center">{renderizarStatus(statusGeralExibir)}</td>
+                        <td className="p-4 text-right font-black text-xl text-red-500 tracking-tighter">
+                          {grupo.valorTotal.toFixed(2)}€
+                        </td>
+                        <td className="p-4 text-center">
+                          <button onClick={() => { toggleSelecionadoGrupo(grupo.todasIds); abrirClassificacaoEmMassa(); }} className="bg-zinc-950 hover:bg-orange-600 border border-zinc-800 hover:border-orange-500 px-3 py-1.5 rounded-lg text-[10px] uppercase tracking-wider font-bold transition-all text-white">
+                            {temRascunhos ? 'Classificar' : 'Editar Fatura'}
+                          </button>
+                        </td>
+                      </tr>
+
+                      {/* 🔹 SUB-LINHAS DOS ITENS */}
+                      {isExpandido && !grupo.isAvulsa && grupo.itens.map((item: DespesaExtendida) => {
+                        const isItemRascunho = item.categoria === '⚠️ Por Classificar';
+                        
+                        return (
+                          <tr key={item.id} className={`bg-zinc-950/80 hover:bg-zinc-900 transition-all border-b border-zinc-900 ${selecionados.includes(item.id) ? 'bg-orange-950/10' : ''}`}>
+                            <td className="p-3 pl-8 text-center border-l-2 border-orange-500/50">
+                              <input type="checkbox" checked={selecionados.includes(item.id)} onChange={() => toggleSelecionadoIndividual(item.id)} className="w-3.5 h-3.5 accent-orange-500 cursor-pointer" />
+                            </td>
+                            <td className="p-3"></td>
+                            <td className="p-3 text-right text-zinc-600 font-black">↳</td>
+                            <td className="p-3 font-mono text-[11px] text-zinc-400">
+                              <span className="bg-zinc-800/80 px-2 py-1 rounded border border-zinc-700 text-zinc-200">
+                                {item.parsed.qtd} {item.parsed.und}
+                              </span>
+                            </td>
+                            <td className="p-3 text-[11px] font-medium text-zinc-300 whitespace-normal max-w-sm">
+                              {item.parsed.nome}
+                            </td>
+                            <td className="p-3">
+                              <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${isItemRascunho ? 'bg-amber-500/10 text-amber-500' : 'text-zinc-500 border border-zinc-800'}`}>
+                                {item.categoria}
+                              </span>
+                            </td>
+                            <td className="p-3 text-center opacity-80">{renderizarStatus(item.status)}</td>
+                            <td className="p-3 text-right font-mono font-bold text-red-400/80 text-xs">
+                              {item.valorLimpo.toFixed(2)}€
+                            </td>
+                            <td className="p-3 text-center">
+                              <button onClick={() => abrirEditarDespesa(item)} className="text-zinc-500 hover:text-orange-400 text-[10px] font-bold underline transition-colors">
+                                Editar Item
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </React.Fragment>
+                  );
+                })}
+                
+                {despesasAgrupadas.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="p-12 text-center text-zinc-600 font-bold">Nenhum registo encontrado para este período.</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       </main>
 
