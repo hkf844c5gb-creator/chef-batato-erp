@@ -200,31 +200,29 @@ export default function ConciliacaoPage() {
           else catIndividual = 'Fatura';
         }
 
-        const base64Real = await new Promise((resolve, reject) => {
-          const reader = new FileReader(); 
-          reader.readAsDataURL(file);
-          reader.onload = () => resolve(reader.result); 
-          reader.onerror = error => reject(error);
-        });
+        // 🛡️ CORREÇÃO MÁXIMA: Usar FormData Nativo (Impede o ficheiro de inchar e ser bloqueado)
+        const uploadData = new FormData();
+        uploadData.append('file', file); // Passa o ficheiro puro! Sem conversões pesadas!
+        uploadData.append('tipoArquivo', catIndividual);
+        uploadData.append('periodoRef', periodo);
 
         const res = await fetch('/admin/conciliacao/api', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileBase64: base64Real, fileName: file.name, fileType: file.type, tipoArquivo: catIndividual, periodoRef: periodo })
+          method: 'POST',
+          body: uploadData // Não precisamos de JSON nem de Content-Type. O Browser faz isto perfeitamente.
         });
 
-        // 🛡️ AQUI ESTÁ A NOVA PROTEÇÃO CONTRA CRASHES DA VERCEL
         if (!res.ok) {
           const erroTexto = await res.text();
           let aviso = `Erro ao processar o ficheiro: ${file.name}`;
           
           if (erroTexto.includes('Request Entity Too Large') || erroTexto.includes('Request En')) {
-            aviso = `⚠️ O ficheiro "${file.name}" é demasiado pesado (excedeu o limite da Vercel). Tente reduzi-lo ou comprimi-lo.`;
+            aviso = `⚠️ O ficheiro "${file.name}" continua a ser colossalmente gigante para a Vercel. Utilize o "Truque do Print/Foto" como alternativa final.`;
           } else if (erroTexto.includes('504') || erroTexto.includes('Timeout')) {
              aviso = `⏳ A IA demorou demasiado tempo a ler o ficheiro "${file.name}".`;
           }
           
           alert(`${aviso}\n\nO sistema vai saltar este documento e continuar a processar os restantes!`);
-          continue; // Salta este ficheiro sem crashar a aplicação e vai para o próximo!
+          continue; 
         }
 
         const dataAPI = await res.json();
@@ -251,7 +249,6 @@ export default function ConciliacaoPage() {
       alert(`Lote finalizado com sucesso! 🎉\n\n✅ Novos registos gravados: ${finalInseridos}\n⚠️ Registos ignorados (Duplicados): ${finalDuplicados}`);
       setFiles([]); setAutoDetectado(false); carregarHistorico(); 
     } catch (err: any) { 
-      // Se houver um erro extremo fora da API, ele apanha aqui mas tenta não travar tudo.
       alert(`Aviso no processamento do Lote: ${err.message}`); 
     } finally { 
       setProcessando(false); setProgresso({ atual: 0, total: 0 }); setStatusTexto('A extrair itens...'); 
@@ -307,7 +304,7 @@ export default function ConciliacaoPage() {
     <div className="p-8 font-sans max-w-7xl mx-auto relative">
       <div className="mb-8 border-b border-zinc-800 pb-4">
         <h1 className="text-3xl font-bold text-orange-500 flex items-center gap-3">
-          Conciliador Inteligente <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full">v8 Estável</span>
+          Conciliador Inteligente <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full">v9 Nativo</span>
         </h1>
       </div>
 
@@ -318,7 +315,7 @@ export default function ConciliacaoPage() {
             <div className="border-2 border-dashed border-zinc-700 hover:border-orange-500 bg-zinc-950 rounded-xl p-8 text-center relative mb-4">
               <input type="file" multiple onChange={handleFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" accept=".pdf,.png,.jpg,.jpeg,.csv" />
               <div className="text-4xl mb-2">📂</div>
-              {files.length > 0 ? (<p className="text-sm font-bold text-green-500">{files.length} ficheiro(s)</p>) : (<p className="text-sm font-bold text-zinc-300">Escolher ficheiros (Max: 4MB cada)</p>)}
+              {files.length > 0 ? (<p className="text-sm font-bold text-green-500">{files.length} ficheiro(s)</p>) : (<p className="text-sm font-bold text-zinc-300">Escolher ficheiros</p>)}
             </div>
             <button onClick={iniciarAuditoria} disabled={processando || files.length === 0} className="w-full py-3 rounded-xl text-sm font-bold bg-purple-600 hover:bg-purple-700 text-white transition-all disabled:opacity-50 shadow-[0_0_15px_rgba(147,51,234,0.3)]">Ler Faturas & Extrair Dados 🚀</button>
           </div>
