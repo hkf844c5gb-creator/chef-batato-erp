@@ -45,7 +45,6 @@ export default function GestaoPedidos() {
 
   const supabase = createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 
-  // CARREGA APENAS CONFIGURAÇÕES ESTÁTICAS UMA VEZ
   useEffect(() => {
     const carregarConfiguracoes = async () => {
       try {
@@ -69,13 +68,11 @@ export default function GestaoPedidos() {
     carregarConfiguracoes();
   }, []);
 
-  // ⚠️ OTIMIZAÇÃO CRÍTICA: O Filtro é feito AGORA na própria Base de Dados!
   const buscarPedidosDaBase = useCallback(async () => {
     setLoading(true);
     try {
       let query = supabase.from('pedidos').select(`*, itens:itens_pedido (*)`).order('numero_pedido', { ascending: false });
 
-      // O Supabase filtra antes de enviar para o seu computador (NÃO TRAVA MAIS!)
       if (dataInicio) {
         query = query.gte('data_pedido', dataInicio);
       }
@@ -139,12 +136,11 @@ export default function GestaoPedidos() {
     } finally {
       setLoading(false);
     }
-  }, [dataInicio, dataFim]); // Recarrega SEMPRE que as datas mudam!
+  }, [dataInicio, dataFim]);
 
   useEffect(() => {
     buscarPedidosDaBase();
     
-    // Atualiza automaticamente se alguém lançar um pedido novo na mesma data
     const canalAtualizacao = supabase.channel('schema-db-changes').on('postgres_changes', { event: '*', schema: 'public', table: 'pedidos' }, () => { 
       buscarPedidosDaBase(); 
     }).subscribe();
@@ -160,15 +156,74 @@ export default function GestaoPedidos() {
     } catch (err) { alert('Erro ao liquidar pagamento.'); }
   };
 
+  // =========================================================================================
+  // 🔄 NOVA LÓGICA DE EXCLUSÃO DE PEDIDO COM ESTORNO AUTOMÁTICO DE ESTOQUE
+  // =========================================================================================
   const excluirPedido = async (pedidoNum: number, ids: string[]) => {
-    if (!confirm(`⚠️ Tem a certeza que deseja excluir definitivamente o pedido #${pedidoNum}?`)) return;
+    if (!confirm(`⚠️ Tem a certeza que deseja excluir o pedido #${pedidoNum}?\n\n🔄 Todo o stock gasto neste pedido (produtos, combos e embalagens) será devolvido automaticamente ao sistema.`)) return;
+    
     try {
+      // 1. PRIMEIRO PASSO: Procurar e estornar o stock baseado no histórico de saídas!
+      const { data: movimentosAntigos, error: errBusca } = await supabase
+        .from('movimentos_estoque')
+        .select('*')
+        .eq('tipo_movimento', 'SAÍDA')
+        .ilike('observacoes', `%Pedido #${pedidoNum}%`); // Apanha tanto "Pedido #516" como "Acompanhamento Pedido #516"
+
+      if (errBusca) throw errBusca;
+
+      let totalItensDevolvidos = 0;
+
+      if (movimentosAntigos && movimentosAntigos.length > 0) {
+        // Agrupa devoluções do mesmo produto para não fazer dezenas de atualizações repetidas
+        const devolucoes = new Map<string, { nome: string, qtd: number }>();
+        for (const mov of movimentosAntigos) {
+          if (!mov.produto_id) continue;
+          const atual = devolucoes.get(mov.produto_id) || { nome: mov.nome_produto, qtd: 0 };
+          atual.qtd += Number(mov.quantidade);
+          devolucoes.set(mov.produto_id, atual);
+        }
+
+        // Devolve ao estoque real e regista a entrada
+        for (const [produtoId, dados] of devolucoes.entries()) {
+          const { data: prodData } = await supabase.from('produtos').select('estoque_atual').eq('id', produtoId).single();
+          if (prodData) {
+            const novoStock = Number(prodData.estoque_atual) + dados.qtd;
+            
+            // 1. Repõe o produto
+            await supabase.from('produtos').update({ estoque_atual: novoStock }).eq('id', produtoId);
+
+            // 2. Regista o estorno para aparecer certinho no Extrato do Estoque
+            await supabase.from('movimentos_estoque').insert([{
+              produto_id: produtoId,
+              nome_produto: dados.nome,
+              tipo_movimento: 'ENTRADA',
+              quantidade: dados.qtd,
+              saldo_atualizado: novoStock,
+              origem: 'ESTORNO DE PEDIDO',
+              observacoes: `Devolução automática por exclusão do Pedido #${pedidoNum}`,
+              data_movimento: new Date().toISOString()
+            }]);
+            
+            totalItensDevolvidos += dados.qtd;
+          }
+        }
+      }
+
+      // 2. SEGUNDO PASSO: Apagar o pedido da base de dados!
       await supabase.from('itens_pedido').delete().in('pedido_id', ids);
       const { error } = await supabase.from('pedidos').delete().in('id', ids);
       if (error) throw error;
+      
+      // Limpar a linha no ecrã sem ter de recarregar a página
       setPedidos(prev => prev.filter(p => p.numero_pedido !== pedidoNum));
-    } catch (err: any) { alert(`Erro ao excluir pedido: ${err.message}`); }
+      
+      alert(`✅ Pedido #${pedidoNum} excluído com sucesso!\n🔄 ${totalItensDevolvidos} itens/embalagens foram devolvidos ao stock.`);
+    } catch (err: any) { 
+      alert(`Erro ao excluir pedido e estornar stock: ${err.message}`); 
+    }
   };
+  // =========================================================================================
 
   const calcularPrecoPorCanalEProduto = (canal: string, prod: any) => {
     const nome = (prod.nome || '').toLowerCase();
@@ -352,7 +407,6 @@ export default function GestaoPedidos() {
     } catch (err: any) { alert(`Erro ao salvar edição: ${err.message}`); } finally { setSalvando(false); }
   };
 
-  // O Filtro Local agora serve APENAS para pesquisa de Nome e Ordem, a data já vem certa da BD.
   const pedidosExibidos = useMemo(() => {
     let filtrados = [...pedidos];
     if (termoPesquisa.trim() !== '') {
@@ -509,19 +563,28 @@ export default function GestaoPedidos() {
         <div className="fixed inset-0 bg-black/80 flex justify-center items-center z-50 p-4">
           <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl p-6">
             <button onClick={() => setModalEditar(false)} className="float-right text-zinc-400">✕</button>
-            <h2 className="text-xl font-bold mb-5">Editar Pedido #{pedidoEditando.numero_pedido}</h2>
+            <h2 className="text-xl font-bold mb-3">Editar Pedido #{pedidoEditando.numero_pedido}</h2>
+            
+            {/* ALERTA VISUAL PARA ENSINAR A REGRA DO ESTOQUE */}
+            <div className="bg-orange-500/10 border border-orange-500/50 p-3 rounded-xl mb-5">
+              <p className="text-xs text-orange-400 font-bold flex items-center gap-1"><span>⚠️</span> ATENÇÃO AO ESTOQUE</p>
+              <p className="text-[10px] text-zinc-300 mt-1">
+                Alterar itens por aqui <strong>NÃO</strong> atualiza o estoque. Se o pedido original estiver errado, feche isto, <strong>exclua o pedido inteiro</strong> (o sistema devolve tudo ao stock) e registe-o novamente no PDV.
+              </p>
+            </div>
+
             <form onSubmit={salvarEdicao} className="space-y-4">
-              <input value={pedidoEditando.cliente || ''} onChange={e => setPedidoEditando({ ...pedidoEditando, cliente: e.target.value })} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3" />
-              <div className="space-y-2">
+              <input value={pedidoEditando.cliente || ''} onChange={e => setPedidoEditando({ ...pedidoEditando, cliente: e.target.value })} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm" placeholder="Nome do Cliente" />
+              <div className="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
                 {pedidoEditando.itens?.map((item, idx) => (
-                  <div key={idx} className="flex items-center gap-2 bg-zinc-950 p-2 rounded-xl">
-                    <span className="flex-1">{item.nome_produto}</span>
-                    <input type="number" min="1" value={item.quantidade} onChange={e => alterarQtdItemEdicao(idx, Number(e.target.value))} className="w-16 bg-zinc-900 rounded p-1" />
-                    <button type="button" onClick={() => removerItemEdicao(idx)}>✕</button>
+                  <div key={idx} className="flex items-center gap-2 bg-zinc-950 p-2 rounded-xl text-sm">
+                    <span className="flex-1 truncate">{item.nome_produto}</span>
+                    <input type="number" min="1" value={item.quantidade} onChange={e => alterarQtdItemEdicao(idx, Number(e.target.value))} className="w-16 bg-zinc-900 rounded p-1 text-center outline-none focus:border-orange-500 border border-zinc-800" />
+                    <button type="button" onClick={() => removerItemEdicao(idx)} className="text-zinc-500 hover:text-red-400 px-2">✕</button>
                   </div>
                 ))}
               </div>
-              <button type="submit" disabled={salvando} className="bg-orange-600 rounded-xl px-6 py-3 font-bold">
+              <button type="submit" disabled={salvando} className="w-full bg-orange-600 hover:bg-orange-500 rounded-xl px-6 py-3.5 font-bold uppercase tracking-widest text-sm shadow-lg disabled:opacity-50 mt-2">
                 {salvando ? 'A guardar...' : 'Guardar Alterações'}
               </button>
             </form>
@@ -533,8 +596,8 @@ export default function GestaoPedidos() {
         <div className="fixed inset-0 bg-black/80 flex justify-center items-center z-[60] p-4">
           <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl p-6">
             <h2 className="text-xl font-bold text-orange-500">{comboSelecionadoParaMontar.nome}</h2>
-            <button onClick={() => setModalComboEdicao(false)}>Fechar</button>
-            <button onClick={confirmarComboEdicao} className="bg-orange-600 px-5 py-2 rounded-xl ml-3">Adicionar Combo</button>
+            <button onClick={() => setModalComboEdicao(false)} className="text-zinc-400 hover:text-white mt-4 mr-4">Cancelar</button>
+            <button onClick={confirmarComboEdicao} className="bg-orange-600 hover:bg-orange-500 px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg">Adicionar Combo</button>
           </div>
         </div>
       )}
