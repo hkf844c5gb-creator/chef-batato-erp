@@ -90,17 +90,37 @@ export default function ConciliacaoPage() {
   };
 
   // =========================================================================
-  // 🛡️ NOVO: FUNÇÃO COM BARREIRA ANTI-DUPLICAÇÃO
+  // 🧠 NOVO: BARREIRA ANTI-DUPLICAÇÃO + AUTO-APRENDIZAGEM (MEMÓRIA IA)
   // =========================================================================
   const processarInsercaoGlobal = async (itens: any[], fornecedor: string, mesRef: string, arquivoNome: string, tipoArquivo: string, apenasDespesas = false, dataFaturaDoc = '') => {
     if (!itens || itens.length === 0) return { inseridos: 0, duplicados: 0 };
 
     let totalInseridos = 0;
     let totalDuplicados = 0;
+    const fornecedorFormatado = fornecedor || 'Fornecedor Diversos';
+
+    // 🧠 INTELIGÊNCIA ARTIFICIAL: MEMÓRIA DE FORNECEDORES (AUTO-APRENDIZAGEM)
+    // Procura a última vez que você classificou este fornecedor
+    let categoriaAutomatica = '⚠️ Por Classificar';
+    
+    if (fornecedorFormatado !== 'Fornecedor Diversos' && fornecedorFormatado !== 'Desconhecido') {
+       // Procura pelo nome exato do fornecedor na descrição
+       const { data: memoriaFornecedor } = await supabase
+         .from('despesas')
+         .select('categoria')
+         .ilike('descricao', `%${fornecedorFormatado}%`)
+         .neq('categoria', '⚠️ Por Classificar')
+         .order('id', { ascending: false }) // Pega na classificação mais recente
+         .limit(1)
+         .maybeSingle();
+         
+       if (memoriaFornecedor && memoriaFornecedor.categoria) {
+         categoriaAutomatica = memoriaFornecedor.categoria; // Aprendeu!
+       }
+    }
 
     for (const item of itens) {
       const tipoItem = String(item.tipo || 'geral').toLowerCase();
-      const fornecedorFormatado = fornecedor || 'Fornecedor Diversos';
       const valorReal = Number(item.valor_total || item.valor || item.preco || 0);
       const qtdItem = item.quantidade || item.qtd || 1;
       const unidItem = item.unidade || 'un';
@@ -130,7 +150,7 @@ export default function ConciliacaoPage() {
         try { dataDespesaGravar = new Date(dataFaturaDoc).toISOString().split('T')[0]; } catch(e) {}
       }
 
-      // 🛑 VERIFICAÇÃO DE DUPLICIDADE ANTES DE INSERIR
+      // 🛑 VERIFICAÇÃO ANTI-DUPLICAÇÃO
       const { data: checkDuplicado } = await supabase
         .from('despesas')
         .select('id')
@@ -141,22 +161,21 @@ export default function ConciliacaoPage() {
         .limit(1);
 
       if (checkDuplicado && checkDuplicado.length > 0) {
-        // Se já existe uma despesa exatamente igual, ignora e avança
         totalDuplicados++;
         continue;
       }
 
-      // Se passou na barreira, grava!
+      // ✅ SE PASSOU, GRAVA COM A CATEGORIA APRENDIDA
       const { error } = await supabase.from('despesas').insert([{
         descricao: descFinal,
-        categoria: '⚠️ Por Classificar', 
+        categoria: categoriaAutomatica, // 🚀 A MÁGICA ACONTECE AQUI!
         valor: valorReal,
         data_despesa: dataDespesaGravar,
         metodo_pagamento: 'Conciliação Automática',
-        status: 'Validado' // Garante que entram como pagas!
+        status: 'Validado' 
       }]);
 
-      if (error) throw new Error(`Erro na Base de Dados ao gravar o item "${nomeRealDoItem}": ${error.message}`);
+      if (error) throw new Error(`Erro ao gravar o item "${nomeRealDoItem}": ${error.message}`);
       
       totalInseridos++;
     }
