@@ -89,8 +89,14 @@ export default function ConciliacaoPage() {
     return [];
   };
 
+  // =========================================================================
+  // 🛡️ NOVO: FUNÇÃO COM BARREIRA ANTI-DUPLICAÇÃO
+  // =========================================================================
   const processarInsercaoGlobal = async (itens: any[], fornecedor: string, mesRef: string, arquivoNome: string, tipoArquivo: string, apenasDespesas = false, dataFaturaDoc = '') => {
-    if (!itens || itens.length === 0) return;
+    if (!itens || itens.length === 0) return { inseridos: 0, duplicados: 0 };
+
+    let totalInseridos = 0;
+    let totalDuplicados = 0;
 
     for (const item of itens) {
       const tipoItem = String(item.tipo || 'geral').toLowerCase();
@@ -124,7 +130,23 @@ export default function ConciliacaoPage() {
         try { dataDespesaGravar = new Date(dataFaturaDoc).toISOString().split('T')[0]; } catch(e) {}
       }
 
-      // USO ESTRITO DAS COLUNAS EXISTENTES NO SEU BANCO DE DADOS
+      // 🛑 VERIFICAÇÃO DE DUPLICIDADE ANTES DE INSERIR
+      const { data: checkDuplicado } = await supabase
+        .from('despesas')
+        .select('id')
+        .eq('descricao', descFinal)
+        .eq('valor', valorReal)
+        .eq('data_despesa', dataDespesaGravar)
+        .eq('metodo_pagamento', 'Conciliação Automática')
+        .limit(1);
+
+      if (checkDuplicado && checkDuplicado.length > 0) {
+        // Se já existe uma despesa exatamente igual, ignora e avança
+        totalDuplicados++;
+        continue;
+      }
+
+      // Se passou na barreira, grava!
       const { error } = await supabase.from('despesas').insert([{
         descricao: descFinal,
         categoria: '⚠️ Por Classificar', 
@@ -135,12 +157,20 @@ export default function ConciliacaoPage() {
       }]);
 
       if (error) throw new Error(`Erro na Base de Dados ao gravar o item "${nomeRealDoItem}": ${error.message}`);
+      
+      totalInseridos++;
     }
+    
+    return { inseridos: totalInseridos, duplicados: totalDuplicados };
   };
+  // =========================================================================
 
   const iniciarAuditoria = async () => {
     if (files.length === 0) return alert('Por favor, anexe pelo menos um ficheiro.');
     setProcessando(true); setProgresso({ atual: 1, total: files.length });
+
+    let finalInseridos = 0;
+    let finalDuplicados = 0;
 
     try {
       for (let i = 0; i < files.length; i++) {
@@ -178,7 +208,9 @@ export default function ConciliacaoPage() {
            }
            if (itensParaProcessar.length > 0) {
               const dataFaturaDoc = dataAPI.dadosLidos.data || dataAPI.dadosLidos.data_fatura || '';
-              await processarInsercaoGlobal(itensParaProcessar, dataAPI.dadosLidos.fornecedor, periodo, file.name, catIndividual, false, dataFaturaDoc);
+              const resultado = await processarInsercaoGlobal(itensParaProcessar, dataAPI.dadosLidos.fornecedor, periodo, file.name, catIndividual, false, dataFaturaDoc);
+              finalInseridos += resultado.inseridos;
+              finalDuplicados += resultado.duplicados;
            }
         }
         if (i < files.length - 1) {
@@ -186,15 +218,21 @@ export default function ConciliacaoPage() {
           await new Promise(resolve => setTimeout(resolve, 15000));
         }
       }
-      alert('Lote finalizado e Rascunhos enviados com sucesso! 🎉');
+      
+      alert(`Lote finalizado com sucesso! 🎉\n\n✅ Novos registos gravados: ${finalInseridos}\n⚠️ Registos ignorados (Duplicados): ${finalDuplicados}`);
       setFiles([]); setAutoDetectado(false); carregarHistorico(); 
     } catch (err: any) { alert(`Erro fatal: ${err.message}`); } finally { setProcessando(false); setProgresso({ atual: 0, total: 0 }); setStatusTexto('A extrair itens...'); }
   };
 
   const reprocessarParaDespesas = async () => {
     if (selecionados.length === 0) return;
-    if (!confirm(`Deseja desmembrar as ${selecionados.length} faturas selecionadas e enviá-las para as Despesas?`)) return;
+    if (!confirm(`Deseja desmembrar as ${selecionados.length} faturas selecionadas e enviá-las para as Despesas? O sistema irá ignorar automaticamente o que já lá estiver repetido.`)) return;
+    
     setProcessando(true); setProgresso({ atual: 1, total: selecionados.length }); setStatusTexto('A extrair rascunhos...');
+    
+    let finalInseridos = 0;
+    let finalDuplicados = 0;
+
     try {
       for (let i = 0; i < selecionados.length; i++) {
         const id = selecionados[i];
@@ -211,10 +249,13 @@ export default function ConciliacaoPage() {
         }
         if (itensParaProcessar.length > 0) {
            const dataFaturaDoc = dados?.dadosExtraidos?.data || dados?.data || dados?.data_fatura || '';
-           await processarInsercaoGlobal(itensParaProcessar, dados?.dadosExtraidos?.fornecedor || dados?.fornecedor || 'Fornecedor Desconhecido', sessao.periodo_ref, dados?.fileName || dados?.nome_arquivo || '', sessao.tipo_arquivo, true, dataFaturaDoc);
+           const resultado = await processarInsercaoGlobal(itensParaProcessar, dados?.dadosExtraidos?.fornecedor || dados?.fornecedor || 'Fornecedor Desconhecido', sessao.periodo_ref, dados?.fileName || dados?.nome_arquivo || '', sessao.tipo_arquivo, true, dataFaturaDoc);
+           finalInseridos += resultado.inseridos;
+           finalDuplicados += resultado.duplicados;
         }
       }
-      alert('Mágico! Todos os itens das faturas foram inseridos nas Despesas! Pode ir lá classificar. 🎉');
+      
+      alert(`Mágico! Faturas processadas! 🎉\n\n✅ ${finalInseridos} novos itens inseridos nas Despesas.\n🛡️ ${finalDuplicados} itens ignorados (Barreira Anti-Duplicação).`);
       setSelecionados([]);
     } catch (err: any) { alert(`Erro ao inserir no Supabase: ${err.message}`); } finally { setProcessando(false); setProgresso({ atual: 0, total: 0 }); setStatusTexto('A extrair itens...'); }
   };

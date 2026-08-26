@@ -42,7 +42,7 @@ export default function GestaoEstoqueProdutos() {
   const [historicoProduto, setHistoricoProduto] = useState<MovimentoKardex[]>([]);
   const [loadingHistorico, setLoadingHistorico] = useState(false);
   
-  // NOVA STATE: Ordenação do Histórico
+  // Ordenação do Histórico
   const [ordemHistorico, setOrdemHistorico] = useState<'data_desc' | 'data_asc' | 'pedido_desc' | 'pedido_asc'>('data_desc');
 
   // NOVOS MODAIS (CRUD)
@@ -52,6 +52,7 @@ export default function GestaoEstoqueProdutos() {
   // Formulários Originais
   const [qtdRepor, setQtdRepor] = useState('');
   const [dataRepor, setDataRepor] = useState(() => new Date().toISOString().split('T')[0]);
+  const [motivoRepor, setMotivoRepor] = useState(''); // NOVO CAMPO DE MOTIVO
   const [novoAlerta, setNovoAlerta] = useState('');
   const [processando, setProcessando] = useState(false);
 
@@ -215,6 +216,11 @@ export default function GestaoEstoqueProdutos() {
       const horaAtual = new Date().toISOString().split('T')[1] || '00:00:00.000Z';
       const dataFinalMovimento = `${dataRepor}T${horaAtual}`;
 
+      // Monta a observação com o motivo se o utilizador tiver preenchido
+      const observacaoFinal = motivoRepor.trim() !== '' 
+        ? `${motivoRepor.trim()} (Data Registo: ${dataRepor})`
+        : `Registado via painel. Data Registo: ${dataRepor}`;
+
       const { error: errInsert } = await supabase.from('movimentos_estoque').insert([{
         produto_id: modalRepor.id,
         nome_produto: modalRepor.nome,
@@ -222,7 +228,7 @@ export default function GestaoEstoqueProdutos() {
         quantidade: qtdAdicionar,
         saldo_atualizado: novoStock,
         origem: 'COMPRA / REPOSIÇÃO',
-        observacoes: `Registado via painel. Data Registo: ${dataRepor}`,
+        observacoes: observacaoFinal,
         data_movimento: dataFinalMovimento
       }]);
 
@@ -231,6 +237,7 @@ export default function GestaoEstoqueProdutos() {
       alert(`✅ ${qtdAdicionar} unidades de ${modalRepor.nome} adicionadas com sucesso!`);
       setModalRepor(null);
       setQtdRepor('');
+      setMotivoRepor('');
       carregarDados();
     } catch (err: any) {
       alert(`Erro ao repor stock: ${err.message}`);
@@ -264,7 +271,7 @@ export default function GestaoEstoqueProdutos() {
 
   const verHistoricoProduto = async (produto: ProdutoEstoque) => {
     setModalHistorico(produto);
-    setOrdemHistorico('data_desc'); // Resetar a ordem ao abrir
+    setOrdemHistorico('data_desc'); 
     setLoadingHistorico(true);
     setHistoricoProduto([]); 
     try {
@@ -273,7 +280,7 @@ export default function GestaoEstoqueProdutos() {
         .select('*')
         .eq('nome_produto', produto.nome) 
         .order('id', { ascending: false }) 
-        .limit(100); // Aumentei o limite para ter mais dados na ordenação
+        .limit(100);
       
       if (error) throw error;
       setHistoricoProduto(data || []);
@@ -284,9 +291,6 @@ export default function GestaoEstoqueProdutos() {
     }
   };
 
-  // =========================================================================
-  // 🔄 LÓGICA DE ORDENAÇÃO INTELIGENTE (Data e Número do Pedido)
-  // =========================================================================
   const historicoProdutoOrdenado = useMemo(() => {
     if (!historicoProduto) return [];
 
@@ -296,7 +300,7 @@ export default function GestaoEstoqueProdutos() {
         const match = h.observacoes.match(/Data Registo:\s*([\d-]+)/);
         if (match) return new Date(match[1]).getTime();
       }
-      return 0; // Se não tiver data de todo
+      return 0; 
     };
 
     const extrairNumPedido = (h: MovimentoKardex) => {
@@ -311,15 +315,15 @@ export default function GestaoEstoqueProdutos() {
       if (ordemHistorico === 'pedido_desc') {
         const pA = extrairNumPedido(a);
         const pB = extrairNumPedido(b);
-        if (pA !== pB) return pB - pA; // Ordena por Pedido Maior
-        return extrairData(b) - extrairData(a); // Desempata com a data mais recente
+        if (pA !== pB) return pB - pA; 
+        return extrairData(b) - extrairData(a); 
       }
       
       if (ordemHistorico === 'pedido_asc') {
         const pA = extrairNumPedido(a);
         const pB = extrairNumPedido(b);
-        if (pA !== pB) return pA - pB; // Ordena por Pedido Menor
-        return extrairData(a) - extrairData(b); // Desempata com a data
+        if (pA !== pB) return pA - pB; 
+        return extrairData(a) - extrairData(b); 
       }
 
       return 0;
@@ -469,7 +473,7 @@ export default function GestaoEstoqueProdutos() {
                     </div>
 
                     <button 
-                      onClick={() => { setModalRepor(item); setQtdRepor(''); }}
+                      onClick={() => { setModalRepor(item); setQtdRepor(''); setMotivoRepor(''); }}
                       disabled={!item.ativo}
                       className={`w-full font-bold py-3.5 rounded-xl text-xs transition-all uppercase tracking-wider flex items-center justify-center gap-2 ${!item.ativo ? 'bg-zinc-950 text-zinc-600 border border-zinc-800 cursor-not-allowed' : stockCritico ? 'bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-900/20' : 'bg-zinc-950 hover:bg-zinc-800 border border-zinc-800 text-zinc-300'}`}
                     >
@@ -601,6 +605,20 @@ export default function GestaoEstoqueProdutos() {
                 <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Quantidade Adicionada (Unidades)</label>
                 <input type="number" min="1" placeholder="Quantas unidades repôs?" value={qtdRepor} onChange={(e) => setQtdRepor(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-lg font-black text-green-400 outline-none focus:border-green-500" />
               </div>
+              
+              {/* NOVO CAMPO: MOTIVO / OBSERVAÇÃO */}
+              <div>
+                <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Motivo / Observação (Opcional)</label>
+                <input 
+                  type="text" 
+                  placeholder="Ex: Recebido do fornecedor X..." 
+                  value={motivoRepor} 
+                  onChange={(e) => setMotivoRepor(e.target.value)} 
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 outline-none focus:border-orange-500" 
+                />
+                <p className="text-[9px] text-zinc-500 mt-1">Ideal para controlo de pagamentos a fornecedores no final do mês.</p>
+              </div>
+
               <button onClick={registarEntradaStock} disabled={processando} className="w-full bg-green-600 hover:bg-green-500 text-white font-black py-4 rounded-xl text-sm uppercase tracking-widest mt-2 shadow-lg disabled:opacity-50">
                 {processando ? 'A Gravar...' : 'Confirmar Entrada no Estoque'}
               </button>
