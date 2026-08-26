@@ -70,7 +70,7 @@ export default function GestaoDespesas() {
   const [mesFiltro, setMesFiltro] = useState(new Date().toISOString().slice(0, 7)); 
   const [modoRascunhosGlobais, setModoRascunhosGlobais] = useState(false);
 
-  // 🔄 NOVO ESTADO: Filtro de Ordenação
+  // Filtro de Ordenação
   const [ordenacao, setOrdenacao] = useState<'data_desc' | 'data_asc' | 'fornecedor_asc' | 'fornecedor_desc' | 'valor_desc' | 'valor_asc'>('data_desc');
 
   const [formDespesa, setFormDespesa] = useState<Despesa>({
@@ -90,7 +90,7 @@ export default function GestaoDespesas() {
   useEffect(() => { carregarDespesas(); }, []);
 
   // =========================================================================
-  // 🧠 SUPER EXTRATOR (Lida com qualquer formato antigo ou novo perfeitamente)
+  // 🧠 SUPER EXTRATOR (Treinado para ler registos novos e formatos antigos!)
   // =========================================================================
   const parseValor = (val: any): number => {
     if (!val) return 0;
@@ -109,52 +109,50 @@ export default function GestaoDespesas() {
     let desc = descOriginal || "";
     let qtd = "1", und = "un", nome = desc, fornecedor = "", fatura = "Registo Manual", nif = "";
 
-    // 1. Extrair Documento/Fatura
+    // 1. Extrair Documento/Fatura se existir (Formato Novo)
     if (desc.includes('📄')) {
       const parts = desc.split('📄');
       fatura = parts[1]?.trim() || "Registo Manual";
       desc = parts[0]?.trim() || "";
     }
 
-    // 2. Extrair Fornecedor
+    // 2. Limpar lixo antigo (ex: "[VALIDADO] Recheio Cash & Carry")
+    if (desc.toUpperCase().startsWith('[VALIDADO]')) {
+       desc = desc.replace(/\[VALIDADO\]\s*/i, '').trim();
+    }
+
+    // 3. Extrair Fornecedor
     if (desc.includes(' | ')) {
+      // Padrão novo de importação da IA
       const parts = desc.split(' | ');
       fornecedor = parts.pop()?.trim() || "";
       nome = parts.join(' | ').trim();
-    } else if (desc.includes(' - ') && !desc.startsWith('[')) {
-      const lastDash = desc.lastIndexOf(' - ');
-      if (lastDash > 0) {
-          fornecedor = desc.substring(lastDash + 3).trim();
-          nome = desc.substring(0, lastDash).trim();
-      }
     } else {
-      if (desc.startsWith('[')) {
-        fornecedor = "🏢 Entidade a Definir";
-        nome = desc;
+      // Padrões antigos ou manuais
+      const hasQtd = desc.match(/^\[([\d.,]+)\s*([a-zA-Z]*)]/);
+      if (hasQtd) {
+         // Tem quantidade (Ex: "[2 un] Batata - Pingo Doce")
+         if (desc.includes(' - ')) {
+            const lastDash = desc.lastIndexOf(' - ');
+            if (lastDash > 0) {
+                fornecedor = desc.substring(lastDash + 3).trim();
+                nome = desc.substring(0, lastDash).trim();
+            } else {
+                fornecedor = desc;
+                nome = desc;
+            }
+         } else {
+            fornecedor = desc;
+            nome = desc;
+         }
       } else {
-        fornecedor = desc.trim();
-        nome = desc.trim();
+         // Não tem quantidade nem ' | ', logo a linha inteira é o fornecedor (Ex: "Talho D'Azurva")
+         fornecedor = desc;
+         nome = desc; 
       }
     }
 
-    // 3. O Fim do "Fornecedor Diverso"
-    const fornUpper = fornecedor.toUpperCase();
-    if (fornUpper.includes('FORNECEDOR DIVERSO') || fornUpper === 'DESCONHECIDO' || fornUpper === '') {
-       if (!nome.startsWith('[')) {
-           fornecedor = nome; 
-       } else {
-           fornecedor = "🏢 Entidade a Definir";
-       }
-    }
-
-    // 4. Extrair NIF
-    const nifMatch = fornecedor.match(/(?:NIF|Contribuinte|NIPC)?:?\s*([0-9]{9})/i);
-    if (nifMatch) {
-      nif = nifMatch[1];
-      fornecedor = fornecedor.replace(nifMatch[0], '').replace(/[()\-:]/g, '').trim();
-    }
-
-    // 5. Extrair Quantidades (ex: [5 un] ou [1.5 kg])
+    // 4. Limpar a Quantidade colada no Nome (ex: "[5 un] Produto")
     const qtdMatch = nome.match(/^\[([\d.,]+)\s*([a-zA-Z]*)]/);
     if (qtdMatch) {
       qtd = qtdMatch[1];
@@ -162,9 +160,25 @@ export default function GestaoDespesas() {
       nome = nome.replace(qtdMatch[0], '').trim();
     }
 
-    if (!fornecedor || fornecedor.length < 2) fornecedor = "🏢 Entidade a Definir";
+    // 5. Limpar a Quantidade se tiver ficado acidentalmente no Fornecedor
+    if (fornecedor.match(/^\[([\d.,]+)\s*([a-zA-Z]*)]/)) {
+       fornecedor = fornecedor.replace(/^\[([\d.,]+)\s*([a-zA-Z]*)]/, '').trim();
+    }
+
+    // 6. Extrair NIF
+    const nifMatch = fornecedor.match(/(?:NIF|Contribuinte|NIPC)?:?\s*([0-9]{9})/i);
+    if (nifMatch) {
+      nif = nifMatch[1];
+      fornecedor = fornecedor.replace(nifMatch[0], '').replace(/[()\-:]/g, '').trim();
+    }
+
+    // 7. Prevenção de campos vazios e limpezas finais
+    if (!fornecedor || fornecedor.length < 2 || fornecedor.toUpperCase().includes('FORNECEDOR DIVERSO')) {
+       fornecedor = "🏢 Entidade a Definir";
+    }
     if (fornecedor.startsWith('- ')) fornecedor = fornecedor.substring(2).trim();
-    if (!nome) nome = "Despesa Genérica";
+    
+    if (!nome) nome = fornecedor; 
 
     return { qtd, und, nome, fornecedor, fatura, nif };
   };
@@ -212,11 +226,10 @@ export default function GestaoDespesas() {
 
     const arrayFinal = Array.from(grupos.values());
 
-    // 🚀 MOTOR DE ORDENAÇÃO DINÂMICO
     return arrayFinal.sort((a, b) => {
       if (ordenacao === 'data_desc') {
         if (a.data_despesa !== b.data_despesa) return b.data_despesa.localeCompare(a.data_despesa);
-        return b.valorTotal - a.valorTotal; // Desempate pelo valor
+        return b.valorTotal - a.valorTotal; 
       }
       if (ordenacao === 'data_asc') {
         if (a.data_despesa !== b.data_despesa) return a.data_despesa.localeCompare(b.data_despesa);
@@ -237,7 +250,7 @@ export default function GestaoDespesas() {
       return 0;
     });
 
-  }, [despesasFiltradas, ordenacao]); // Atualiza sempre que a ordenação muda
+  }, [despesasFiltradas, ordenacao]); 
 
   const totalGastoMes = despesasAgrupadas.reduce((sum, g) => sum + g.valorTotal, 0);
 
@@ -355,7 +368,6 @@ export default function GestaoDespesas() {
             {modoRascunhosGlobais && (<button onClick={() => { setModoRascunhosGlobais(false); setSelecionados([]); }} className="bg-zinc-800 text-white text-[10px] font-bold px-3 py-1.5 rounded-full hover:bg-zinc-700">⬅ Voltar ao Resumo Analítico</button>)}
           </div>
           
-          {/* MENU DE ORDENAÇÃO E FILTRO DE MÊS */}
           <div className="flex items-center gap-2">
             <span className="text-[10px] uppercase font-bold text-zinc-500 pl-1">Ordenar:</span>
             <select 
