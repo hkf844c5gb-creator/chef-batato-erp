@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
 interface Despesa {
@@ -11,6 +11,18 @@ interface Despesa {
   data_despesa: string;
   metodo_pagamento: string;
   status: string; 
+}
+
+// 🛡️ AQUI ESTÁ A CORREÇÃO: Ensinamos o TypeScript o que é o nosso Grupo (Acordeão)
+interface GrupoDespesa {
+  idAgrupado: string;
+  data_despesa: string;
+  fornecedorLogico: string;
+  faturaRef: string;
+  itens: Despesa[];
+  valorTotal: number;
+  isAvulsa: boolean;
+  todasIds: string[];
 }
 
 const categoriasDespesas = [
@@ -37,6 +49,7 @@ export default function GestaoDespesas() {
   const [modoBulk, setModoBulk] = useState(false);
   const [selecionados, setSelecionados] = useState<string[]>([]);
   
+  const [expandidos, setExpandidos] = useState<string[]>([]);
   const [mesFiltro, setMesFiltro] = useState(new Date().toISOString().slice(0, 7)); 
   const [modoRascunhosGlobais, setModoRascunhosGlobais] = useState(false);
 
@@ -72,10 +85,52 @@ export default function GestaoDespesas() {
     return 'Fornecedor Diverso';
   };
 
+  const extrairNomeItemOriginal = (descricao: string) => {
+    return descricao.split(' | ')[0].trim();
+  };
+
   const despesasPorClassificarGlobais = despesasDB.filter(d => d.categoria === '⚠️ Por Classificar');
   const despesasFiltradas = modoRascunhosGlobais ? despesasPorClassificarGlobais : despesasDB.filter(d => d.data_despesa && d.data_despesa.startsWith(mesFiltro)); 
-  
-  const totalGastoMes = despesasFiltradas.reduce((sum, d) => sum + Number(d.valor), 0);
+
+  // =========================================================================
+  // 🔄 AGRUPAMENTO INTELIGENTE DE FATURAS COM TIPAGEM ESTRITA
+  // =========================================================================
+  const despesasAgrupadas = useMemo(() => {
+    // 🛡️ Dizemos explicitamente ao TypeScript que isto é um Mapa de GrupoDespesa
+    const grupos = new Map<string, GrupoDespesa>();
+    
+    despesasFiltradas.forEach(desp => {
+      const fornecedor = extrairFornecedor(desp.descricao);
+      let faturaRef = '';
+      if (desp.descricao.includes('📄')) {
+        faturaRef = desp.descricao.split('📄')[1].trim();
+      }
+
+      const chave = faturaRef ? `${fornecedor}-${desp.data_despesa}-${faturaRef}` : `avulso-${desp.id}`;
+
+      if (!grupos.has(chave)) {
+        grupos.set(chave, {
+          idAgrupado: chave,
+          data_despesa: desp.data_despesa,
+          fornecedorLogico: fornecedor,
+          faturaRef: faturaRef || desp.descricao,
+          itens: [],
+          valorTotal: 0,
+          isAvulsa: !faturaRef,
+          todasIds: []
+        });
+      }
+      
+      const g = grupos.get(chave)!;
+      g.itens.push(desp);
+      g.valorTotal += Number(desp.valor);
+      g.todasIds.push(desp.id);
+    });
+
+    return Array.from(grupos.values());
+  }, [despesasFiltradas]);
+
+  const totalGastoMes = despesasAgrupadas.reduce((sum, g) => sum + g.valorTotal, 0);
 
   const gastosPorCategoria = despesasFiltradas.reduce((acc, d) => {
     if (d.categoria !== '⚠️ Por Classificar') {
@@ -94,7 +149,20 @@ export default function GestaoDespesas() {
   }, {} as Record<string, number>);
   const fornecedoresOrdenados = Object.entries(gastosPorFornecedor).sort((a, b) => b[1] - a[1]).slice(0, 5); 
 
-  const toggleSelecionado = (id: string) => { setSelecionados(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]); };
+  const toggleExpandir = (id: string) => { setExpandidos(prev => prev.includes(id) ? prev.filter(e => e !== id) : [...prev, id]); };
+  
+  const toggleSelecionadoIndividual = (id: string) => { setSelecionados(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]); };
+  
+  const toggleSelecionadoGrupo = (todasIds: string[]) => {
+    const todosSelecionados = todasIds.every(id => selecionados.includes(id));
+    if (todosSelecionados) {
+      setSelecionados(prev => prev.filter(id => !todasIds.includes(id)));
+    } else {
+      const novos = todasIds.filter(id => !selecionados.includes(id));
+      setSelecionados(prev => [...prev, ...novos]);
+    }
+  };
+
   const toggleTodos = () => { setSelecionados(selecionados.length === despesasFiltradas.length ? [] : despesasFiltradas.map(d => d.id)); };
 
   const abrirClassificacaoEmMassa = () => {
@@ -123,7 +191,6 @@ export default function GestaoDespesas() {
       } else {
         if (!formDespesa.descricao.trim() || formDespesa.valor <= 0) throw new Error('Preencha a descrição e um valor válido.');
         
-        // COLUNAS RÍGIDAS (IGUAIS AO SEU SUPABASE)
         const dados = { 
           descricao: formDespesa.descricao, 
           categoria: formDespesa.categoria, 
@@ -161,10 +228,6 @@ export default function GestaoDespesas() {
     return <span className="bg-amber-500/10 text-amber-400 border border-amber-500/20 px-2 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider animate-pulse">📝 CLASSIFICAR</span>;
   };
 
-  const faturaRef = formDespesa.descricao.includes('📄') ? formDespesa.descricao.split('📄')[1].trim() : null;
-  const itensDaMesmaFatura = faturaRef ? despesasDB.filter(d => d.descricao.includes(`📄 ${faturaRef}`)) : [];
-  const valorTotalDestaFatura = itensDaMesmaFatura.reduce((acc, curr) => acc + Number(curr.valor), 0);
-
   return (
     <div className="min-h-screen bg-zinc-950 text-white font-sans flex flex-col pb-24">
       <header className="bg-zinc-950/80 border-b border-zinc-800/60 px-5 py-5 flex justify-between items-center">
@@ -193,7 +256,7 @@ export default function GestaoDespesas() {
             <div className="bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-800/80 p-6 rounded-[32px] shadow-xl flex flex-col justify-center">
               <span className="text-[10px] font-bold text-red-500/80 uppercase tracking-widest">Total Gasto no Mês</span>
               <div className="text-5xl font-black text-white font-mono mt-2 tracking-tighter">{totalGastoMes.toFixed(2)}<span className="text-2xl text-red-500 ml-1">€</span></div>
-              <p className="text-xs text-zinc-500 mt-4">Composto por {despesasFiltradas.filter(d => d.categoria !== '⚠️ Por Classificar').length} registos validados.</p>
+              <p className="text-xs text-zinc-500 mt-4">Composto por {despesasAgrupadas.length} documentos validados.</p>
             </div>
             <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-[32px] shadow-xl">
               <span className="text-[10px] font-bold text-orange-400 uppercase tracking-widest block mb-4">Centros de Custo (Top Categorias)</span>
@@ -229,92 +292,192 @@ export default function GestaoDespesas() {
         )}
 
         {selecionados.length > 0 && (
-          <div className="bg-orange-600/20 border border-orange-500 p-4 rounded-2xl flex justify-between items-center shadow-lg">
-            <span className="text-orange-400 font-bold text-sm">{selecionados.length} item(ns) selecionado(s)</span>
+          <div className="bg-orange-600/20 border border-orange-500 p-4 rounded-2xl flex justify-between items-center shadow-lg sticky top-4 z-10">
+            <span className="text-orange-400 font-bold text-sm">{selecionados.length} item(ns) individual(ais) selecionado(s)</span>
             <div className="flex gap-2">
-              <button onClick={abrirClassificacaoEmMassa} className="bg-orange-600 text-white text-xs font-bold px-4 py-2 rounded-xl">📝 Classificar Selecionados</button>
+              <button onClick={abrirClassificacaoEmMassa} className="bg-orange-600 text-white text-xs font-bold px-4 py-2 rounded-xl">📝 Classificar Em Massa</button>
               <button onClick={excluirSelecionados} className="bg-red-950 text-red-400 border border-red-900 text-xs font-bold px-4 py-2 rounded-xl">🗑️ Eliminar</button>
             </div>
           </div>
         )}
 
-        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl overflow-hidden shadow-2xl">
           <table className="w-full text-left text-xs whitespace-nowrap">
-            <thead className="bg-zinc-950/50 border-b border-zinc-800 text-[9px] font-bold text-zinc-500 uppercase">
+            <thead className="bg-zinc-950 border-b border-zinc-800 text-[9px] font-bold text-zinc-400 uppercase">
               <tr>
                 <th className="p-4 w-10"><input type="checkbox" checked={despesasFiltradas.length > 0 && selecionados.length === despesasFiltradas.length} onChange={toggleTodos} className="w-4 h-4 rounded accent-orange-500" /></th>
+                <th className="p-4 w-10"></th>
                 <th className="p-4">Data</th>
-                <th className="p-4">Fornecedor Lógico</th>
-                <th className="p-4">Descrição Original</th>
-                <th className="p-4">Categoria</th>
+                <th className="p-4">Fornecedor / Entidade</th>
+                <th className="p-4">Ref. Fatura (Documento)</th>
+                <th className="p-4">Categoria (Centro de Custo)</th>
                 <th className="p-4 text-center">Estado</th>
-                <th className="p-4 text-right">Valor</th>
-                <th className="p-4 text-center">Ação</th>
+                <th className="p-4 text-right">Valor Total</th>
+                <th className="p-4 text-center">Ações Rápidas</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-800/50 text-sm">
-              {despesasFiltradas.map(desp => {
-                const isRascunho = desp.categoria === '⚠️ Por Classificar';
-                const fornecedorLogico = extrairFornecedor(desp.descricao);
+            <tbody className="text-sm text-zinc-300">
+              {despesasAgrupadas.map(grupo => {
+                const isExpandido = expandidos.includes(grupo.idAgrupado);
+                const todosItensSelecionados = grupo.todasIds.every(id => selecionados.includes(id));
+                const algumItemSelecionado = grupo.todasIds.some(id => selecionados.includes(id));
                 
+                const temRascunhos = grupo.itens.some(i => i.categoria === '⚠️ Por Classificar');
+                const categoriasUnicas = Array.from(new Set(grupo.itens.map(i => i.categoria)));
+                
+                // 🛡️ AQUI: Forçamos o TypeScript a perceber que é uma 'string' segura para desenhar
+                let categoriaExibir: string = categoriasUnicas.length > 0 ? String(categoriasUnicas[0]) : 'Sem Categoria';
+                
+                if (temRascunhos) categoriaExibir = '⚠️ Contém Itens por Classificar';
+                else if (categoriasUnicas.length > 1) categoriaExibir = '📦 Múltiplas Categorias';
+
+                const todosValidados = grupo.itens.every(i => i.status === 'Validado');
+                const statusGeralExibir = todosValidados ? 'Validado' : 'Pendente';
+
                 return (
-                  <tr key={desp.id} className={`${selecionados.includes(desp.id) ? 'bg-orange-950/30' : isRascunho ? 'bg-amber-950/10' : ''}`} onClick={() => toggleSelecionado(desp.id)}>
-                    <td className="p-4"><input type="checkbox" checked={selecionados.includes(desp.id)} onChange={() => toggleSelecionado(desp.id)} className="w-4 h-4 accent-orange-500" /></td>
-                    <td className="p-4 text-zinc-400 font-mono text-xs">{desp.data_despesa}</td>
-                    <td className="p-4 text-zinc-300 max-w-[150px] truncate font-bold text-[11px] uppercase tracking-wider">{fornecedorLogico}</td>
-                    <td className="p-4 text-zinc-300 whitespace-normal text-xs">{desp.descricao}</td>
-                    <td className="p-4"><span className={`text-[10px] px-2 py-1 rounded font-bold uppercase ${isRascunho ? 'bg-amber-500/20 text-amber-400' : 'bg-zinc-800 text-zinc-300'}`}>{desp.categoria}</span></td>
-                    <td className="p-4 text-center">{renderizarStatus(desp.status)}</td>
-                    <td className="p-4 text-right font-black text-red-400">{Number(desp.valor).toFixed(2)}€</td>
-                    <td className="p-4 text-center"><button onClick={(e) => { e.stopPropagation(); abrirEditarDespesa(desp); }} className="bg-zinc-800 hover:bg-zinc-700 px-3 py-1.5 rounded-lg text-xs font-bold">{isRascunho ? 'Classificar' : 'Editar'}</button></td>
-                  </tr>
+                  <React.Fragment key={grupo.idAgrupado}>
+                    
+                    {/* 🔹 LINHA PRINCIPAL (AGRUPADORA) */}
+                    <tr className={`border-b border-zinc-800 transition-colors ${isExpandido ? 'bg-zinc-800/40' : 'bg-zinc-900 hover:bg-zinc-800/70'} ${todosItensSelecionados ? 'bg-orange-950/20' : ''}`}>
+                      
+                      <td className="p-4">
+                        <input 
+                          type="checkbox" 
+                          checked={todosItensSelecionados} 
+                          ref={el => { if (el) el.indeterminate = algumItemSelecionado && !todosItensSelecionados; }}
+                          onChange={() => toggleSelecionadoGrupo(grupo.todasIds)} 
+                          className="w-4 h-4 accent-orange-500 cursor-pointer" 
+                        />
+                      </td>
+                      
+                      <td className="p-4 cursor-pointer text-orange-500 hover:text-orange-400" onClick={() => toggleExpandir(grupo.idAgrupado)}>
+                        {!grupo.isAvulsa && (
+                          <div className="w-6 h-6 rounded-md bg-zinc-950 border border-zinc-700 flex items-center justify-center transition-all">
+                            {isExpandido ? '🔽' : '▶️'}
+                          </div>
+                        )}
+                      </td>
+                      
+                      <td className="p-4 font-mono text-[11px] text-zinc-400">{grupo.data_despesa}</td>
+                      <td className="p-4 font-black uppercase text-zinc-100">{grupo.fornecedorLogico}</td>
+                      
+                      <td className="p-4 cursor-pointer" onClick={() => toggleExpandir(grupo.idAgrupado)}>
+                        <div className="flex flex-col">
+                          <span className="font-bold text-blue-400">{grupo.faturaRef}</span>
+                          {!grupo.isAvulsa && <span className="text-[10px] text-zinc-500 font-bold">{grupo.itens.length} itens extraídos</span>}
+                        </div>
+                      </td>
+                      
+                      <td className="p-4">
+                        <span className={`text-[10px] px-2 py-1 rounded font-bold uppercase ${temRascunhos ? 'bg-amber-500/20 text-amber-400 animate-pulse' : (categoriasUnicas.length > 1 ? 'bg-purple-500/20 text-purple-400' : 'bg-zinc-800 text-zinc-300')}`}>
+                          {categoriaExibir}
+                        </span>
+                      </td>
+                      
+                      <td className="p-4 text-center">{renderizarStatus(statusGeralExibir)}</td>
+                      
+                      <td className="p-4 text-right font-black text-xl text-red-500 tracking-tighter">
+                        {grupo.valorTotal.toFixed(2)}€
+                      </td>
+                      
+                      <td className="p-4 text-center">
+                        <button onClick={() => { toggleSelecionadoGrupo(grupo.todasIds); abrirClassificacaoEmMassa(); }} className="bg-zinc-950 hover:bg-orange-600 border border-zinc-800 hover:border-orange-500 px-3 py-1.5 rounded-lg text-xs font-bold transition-all text-white">
+                          {temRascunhos ? 'Classificar Fatura' : 'Editar Fatura'}
+                        </button>
+                      </td>
+                    </tr>
+
+                    {/* 🔹 SUB-LINHAS (ITENS DA FATURA - ACORDEÃO) */}
+                    {isExpandido && !grupo.isAvulsa && grupo.itens.map((item: Despesa) => {
+                      const isItemRascunho = item.categoria === '⚠️ Por Classificar';
+                      
+                      return (
+                        <tr key={item.id} className={`bg-zinc-950/60 border-b border-zinc-900/50 hover:bg-zinc-900/80 transition-all ${selecionados.includes(item.id) ? 'bg-orange-950/10' : ''}`}>
+                          <td className="p-3 pl-8 text-center border-l-2 border-orange-500/30">
+                            <input type="checkbox" checked={selecionados.includes(item.id)} onChange={() => toggleSelecionadoIndividual(item.id)} className="w-3.5 h-3.5 accent-orange-500 cursor-pointer" />
+                          </td>
+                          <td colSpan={2}></td>
+                          <td colSpan={2} className="p-3 text-[11px] text-zinc-400 pl-4 border-l border-zinc-800/50 flex items-center gap-2">
+                             <span className="text-zinc-600">↳</span> 
+                             <span className="font-medium text-zinc-300 truncate max-w-sm">{extrairNomeItemOriginal(item.descricao)}</span>
+                          </td>
+                          <td className="p-3">
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold uppercase ${isItemRascunho ? 'bg-amber-500/10 text-amber-500' : 'text-zinc-500 border border-zinc-800'}`}>
+                              {item.categoria}
+                            </span>
+                          </td>
+                          <td className="p-3 text-center opacity-80">{renderizarStatus(item.status)}</td>
+                          <td className="p-3 text-right font-mono font-bold text-red-400/80 text-xs">
+                            {Number(item.valor).toFixed(2)}€
+                          </td>
+                          <td className="p-3 text-center">
+                            <button onClick={() => abrirEditarDespesa(item)} className="text-zinc-500 hover:text-orange-400 text-[10px] font-bold underline transition-colors">
+                              Editar Item
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </React.Fragment>
                 );
               })}
+              
+              {despesasAgrupadas.length === 0 && (
+                <tr>
+                  <td colSpan={9} className="p-12 text-center text-zinc-600 font-bold">Nenhum registo encontrado para este período.</td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
       </main>
 
       {modalAberto && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-          <div className="bg-zinc-900 w-full max-w-xl rounded-3xl p-6 flex flex-col max-h-[90vh]">
-            <h2 className="text-xl font-black mb-4">{modoBulk ? '📦 Classificação em Massa' : '✏️ Editar Fatura'}</h2>
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-[100]">
+          <div className="bg-zinc-900 w-full max-w-xl rounded-3xl p-6 flex flex-col max-h-[90vh] shadow-2xl border border-zinc-800">
+            <h2 className="text-xl font-black mb-4 flex items-center justify-between text-white">
+              {modoBulk ? '📦 Classificação em Massa da Fatura' : '✏️ Editar Item Específico'}
+              <button onClick={() => setModalAberto(false)} className="text-zinc-500 hover:text-white bg-zinc-950 w-8 h-8 rounded-full flex items-center justify-center transition-colors">✕</button>
+            </h2>
             
-            <form onSubmit={salvarDespesa} className="flex-1 overflow-y-auto space-y-4 custom-scrollbar">
+            <form onSubmit={salvarDespesa} className="flex-1 overflow-y-auto space-y-4 custom-scrollbar pr-2">
               {!modoBulk && (
                 <>
-                  <input required type="text" value={formDespesa.descricao} onChange={e => setFormDespesa({...formDespesa, descricao: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm text-zinc-300" />
-                  <input required type="number" step="0.01" value={formDespesa.valor || ''} onChange={e => setFormDespesa({...formDespesa, valor: parseFloat(e.target.value) || 0})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-red-400 font-bold" />
-                  <input type="date" required value={formDespesa.data_despesa} onChange={e => setFormDespesa({...formDespesa, data_despesa: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-xs font-bold text-white" />
+                  <div>
+                    <label className="text-[10px] font-bold text-zinc-500 uppercase">Descrição do Item</label>
+                    <input required type="text" value={formDespesa.descricao} onChange={e => setFormDespesa({...formDespesa, descricao: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm text-zinc-300 mt-1" />
+                  </div>
+                  <div className="flex gap-4">
+                    <div className="flex-1">
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase">Valor (€)</label>
+                      <input required type="number" step="0.01" value={formDespesa.valor || ''} onChange={e => setFormDespesa({...formDespesa, valor: parseFloat(e.target.value) || 0})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-red-400 font-bold mt-1" />
+                    </div>
+                    <div className="flex-1">
+                      <label className="text-[10px] font-bold text-zinc-500 uppercase">Data</label>
+                      <input type="date" required value={formDespesa.data_despesa} onChange={e => setFormDespesa({...formDespesa, data_despesa: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-xs font-bold text-white mt-1" />
+                    </div>
+                  </div>
                 </>
               )}
 
-              <label className="block text-xs font-bold text-orange-500 mt-4">Classificar Categoria</label>
-              <select value={formDespesa.categoria} onChange={e => setFormDespesa({...formDespesa, categoria: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm">
-                {categoriasDespesas.filter(c => c !== '⚠️ Por Classificar' || !modoBulk).map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
+              <div>
+                <label className="block text-xs font-bold text-orange-500 mt-4 mb-2">Classificar no Centro de Custo:</label>
+                <select value={formDespesa.categoria} onChange={e => setFormDespesa({...formDespesa, categoria: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm text-white focus:border-orange-500 outline-none">
+                  {categoriasDespesas.filter(c => c !== '⚠️ Por Classificar' || !modoBulk).map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
 
-              <label className="block text-xs font-bold text-zinc-400 mt-4">Estado do Pagamento</label>
-              <select value={formDespesa.status} onChange={e => setFormDespesa({...formDespesa, status: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm text-green-400 font-bold">
-                <option value="Validado">✓ Sim, já está Paga</option>
-                <option value="Pendente">⏳ Não, falta Pagar</option>
-                <option value="Falta Fatura">⚠️ Falta anexar Fatura</option>
-              </select>
-
-              {!modoBulk && faturaRef && itensDaMesmaFatura.length > 0 && (
-                <div className="bg-zinc-950 p-4 rounded-xl border border-zinc-800 mt-4">
-                  <h4 className="text-[10px] font-black text-zinc-400 mb-2 uppercase">🧾 Raio-X da Fatura: {faturaRef} (Total: {valorTotalDestaFatura.toFixed(2)}€)</h4>
-                  {itensDaMesmaFatura.map(rel => (
-                    <div key={rel.id} className="flex justify-between text-[11px] py-1 border-b border-zinc-800/30">
-                       <span className={`truncate pr-2 w-3/4 ${rel.id === formDespesa.id ? 'text-orange-400 font-bold' : ''}`}>{rel.descricao.split('📄')[0]}</span>
-                       <span className="text-orange-400 font-bold">{Number(rel.valor).toFixed(2)}€</span>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <div>
+                <label className="block text-xs font-bold text-zinc-400 mt-4 mb-2">Estado do Pagamento da Fatura:</label>
+                <select value={formDespesa.status} onChange={e => setFormDespesa({...formDespesa, status: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm text-green-400 font-bold focus:border-green-500 outline-none">
+                  <option value="Validado">✓ Sim, Fatura Paga na Integra</option>
+                  <option value="Pendente">⏳ Não, Pagamento Pendente</option>
+                  <option value="Falta Fatura">⚠️ Paga, mas Falta Anexar Fatura Físca</option>
+                </select>
+              </div>
               
-              <button type="submit" disabled={processando || formDespesa.categoria === '⚠️ Por Classificar'} className="w-full bg-orange-600 hover:bg-orange-500 text-white font-bold py-4 rounded-xl mt-4 disabled:opacity-50">
-                {processando ? 'A Gravar...' : 'Gravar Classificação'}
+              <button type="submit" disabled={processando || formDespesa.categoria === '⚠️ Por Classificar'} className="w-full bg-orange-600 hover:bg-orange-500 text-white font-black py-4 rounded-xl mt-6 disabled:opacity-50 uppercase tracking-widest shadow-[0_0_15px_rgba(234,88,12,0.3)] transition-all">
+                {processando ? 'A Gravar...' : (modoBulk ? 'Confirmar Fatura Inteira' : 'Gravar Alteração no Item')}
               </button>
             </form>
           </div>
