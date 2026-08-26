@@ -70,8 +70,8 @@ export default function GestaoDespesas() {
   const [mesFiltro, setMesFiltro] = useState(new Date().toISOString().slice(0, 7)); 
   const [modoRascunhosGlobais, setModoRascunhosGlobais] = useState(false);
 
-  // Filtro de Ordenação
-  const [ordenacao, setOrdenacao] = useState<'data_desc' | 'data_asc' | 'fornecedor_asc' | 'fornecedor_desc' | 'valor_desc' | 'valor_asc'>('data_desc');
+  // 🔄 FILTRO DE ORDENAÇÃO (Agora com Classificação/Categoria)
+  const [ordenacao, setOrdenacao] = useState<'data_desc' | 'data_asc' | 'fornecedor_asc' | 'fornecedor_desc' | 'valor_desc' | 'valor_asc' | 'categoria_asc' | 'categoria_desc'>('data_desc');
 
   const [formDespesa, setFormDespesa] = useState<Despesa>({
     id: '', descricao: '', categoria: 'Ingredientes & Mercadoria', valor: 0,
@@ -123,15 +123,12 @@ export default function GestaoDespesas() {
 
     // 3. Extrair Fornecedor
     if (desc.includes(' | ')) {
-      // Padrão novo de importação da IA
       const parts = desc.split(' | ');
       fornecedor = parts.pop()?.trim() || "";
       nome = parts.join(' | ').trim();
     } else {
-      // Padrões antigos ou manuais
       const hasQtd = desc.match(/^\[([\d.,]+)\s*([a-zA-Z]*)]/);
       if (hasQtd) {
-         // Tem quantidade (Ex: "[2 un] Batata - Pingo Doce")
          if (desc.includes(' - ')) {
             const lastDash = desc.lastIndexOf(' - ');
             if (lastDash > 0) {
@@ -146,7 +143,6 @@ export default function GestaoDespesas() {
             nome = desc;
          }
       } else {
-         // Não tem quantidade nem ' | ', logo a linha inteira é o fornecedor (Ex: "Talho D'Azurva")
          fornecedor = desc;
          nome = desc; 
       }
@@ -226,6 +222,15 @@ export default function GestaoDespesas() {
 
     const arrayFinal = Array.from(grupos.values());
 
+    // Função auxiliar para determinar a classificação do grupo para efeitos de ordenação
+    const getCategoriaGrupo = (g: GrupoDespesa) => {
+      const temRascunhos = g.itens.some(i => i.categoria === '⚠️ Por Classificar');
+      if (temRascunhos) return '⚠️ Contém Itens por Classificar';
+      const unicas = Array.from(new Set(g.itens.map(i => i.categoria)));
+      if (unicas.length > 1) return '📦 Múltiplas Categorias';
+      return unicas.length > 0 ? String(unicas[0]) : 'Sem Categoria';
+    };
+
     return arrayFinal.sort((a, b) => {
       if (ordenacao === 'data_desc') {
         if (a.data_despesa !== b.data_despesa) return b.data_despesa.localeCompare(a.data_despesa);
@@ -240,6 +245,12 @@ export default function GestaoDespesas() {
       }
       if (ordenacao === 'fornecedor_desc') {
         return b.fornecedorLogico.localeCompare(a.fornecedorLogico);
+      }
+      if (ordenacao === 'categoria_asc') {
+        return getCategoriaGrupo(a).localeCompare(getCategoriaGrupo(b));
+      }
+      if (ordenacao === 'categoria_desc') {
+        return getCategoriaGrupo(b).localeCompare(getCategoriaGrupo(a));
       }
       if (ordenacao === 'valor_desc') {
         return b.valorTotal - a.valorTotal;
@@ -379,6 +390,8 @@ export default function GestaoDespesas() {
               <option value="data_asc">Data (Mais Antigas)</option>
               <option value="fornecedor_asc">Fornecedor (A-Z)</option>
               <option value="fornecedor_desc">Fornecedor (Z-A)</option>
+              <option value="categoria_asc">Classificação (A-Z)</option>
+              <option value="categoria_desc">Classificação (Z-A)</option>
               <option value="valor_desc">Valor (Maior para Menor)</option>
               <option value="valor_asc">Valor (Menor para Maior)</option>
             </select>
