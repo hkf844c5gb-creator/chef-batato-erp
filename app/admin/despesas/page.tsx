@@ -30,16 +30,17 @@ export default function DespesasPage() {
 
   async function carregarDespesas() {
     setLoading(true);
+    // Filtrar pelo mês selecionado baseando-se no campo data_despesa (YYYY-MM)
     const inicioMes = `${filtroMes}-01`;
-    const fimMes = `${filtroMes}-31`;
+    const fimMes = `${filtroMes}-31`; // Simplificação para cobrir todos os dias
 
-    // 🎯 CORREÇÃO: Removido o .order('created_at') que causava o erro
     const { data, error } = await supabase
       .from('despesas')
       .select('*')
       .gte('data_despesa', inicioMes)
       .lte('data_despesa', fimMes)
-      .order('data_despesa', { ascending: false });
+      .order('data_despesa', { ascending: false })
+      .order('created_at', { ascending: false });
 
     if (error) {
       alert("Erro ao carregar despesas: " + error.message);
@@ -67,6 +68,7 @@ export default function DespesasPage() {
 
   const totalDespesas = despesas.reduce((acc, d) => acc + Number(d.valor), 0);
 
+  // Mapeamento visual das Categorias
   const getCategoriaCor = (categoria: string) => {
     const cat = categoria.toLowerCase();
     if (cat.includes('marketing')) return 'bg-purple-500/20 text-purple-400 border-purple-500/30';
