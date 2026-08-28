@@ -40,6 +40,7 @@ export default function ConciliacaoPage() {
 
   async function carregarHistorico() {
     setLoading(true);
+    // Ordenação segura apenas pelo periodo_ref (evita o erro do created_at)
     let query = supabase.from('auditoria_sessoes').select('*').order('periodo_ref', { ascending: false }); 
     if (filtroMes) query = query.eq('periodo_ref', filtroMes);
 
@@ -75,14 +76,12 @@ export default function ConciliacaoPage() {
     return [];
   };
 
-  // 🛡️ A INSERÇÃO DE DIRETOR FINANCEIRO + FILTRO UNIFICADOR DE MARCAS
   const processarInsercaoGlobal = async (dadosLidos: any, mesRef: string, arquivoNome: string, tipoArquivo: string, dataFaturaDoc = '') => {
     const itens = extrairListaItens(dadosLidos);
     if (!itens || itens.length === 0) return { inseridos: 0, duplicados: 0 };
 
     let totalInseridos = 0, totalDuplicados = 0;
     
-    // FILTRO UNIFICADOR DE MARCAS
     const normalizarFornecedor = (nome: string) => {
       if (!nome) return 'Fornecedor Diversos';
       const n = nome.toUpperCase();
@@ -131,7 +130,6 @@ export default function ConciliacaoPage() {
         continue;
       }
 
-      // 🎯 PRIORIDADE MÁXIMA PARA A CATEGORIZAÇÃO GLOVO/META DA I.A.
       let catItem = categoriaAutomatica;
       if (item.categoria_sugerida && item.categoria_sugerida !== "") {
         catItem = item.categoria_sugerida;
@@ -248,8 +246,19 @@ export default function ConciliacaoPage() {
     } catch (err: any) { alert(`Erro: ${err.message}`); } finally { setProcessando(false); setProgresso({ atual: 0, total: 0 }); setStatusTexto('A extrair itens...'); }
   };
 
+  // 🗑️ FUNÇÕES DE ELIMINAÇÃO INDIVIDUAL
+  const apagarSessaoIndividual = async (id: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!confirm('Tem a certeza que deseja eliminar este documento do histórico?')) return;
+    await supabase.from('auditoria_sessoes').delete().eq('id', id);
+    setHistorico(prev => prev.filter(item => item.id !== id));
+    setSelecionados(prev => prev.filter(itemId => itemId !== id));
+    if (sessaoDetalhe?.id === id) setSessaoDetalhe(null);
+  };
+
   const toggleSelecionado = (id: string) => { setSelecionados(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]); };
   const toggleTodos = () => { setSelecionados(selecionados.length === historico.length ? [] : historico.map(h => h.id)); };
+  
   const apagarSelecionados = async () => {
     if (selecionados.length === 0) return;
     if (!confirm(`Deseja eliminar ${selecionados.length} documento(s)?`)) return;
@@ -286,7 +295,7 @@ export default function ConciliacaoPage() {
                 {selecionados.length > 0 && (
                   <div className="flex gap-2">
                     <button onClick={reprocessarParaDespesas} className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-md transition-all">💸 Enviar Rascunhos ({selecionados.length})</button>
-                    <button onClick={apagarSelecionados} className="bg-red-950 border border-red-900 text-red-400 text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-red-900 hover:text-white transition-all">🗑️ Eliminar</button>
+                    <button onClick={apagarSelecionados} className="bg-red-950 border border-red-900 text-red-400 text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-red-900 hover:text-white transition-all">🗑️ Eliminar Selecionados</button>
                   </div>
                 )}
               </div>
@@ -310,12 +319,17 @@ export default function ConciliacaoPage() {
                     const valorTotal = Number(dadosExtraidos?.valorTotal || 0).toFixed(2);
 
                     return (
-                      <div key={sessao.id} onClick={() => setSessaoDetalhe(sessao)} className={`bg-zinc-900 border p-4 rounded-xl flex items-center cursor-pointer transition-all hover:bg-zinc-800/50 ${selecionados.includes(sessao.id) ? 'border-orange-500 bg-orange-950/20' : 'border-zinc-700'}`}>
-                        <input type="checkbox" checked={selecionados.includes(sessao.id)} onChange={() => toggleSelecionado(sessao.id)} onClick={(e)=>e.stopPropagation()} className="w-5 h-5 mr-4 accent-orange-500 cursor-pointer" />
-                        <div className="flex-1">
-                          <h4 className="text-sm font-bold text-white">🧾 {nomeFicheiro}</h4>
-                          <p className="text-xs text-zinc-400 mt-1">{fornecedor}{nif} | <span className="text-zinc-200 font-bold">{valorTotal}€</span> | ✓ {listaItens.length} itens lidos</p>
+                      <div key={sessao.id} onClick={() => setSessaoDetalhe(sessao)} className={`bg-zinc-900 border p-4 rounded-xl flex items-center justify-between cursor-pointer transition-all hover:bg-zinc-800/50 ${selecionados.includes(sessao.id) ? 'border-orange-500 bg-orange-950/20' : 'border-zinc-700'}`}>
+                        <div className="flex items-center flex-1">
+                          <input type="checkbox" checked={selecionados.includes(sessao.id)} onChange={() => toggleSelecionado(sessao.id)} onClick={(e)=>e.stopPropagation()} className="w-5 h-5 mr-4 accent-orange-500 cursor-pointer flex-shrink-0" />
+                          <div className="flex-1">
+                            <h4 className="text-sm font-bold text-white line-clamp-1">🧾 {nomeFicheiro}</h4>
+                            <p className="text-xs text-zinc-400 mt-1 line-clamp-1">{fornecedor}{nif} | <span className="text-zinc-200 font-bold">{valorTotal}€</span> | ✓ {listaItens.length} itens lidos</p>
+                          </div>
                         </div>
+                        <button onClick={(e) => apagarSessaoIndividual(sessao.id, e)} className="ml-4 w-8 h-8 rounded-lg bg-zinc-800 hover:bg-red-600 flex items-center justify-center text-zinc-400 hover:text-white transition-colors" title="Eliminar Fatura">
+                          🗑️
+                        </button>
                       </div>
                     );
                   })}
@@ -333,7 +347,7 @@ export default function ConciliacaoPage() {
               <h3 className="text-xl font-black text-white">Detalhes do Extrato / Fatura</h3>
               <button onClick={() => setSessaoDetalhe(null)} className="bg-zinc-800 hover:bg-zinc-700 text-white w-8 h-8 rounded-full font-bold transition-colors">✕</button>
             </div>
-            <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar pr-2">
+            <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar pr-2 mb-4">
               <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Itens Desmembrados (CFO)</h4>
               {(() => {
                 const dados = sessaoDetalhe.resumo || {};
@@ -361,6 +375,11 @@ export default function ConciliacaoPage() {
                   </div>
                 );
               })()}
+            </div>
+            <div className="border-t border-zinc-800 pt-4 flex justify-end">
+              <button onClick={(e) => apagarSessaoIndividual(sessaoDetalhe.id, e)} className="bg-red-950 border border-red-900 hover:bg-red-900 text-red-400 hover:text-white text-sm font-bold px-6 py-3 rounded-xl transition-colors shadow-lg">
+                🗑️ Eliminar Esta Fatura
+              </button>
             </div>
           </div>
         </div>
