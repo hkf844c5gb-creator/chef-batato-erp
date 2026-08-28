@@ -39,7 +39,6 @@ export default function DespesasPage() {
     const inicioMes = `${filtroMes}-01`;
     const fimMes = `${filtroMes}-31`; 
 
-    // Removida a ordenação por created_at para evitar o erro de coluna inexistente
     const { data, error } = await supabase
       .from('despesas')
       .select('*')
@@ -125,82 +124,82 @@ export default function DespesasPage() {
 
   return (
     <div className="p-8 font-sans max-w-7xl mx-auto relative min-h-screen">
-      <div className="mb-8 border-b border-zinc-800 pb-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <h1 className="text-3xl font-bold text-white flex items-center gap-3">
-          Gestão de Despesas <span className="text-2xl">💸</span>
+      <div className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <h1 className="text-3xl font-black text-white flex items-center gap-3 tracking-tight">
+          Gestão de Despesas <span className="text-xl">💸</span>
         </h1>
         <div className="flex items-center gap-4">
           <input 
             type="month" 
             value={filtroMes} 
             onChange={(e) => setFiltroMes(e.target.value)} 
-            className="bg-zinc-900 border border-zinc-700 text-white px-4 py-2 rounded-xl text-sm outline-none focus:border-orange-500 shadow-lg" 
+            className="bg-zinc-900 border border-zinc-800 text-zinc-300 px-4 py-2.5 rounded-xl text-sm outline-none focus:border-orange-500 shadow-xl font-medium" 
           />
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-        <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-2xl shadow-xl flex flex-col justify-center">
-          <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Total Gasto no Mês</span>
-          <div className="text-4xl font-black text-red-400 font-mono mt-2 tracking-tighter">
-            {totalDespesas.toFixed(2)}<span className="text-2xl ml-1 text-zinc-500">€</span>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+        <div className="bg-zinc-900/90 border border-zinc-800/80 p-6 rounded-2xl shadow-xl flex flex-col justify-center">
+          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Total Gasto no Mês</span>
+          <div className="text-4xl font-black text-red-500 font-mono mt-2 tracking-tighter">
+            {totalDespesas.toFixed(2)}<span className="text-2xl ml-1 text-zinc-600">€</span>
           </div>
         </div>
-        <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-2xl shadow-xl flex flex-col justify-center">
-          <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Registos Encontrados</span>
+        <div className="bg-zinc-900/90 border border-zinc-800/80 p-6 rounded-2xl shadow-xl flex flex-col justify-center">
+          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Registos Encontrados</span>
           <div className="text-3xl font-bold text-white mt-2">
             {despesas.length} <span className="text-sm text-zinc-500 font-normal">itens lançados</span>
           </div>
         </div>
       </div>
 
-      <div className="bg-zinc-900 border border-zinc-800 rounded-[24px] overflow-hidden shadow-xl">
-        <div className="p-5 border-b border-zinc-800 bg-zinc-950/50 flex justify-between items-center">
-          <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-widest">Listagem Detalhada</h3>
+      <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-[24px] overflow-hidden shadow-2xl">
+        <div className="p-5 border-b border-zinc-800/80 bg-zinc-950/40 flex justify-between items-center">
+          <h3 className="text-xs font-extrabold text-zinc-400 uppercase tracking-widest">Listagem Detalhada</h3>
         </div>
         
         <div className="p-4">
           {loading ? (
-            <div className="text-center text-zinc-500 py-10 font-bold uppercase tracking-widest text-xs">A carregar despesas...</div>
+            <div className="text-center text-zinc-500 py-12 font-bold uppercase tracking-widest text-xs">A carregar despesas...</div>
           ) : despesas.length === 0 ? (
-            <div className="text-center text-zinc-600 py-10 italic">Nenhuma despesa registada para este mês.</div>
+            <div className="text-center text-zinc-600 py-12 italic text-sm">Nenhuma despesa registada para este mês.</div>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-3">
               {despesas.map((desp) => (
-                <div key={desp.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-zinc-950 border border-zinc-800/80 hover:border-zinc-600 rounded-xl transition-colors gap-4">
+                <div key={desp.id} className="flex items-center justify-between p-4 bg-zinc-950/80 border border-zinc-800/60 hover:border-zinc-700 rounded-2xl transition-all gap-4 shadow-sm">
                   <div className="flex-1 min-w-0 pr-4">
-                    <p className="text-sm font-bold text-white line-clamp-2 leading-snug">
+                    <p className="text-sm font-bold text-zinc-200 line-clamp-1 leading-snug">
                       {desp.descricao}
                     </p>
-                    <div className="flex flex-wrap items-center gap-3 mt-2">
-                      <span className="text-[10px] text-zinc-500 font-mono bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">
-                        📅 {new Date(desp.data_despesa).toLocaleDateString('pt-PT')}
+                    <div className="flex flex-wrap items-center gap-2.5 mt-2">
+                      <span className="text-[10px] text-zinc-400 font-mono bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">
+                        {new Date(desp.data_despesa).toLocaleDateString('pt-PT')}
                       </span>
-                      <span className={`text-[9px] px-2 py-0.5 rounded border uppercase tracking-wider font-bold ${getCategoriaCor(desp.categoria)}`}>
+                      <span className={`text-[9px] px-2.5 py-0.5 rounded border uppercase tracking-wider font-bold ${getCategoriaCor(desp.categoria)}`}>
                         {desp.categoria}
                       </span>
                       {desp.metodo_pagamento === 'Conciliação Automática' && (
-                        <span className="text-[9px] bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-500/20 uppercase">
+                        <span className="text-[9px] bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-500/20 uppercase font-bold">
                           🤖 IA
                         </span>
                       )}
                     </div>
                   </div>
                   
-                  <div className="flex items-center gap-2 justify-end sm:w-auto w-full border-t sm:border-t-0 border-zinc-800 pt-3 sm:pt-0">
-                    <div className="text-xl font-black text-red-400 font-mono whitespace-nowrap mr-3">
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    <div className="text-lg font-black text-red-400 font-mono tracking-tight">
                       {Number(desp.valor).toFixed(2)}€
                     </div>
                     <button 
                       onClick={() => abrirModalEdicao(desp)} 
-                      className="w-10 h-10 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-blue-600 hover:border-blue-500 flex items-center justify-center text-zinc-400 hover:text-white transition-all shadow-sm" 
+                      className="w-9 h-9 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 hover:border-zinc-700 flex items-center justify-center text-zinc-400 hover:text-white transition-all shadow-sm" 
                       title="Editar Despesa"
                     >
                       ✏️
                     </button>
                     <button 
                       onClick={() => excluirDespesa(desp.id)} 
-                      className="w-10 h-10 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-red-600 hover:border-red-500 flex items-center justify-center text-zinc-400 hover:text-white transition-all shadow-sm" 
+                      className="w-9 h-9 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-red-950 hover:border-red-900 flex items-center justify-center text-zinc-400 hover:text-red-400 transition-all shadow-sm" 
                       title="Excluir Despesa"
                     >
                       🗑️
