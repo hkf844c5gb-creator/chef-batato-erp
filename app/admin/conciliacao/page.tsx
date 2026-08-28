@@ -75,14 +75,31 @@ export default function ConciliacaoPage() {
     return [];
   };
 
-  // 🛡️ A INSERÇÃO DE DIRETOR FINANCEIRO
+  // 🛡️ A INSERÇÃO DE DIRETOR FINANCEIRO + FILTRO UNIFICADOR DE MARCAS
   const processarInsercaoGlobal = async (dadosLidos: any, mesRef: string, arquivoNome: string, tipoArquivo: string, dataFaturaDoc = '') => {
     const itens = extrairListaItens(dadosLidos);
     if (!itens || itens.length === 0) return { inseridos: 0, duplicados: 0 };
 
     let totalInseridos = 0, totalDuplicados = 0;
     
-    const fornecedorFormatado = dadosLidos.fornecedor || 'Fornecedor Diversos';
+    // FILTRO UNIFICADOR DE MARCAS
+    const normalizarFornecedor = (nome: string) => {
+      if (!nome) return 'Fornecedor Diversos';
+      const n = nome.toUpperCase();
+      if (n.includes('RECHEIO')) return 'Recheio Cash & Carry';
+      if (n.includes('AZURVA') || n.includes('INGREDIENTE SALIENTE')) return 'Talho D\'Azurva';
+      if (n.includes('MERCADONA') || n.includes('IRMADONA')) return 'Mercadona';
+      if (n.includes('PINGO DOCE')) return 'Pingo Doce';
+      if (n.includes('CONTINENTE')) return 'Continente';
+      if (n.includes('GLOVO')) return 'Glovo';
+      if (n.includes('UBER')) return 'Uber Eats';
+      if (n.includes('MAKRO')) return 'Makro';
+      return nome.trim();
+    };
+
+    const fornecedorBruto = dadosLidos.fornecedor || 'Fornecedor Diversos';
+    const fornecedorFormatado = normalizarFornecedor(fornecedorBruto);
+    
     const nifFormatado = dadosLidos.nif_fornecedor && dadosLidos.nif_fornecedor !== 'S/N' ? ` NIF ${dadosLidos.nif_fornecedor}` : '';
     const faturaFormatada = dadosLidos.numero_fatura && dadosLidos.numero_fatura !== 'S/N' ? dadosLidos.numero_fatura : (arquivoNome || 'Doc. Extraído');
 
@@ -244,7 +261,7 @@ export default function ConciliacaoPage() {
     <div className="p-8 font-sans max-w-7xl mx-auto relative">
       <div className="mb-8 border-b border-zinc-800 pb-4">
         <h1 className="text-3xl font-bold text-orange-500 flex items-center gap-3">
-          Conciliador Inteligente <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full">v12 CFO</span>
+          Conciliador Inteligente <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full">v13 Unificador</span>
         </h1>
       </div>
 
