@@ -39,13 +39,13 @@ export default function DespesasPage() {
     const inicioMes = `${filtroMes}-01`;
     const fimMes = `${filtroMes}-31`; 
 
+    // Removida a ordenação por created_at para evitar o erro de coluna inexistente
     const { data, error } = await supabase
       .from('despesas')
       .select('*')
       .gte('data_despesa', inicioMes)
       .lte('data_despesa', fimMes)
-      .order('data_despesa', { ascending: false })
-      .order('created_at', { ascending: false });
+      .order('data_despesa', { ascending: false });
 
     if (error) {
       alert("Erro ao carregar despesas: " + error.message);
