@@ -38,38 +38,38 @@ export async function POST(req: Request) {
     const genAI = new GoogleGenerativeAI(geminiKey);
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-    // 🧠 NOVO CÉREBRO: INSTRUÇÕES CIRÚRGICAS PARA O GOOGLE GEMINI
+    // 🧠 CÉREBRO ATUALIZADO: SEPARAÇÃO ESTRITA DE MARKETING (GLOVO vs META)
     const promptContexto = `
-      És um auditor financeiro especialista em Portugal. Analisa este documento (tipo: ${tipoArquivo}).
-      A tua tarefa é extrair os dados com precisão absoluta, replicando a exatidão de um contabilista.
-      Devolve APENAS um objeto JSON válido, sem formatação markdown.
+      És um auditor financeiro e Diretor Financeiro (CFO) em Portugal. Analisa este documento (tipo: ${tipoArquivo}).
+      Extrai os dados com precisão absoluta. Devolve APENAS um objeto JSON válido, sem formatação markdown.
       
-      Regras de Extração OBRIGATÓRIAS (Faturas):
-      1. Extrai o "fornecedor" (Nome da Empresa emissora).
-      2. Extrai o "nif_fornecedor" (Apenas os 9 números do NIF/Contribuinte. Se não houver, envia vazio "").
-      3. Extrai o "numero_fatura" (A Referência exata, ex: FS 123/45, FR 2026/1). Se não houver, usa "S/N".
-      4. Extrai a "data" no formato "YYYY-MM-DD".
-      5. Extrai o "valorTotal" (o valor final cobrado no documento).
-      6. Na chave "itens", cria uma lista com TODOS os produtos.
-      7. SEGREGAÇÃO DE IMPOSTOS E TAXAS: É OBRIGATÓRIO adicionar itens individuais para o IVA (ex: "IVA 23%"), Taxas (ex: "Saco Plástico", "Valor de Depósito"), e Descontos (com valor negativo). A soma de todos os "valor_total" dos itens DEVE bater matematicamente certo com o "valorTotal".
+      Regras OBRIGATÓRIAS:
+      1. Extrai "fornecedor", "nif_fornecedor", "numero_fatura" (Se não houver usa "S/N"), "data" (YYYY-MM-DD) e "valorTotal".
+      2. Na chave "itens", cria uma lista com TODOS os serviços/produtos cobrados. O IVA deve ser extraído como um item separado.
+      
+      🚨 REGRA DE CATEGORIZAÇÃO CIRÚRGICA (CFO):
+      Para cada item extraído, deves criar a propriedade "categoria_sugerida" respeitando rigorosamente estas divisões:
+      - Menções a "Ads", "Facebook", "Meta Platforms", "Facebk" ou "Instagram" -> "Marketing (Meta/Facebook)"
+      - Menções a "Promoções", "Marketing promocional", "Campanhas" da Glovo -> "Marketing (Glovo)"
+      - Menções a "Comissão", "Uso da plataforma", "Taxa de ativação", "Taxa de serviço" da Glovo/Uber -> "Taxas e Comissões (Glovo/Uber)"
+      - Menções a "IVA", "Imposto" -> usar a mesma categoria do produto principal a que se refere.
+      - Outros itens genéricos -> enviar vazio "" para usar a categoria padrão do fornecedor.
 
-      Formato JSON exigido para Faturas:
+      Formato JSON exigido:
       {
         "fornecedor": "Nome da Empresa",
         "nif_fornecedor": "123456789",
-        "numero_fatura": "FS 2024/1",
+        "numero_fatura": "FS 2026/1",
         "data": "YYYY-MM-DD",
         "valorTotal": 100.50,
         "itens": [
-          { "nome_extraido": "Nome do Produto ou Imposto", "quantidade": 1, "unidade": "un", "valor_total": 50.00 }
-        ]
-      }
-
-      Formato JSON exigido para Extratos/Glovo/Uber:
-      { 
+          { "nome_extraido": "Taxa de serviço da plataforma", "quantidade": 1, "unidade": "un", "valor_total": 50.00, "categoria_sugerida": "Taxas e Comissões (Glovo/Uber)" },
+          { "nome_extraido": "Marketing promocional", "quantidade": 1, "unidade": "un", "valor_total": 30.00, "categoria_sugerida": "Marketing (Glovo)" },
+          { "nome_extraido": "Meta Pay / Facebk", "quantidade": 1, "unidade": "un", "valor_total": 20.00, "categoria_sugerida": "Marketing (Meta/Facebook)" }
+        ],
         "movimentos": [
-          { "data": "YYYY-MM-DD", "descricao": "Descrição do Movimento", "valor": 10.00, "tipo": "entrada" | "saida" }
-        ] 
+          { "data": "YYYY-MM-DD", "descricao": "Movimento extrato", "valor": 10.00, "tipo": "entrada", "categoria_sugerida": "Marketing (Meta/Facebook)" }
+        ]
       }
     `;
 
@@ -81,18 +81,21 @@ export async function POST(req: Request) {
     try {
       dadosExtraidos = JSON.parse(cleanJson);
     } catch (parseError) {
-      throw new Error(`A Inteligência Artificial falhou ao ler o JSON. A conta Google pode ter atingido o limite ou o formato falhou.`);
+      throw new Error(`A IA falhou ao ler o documento. Verifique os limites da conta. Resposta: ${cleanJson.substring(0, 100)}...`);
     }
 
     const divergencias: any[] = [];
     const retiradasSocios: any[] = [];
     const conciliacoes: any[] = [];
 
-    // --- ALIMENTAÇÃO DA DESPENSA (Insumos) ---
+    // --- ALIMENTAÇÃO DA DESPENSA (Insumos Físicos) ---
     if (tipoArquivo === 'Fatura' && dadosExtraidos.itens && Array.isArray(dadosExtraidos.itens)) {
       for (const item of dadosExtraidos.itens) {
         if (!item.nome_extraido || item.nome_extraido.toUpperCase().includes('IVA') || item.nome_extraido.toUpperCase().includes('DESCONTO')) continue;
         
+        // Impede que serviços de Marketing ou Taxas Glovo entrem na Despensa Física
+        if (item.categoria_sugerida && item.categoria_sugerida.includes('Marketing') || item.categoria_sugerida === 'Taxas e Comissões (Glovo/Uber)') continue;
+
         const qtdComprada = Number(item.quantidade || 1);
         const custoTotalItem = Number(item.valor_total || 0);
         const custoUnitCalc = qtdComprada > 0 ? custoTotalItem / qtdComprada : 0;
@@ -108,7 +111,7 @@ export async function POST(req: Request) {
       }
     }
 
-    // --- EXTRATOS BANCÁRIOS (MBWAY) ---
+    // --- EXTRATOS BANCÁRIOS ---
     if (['Extrato', 'Glovo', 'Palmbites'].includes(tipoArquivo) && dadosExtraidos.movimentos) {
       for (const mov of dadosExtraidos.movimentos) {
         if (mov.tipo === 'saida') {
@@ -123,11 +126,15 @@ export async function POST(req: Request) {
           }
           if (!socioEncontrado) {
             const { data: despesaCorresp } = await supabase.from('despesas').select('*').gte('valor', mov.valor - 0.5).lte('valor', mov.valor + 0.5).maybeSingle();
+            
+            // Atribui categoria diretamente do Extrato se a IA detetou Meta/Facebook
+            let catMovimento = mov.categoria_sugerida || 'Extrato Bancário';
+
             if (despesaCorresp) {
               await supabase.from('despesas').update({ status: 'Validado' }).eq('id', despesaCorresp.id);
               conciliacoes.push({ detalhe: `Pagamento validou a fatura ${despesaCorresp.descricao}`, status: 'Validado' });
             } else {
-              await supabase.from('despesas').insert([{ id: crypto.randomUUID(), data_despesa: mov.data, descricao: mov.descricao, categoria: 'Extrato Bancário', valor: mov.valor, status: 'Falta Fatura' }]);
+              await supabase.from('despesas').insert([{ id: crypto.randomUUID(), data_despesa: mov.data, descricao: mov.descricao, categoria: catMovimento, valor: mov.valor, status: 'Falta Fatura' }]);
               divergencias.push({ alerta: 'Saída bancária sem fatura.', detalhe: mov.descricao, tipo: 'Falta Fatura' });
             }
           }

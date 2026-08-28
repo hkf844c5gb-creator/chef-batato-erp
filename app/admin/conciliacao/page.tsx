@@ -38,25 +38,14 @@ export default function ConciliacaoPage() {
   const [selecionados, setSelecionados] = useState<string[]>([]);
   const [sessaoDetalhe, setSessaoDetalhe] = useState<SessaoAuditoria | null>(null);
 
-  const categoriasDisponiveis = [
-    { id: 'Extrato', label: '🏦 Extrato Bancário' },
-    { id: 'Fatura', label: '🧾 Recibo / Fatura' },
-    { id: 'Glovo', label: '🛵 Extrato Glovo' },
-    { id: 'Palmbites', label: '🌴 Extrato Palmbites' }
-  ];
-
   async function carregarHistorico() {
     setLoading(true);
     let query = supabase.from('auditoria_sessoes').select('*').order('periodo_ref', { ascending: false }); 
     if (filtroMes) query = query.eq('periodo_ref', filtroMes);
 
     const { data, error } = await query;
-    if (error) {
-      alert("Erro ao puxar histórico: " + error.message);
-    } else if (data) {
-      const dataOrdenada = [...data].sort((a, b) => b.id.localeCompare(a.id));
-      setHistorico(dataOrdenada);
-    }
+    if (error) alert("Erro ao puxar histórico: " + error.message);
+    else if (data) setHistorico([...data].sort((a, b) => b.id.localeCompare(a.id)));
     setLoading(false);
   }
 
@@ -72,6 +61,8 @@ export default function ConciliacaoPage() {
       if (nome.includes('glovo')) detectado = 'Glovo';
       else if (nome.includes('palm') || nome.includes('palmbites')) detectado = 'Palmbites';
       else if (nome.includes('extrato') || nome.includes('banco') || nome.includes('cgd')) detectado = 'Extrato';
+      else if (nome.includes('meta') || nome.includes('facebook') || nome.includes('ads')) detectado = 'Fatura';
+      
       setCategoria(detectado);
       setAutoDetectado(true);
     }
@@ -81,68 +72,41 @@ export default function ConciliacaoPage() {
     if (!dados) return [];
     if (Array.isArray(dados)) return dados;
     if (Array.isArray(dados.itens)) return dados.itens;
-    if (Array.isArray(dados.produtos)) return dados.produtos;
-    if (Array.isArray(dados.line_items)) return dados.line_items;
-    if (dados.dadosExtraidos && Array.isArray(dados.dadosExtraidos.itens)) return dados.dadosExtraidos.itens;
-    if (dados.dadosExtraidos && Array.isArray(dados.dadosExtraidos.produtos)) return dados.dadosExtraidos.produtos;
-    if (dados.dadosLidos && Array.isArray(dados.dadosLidos.itens)) return dados.dadosLidos.itens;
     return [];
   };
 
-  const processarInsercaoGlobal = async (itens: any[], fornecedor: string, mesRef: string, arquivoNome: string, tipoArquivo: string, apenasDespesas = false, dataFaturaDoc = '') => {
+  // 🛡️ A INSERÇÃO DE DIRETOR FINANCEIRO
+  const processarInsercaoGlobal = async (dadosLidos: any, mesRef: string, arquivoNome: string, tipoArquivo: string, dataFaturaDoc = '') => {
+    const itens = extrairListaItens(dadosLidos);
     if (!itens || itens.length === 0) return { inseridos: 0, duplicados: 0 };
 
-    let totalInseridos = 0;
-    let totalDuplicados = 0;
-    const fornecedorFormatado = fornecedor || 'Fornecedor Diversos';
+    let totalInseridos = 0, totalDuplicados = 0;
+    
+    const fornecedorFormatado = dadosLidos.fornecedor || 'Fornecedor Diversos';
+    const nifFormatado = dadosLidos.nif_fornecedor && dadosLidos.nif_fornecedor !== 'S/N' ? ` NIF ${dadosLidos.nif_fornecedor}` : '';
+    const faturaFormatada = dadosLidos.numero_fatura && dadosLidos.numero_fatura !== 'S/N' ? dadosLidos.numero_fatura : (arquivoNome || 'Doc. Extraído');
 
     let categoriaAutomatica = '⚠️ Por Classificar';
-    
-    if (fornecedorFormatado !== 'Fornecedor Diversos' && fornecedorFormatado !== 'Desconhecido') {
-       const { data: memoriaFornecedor } = await supabase
-         .from('despesas')
-         .select('categoria')
-         .ilike('descricao', `%${fornecedorFormatado}%`)
-         .neq('categoria', '⚠️ Por Classificar')
-         .order('id', { ascending: false }) 
-         .limit(1)
-         .maybeSingle();
-         
-       if (memoriaFornecedor && memoriaFornecedor.categoria) {
-         categoriaAutomatica = memoriaFornecedor.categoria; 
-       }
+    if (fornecedorFormatado !== 'Fornecedor Diversos') {
+       const { data: memoriaFornecedor } = await supabase.from('despesas').select('categoria').ilike('descricao', `%${fornecedorFormatado}%`).neq('categoria', '⚠️ Por Classificar').order('id', { ascending: false }).limit(1).maybeSingle();
+       if (memoriaFornecedor && memoriaFornecedor.categoria) categoriaAutomatica = memoriaFornecedor.categoria; 
+    }
+
+    let dataDespesaGravar = new Date().toISOString().split('T')[0];
+    if (dataFaturaDoc && dataFaturaDoc.length >= 10) {
+      try { dataDespesaGravar = new Date(dataFaturaDoc).toISOString().split('T')[0]; } catch(e) {}
     }
 
     for (const item of itens) {
-      const tipoItem = String(item.tipo || 'geral').toLowerCase();
       const valorReal = Number(item.valor_total || item.valor || item.preco || 0);
       const qtdItem = item.quantidade || item.qtd || 1;
       const unidItem = item.unidade || 'un';
 
-      if (valorReal <= 0) continue; 
-
-      if (!apenasDespesas && (tipoItem === 'alimentar' || tipoItem === 'embalagem' || tipoItem === 'insumo')) {
-        const { data: insumoExistente } = await supabase.from('insumos').select('id, quantidade_atual').ilike('nome', `%${item.nome_extraido || item.nome}%`).limit(1).maybeSingle();
-        if (insumoExistente) {
-          const novaQtd = Number(insumoExistente.quantidade_atual) + Number(qtdItem);
-          await supabase.from('insumos').update({ quantidade_atual: novaQtd }).eq('id', insumoExistente.id);
-        } else {
-          await supabase.from('insumos').insert([{
-            nome: item.nome_extraido || item.nome, unidade_medida: unidItem, quantidade_atual: qtdItem,
-            custo_unidade: valorReal / Number(qtdItem), fornecedor_principal: fornecedorFormatado
-          }]);
-        }
-      }
+      if (valorReal === 0) continue; 
 
       const nomeRealDoItem = item.nome_extraido || item.nome || item.descricao || 'Despesa Extraída';
-      const nomeDaFaturaSeguro = arquivoNome ? arquivoNome : 'Doc. Extraído';
-      const descFinal = `[${qtdItem} ${unidItem}] ${nomeRealDoItem} | ${fornecedorFormatado} 📄 ${nomeDaFaturaSeguro}`;
+      const descFinal = `[${qtdItem} ${unidItem}] ${nomeRealDoItem} | ${fornecedorFormatado}${nifFormatado} 📄 ${faturaFormatada}`;
       
-      let dataDespesaGravar = new Date().toISOString().split('T')[0];
-      if (dataFaturaDoc && dataFaturaDoc.length >= 10) {
-        try { dataDespesaGravar = new Date(dataFaturaDoc).toISOString().split('T')[0]; } catch(e) {}
-      }
-
       const { data: checkDuplicado } = await supabase.from('despesas').select('id').eq('descricao', descFinal).eq('valor', valorReal).eq('data_despesa', dataDespesaGravar).eq('metodo_pagamento', 'Conciliação Automática').limit(1);
 
       if (checkDuplicado && checkDuplicado.length > 0) {
@@ -150,11 +114,17 @@ export default function ConciliacaoPage() {
         continue;
       }
 
-      const { error } = await supabase.from('despesas').insert([{
-        descricao: descFinal, categoria: categoriaAutomatica, valor: valorReal, data_despesa: dataDespesaGravar, metodo_pagamento: 'Conciliação Automática', status: 'Validado' 
-      }]);
+      // 🎯 PRIORIDADE MÁXIMA PARA A CATEGORIZAÇÃO GLOVO/META DA I.A.
+      let catItem = categoriaAutomatica;
+      if (item.categoria_sugerida && item.categoria_sugerida !== "") {
+        catItem = item.categoria_sugerida;
+      } else if (nomeRealDoItem.toUpperCase().includes('IVA')) {
+        catItem = categoriaAutomatica; 
+      }
 
-      if (error) throw new Error(`Erro ao gravar o item "${nomeRealDoItem}": ${error.message}`);
+      await supabase.from('despesas').insert([{
+        descricao: descFinal, categoria: catItem, valor: valorReal, data_despesa: dataDespesaGravar, metodo_pagamento: 'Conciliação Automática', status: 'Validado' 
+      }]);
       totalInseridos++;
     }
     
@@ -165,8 +135,7 @@ export default function ConciliacaoPage() {
     if (files.length === 0) return alert('Por favor, anexe pelo menos um ficheiro.');
     setProcessando(true); setProgresso({ atual: 1, total: files.length });
 
-    let finalInseridos = 0;
-    let finalDuplicados = 0;
+    let finalInseridos = 0, finalDuplicados = 0;
 
     try {
       for (let i = 0; i < files.length; i++) {
@@ -177,11 +146,9 @@ export default function ConciliacaoPage() {
         const jaExiste = historico.some(h => h.resumo?.fileName === file.name || JSON.stringify(h.resumo || {}).includes(file.name));
         if (jaExiste) continue; 
 
-        // 🛡️ A BALANÇA DE SEGURANÇA DA VERCEL
-        const maxMB = 3.3; 
-        if (file.size > maxMB * 1024 * 1024) {
-          alert(`🚫 RECUSADO: A fatura "${file.name}" tem ${(file.size / (1024*1024)).toFixed(1)}MB.\n\nPara impedir que o servidor vá abaixo, a Vercel exige documentos com menos de 3.3MB.\n\n👉 Solução: Tire um Print / Captura de ecrã à fatura e envie essa Imagem em vez do PDF!`);
-          continue; // Salta este monstro e vai para o próximo ficheiro!
+        if (file.size > 3.3 * 1024 * 1024) {
+          alert(`🚫 O ficheiro "${file.name}" excede os 3.3MB.\nFaça um print/foto da fatura e anexe a imagem.`);
+          continue; 
         }
 
         const nomeFile = file.name.toLowerCase();
@@ -205,32 +172,21 @@ export default function ConciliacaoPage() {
           body: JSON.stringify({ fileBase64: base64Real, fileName: file.name, fileType: file.type, tipoArquivo: catIndividual, periodoRef: periodo })
         });
 
-        // 🛡️ O RAIO-X DE ERROS
         if (!res.ok) {
           const erroTexto = await res.text();
           let msgServidor = erroTexto;
-          try {
-             const jsonErro = JSON.parse(erroTexto);
-             msgServidor = jsonErro.error || jsonErro.message || erroTexto;
-          } catch(e) {}
-          
-          alert(`🚨 FALHA EXATA NO DOCUMENTO: ${file.name}\n\nMotivo do Servidor:\n"${msgServidor}"\n\nPor favor, tire uma foto deste erro para podermos aniquilar a causa!`);
+          try { const jsonErro = JSON.parse(erroTexto); msgServidor = jsonErro.error || jsonErro.message || erroTexto; } catch(e) {}
+          alert(`🚨 FALHA NO DOCUMENTO: ${file.name}\n\nMotivo:\n"${msgServidor}"`);
           continue; 
         }
 
         const dataAPI = await res.json();
         
         if (dataAPI && dataAPI.dadosLidos) {
-           let itensParaProcessar = extrairListaItens(dataAPI.dadosLidos);
-           if (itensParaProcessar.length === 0 && dataAPI.dadosLidos.valorTotal) {
-              itensParaProcessar = [{ nome_extraido: `Fatura Lote (${catIndividual})`, tipo: 'geral', quantidade: 1, unidade: 'un', valor_total: dataAPI.dadosLidos.valorTotal }];
-           }
-           if (itensParaProcessar.length > 0) {
-              const dataFaturaDoc = dataAPI.dadosLidos.data || dataAPI.dadosLidos.data_fatura || '';
-              const resultado = await processarInsercaoGlobal(itensParaProcessar, dataAPI.dadosLidos.fornecedor, periodo, file.name, catIndividual, false, dataFaturaDoc);
-              finalInseridos += resultado.inseridos;
-              finalDuplicados += resultado.duplicados;
-           }
+           const dataFaturaDoc = dataAPI.dadosLidos.data || dataAPI.dadosLidos.data_fatura || '';
+           const resultado = await processarInsercaoGlobal(dataAPI.dadosLidos, periodo, file.name, catIndividual, dataFaturaDoc);
+           finalInseridos += resultado.inseridos;
+           finalDuplicados += resultado.duplicados;
         }
         
         if (i < files.length - 1) {
@@ -239,23 +195,20 @@ export default function ConciliacaoPage() {
         }
       }
       
-      alert(`Lote finalizado com sucesso! 🎉\n\n✅ Novos registos gravados: ${finalInseridos}\n⚠️ Registos ignorados (Duplicados): ${finalDuplicados}`);
+      alert(`Lote finalizado com sucesso! 🎉\n\n✅ Itens gravados perfeitamente: ${finalInseridos}\n⚠️ Itens ignorados (Duplicados): ${finalDuplicados}`);
       setFiles([]); setAutoDetectado(false); carregarHistorico(); 
-    } catch (err: any) { 
-      alert(`Aviso no processamento do Lote: ${err.message}`); 
-    } finally { 
+    } catch (err: any) { alert(`Aviso no lote: ${err.message}`); } finally { 
       setProcessando(false); setProgresso({ atual: 0, total: 0 }); setStatusTexto('A extrair itens...'); 
     }
   };
 
   const reprocessarParaDespesas = async () => {
     if (selecionados.length === 0) return;
-    if (!confirm(`Deseja desmembrar as ${selecionados.length} faturas selecionadas e enviá-las para as Despesas? O sistema irá ignorar automaticamente o que já lá estiver repetido.`)) return;
+    if (!confirm(`Deseja desmembrar as ${selecionados.length} faturas selecionadas e enviá-las para as Despesas?`)) return;
     
-    setProcessando(true); setProgresso({ atual: 1, total: selecionados.length }); setStatusTexto('A extrair rascunhos...');
+    setProcessando(true); setProgresso({ atual: 1, total: selecionados.length }); setStatusTexto('A reprocessar faturas antigas...');
     
-    let finalInseridos = 0;
-    let finalDuplicados = 0;
+    let finalInseridos = 0, finalDuplicados = 0;
 
     try {
       for (let i = 0; i < selecionados.length; i++) {
@@ -265,23 +218,17 @@ export default function ConciliacaoPage() {
         setProgresso({ atual: i + 1, total: selecionados.length });
 
         const dados = sessao.resumo || {};
-        let itensParaProcessar = extrairListaItens(dados);
-        let valorTotalBruto = dados?.dadosExtraidos?.valorTotal || dados?.valorTotal || dados?.total || 0;
+        const dadosExtraidos = dados.dadosExtraidos || dados;
+        const dataFaturaDoc = dadosExtraidos.data || dadosExtraidos.data_fatura || '';
         
-        if (itensParaProcessar.length === 0 && valorTotalBruto > 0) {
-           itensParaProcessar = [{ nome_extraido: `Fatura Antiga (${sessao.tipo_arquivo})`, tipo: 'geral', quantidade: 1, unidade: 'un', valor_total: valorTotalBruto }];
-        }
-        if (itensParaProcessar.length > 0) {
-           const dataFaturaDoc = dados?.dadosExtraidos?.data || dados?.data || dados?.data_fatura || '';
-           const resultado = await processarInsercaoGlobal(itensParaProcessar, dados?.dadosExtraidos?.fornecedor || dados?.fornecedor || 'Fornecedor Desconhecido', sessao.periodo_ref, dados?.fileName || dados?.nome_arquivo || '', sessao.tipo_arquivo, true, dataFaturaDoc);
-           finalInseridos += resultado.inseridos;
-           finalDuplicados += resultado.duplicados;
-        }
+        const resultado = await processarInsercaoGlobal(dadosExtraidos, sessao.periodo_ref, dados?.fileName || dados?.nome_arquivo || '', sessao.tipo_arquivo, dataFaturaDoc);
+        finalInseridos += resultado.inseridos;
+        finalDuplicados += resultado.duplicados;
       }
       
-      alert(`Mágico! Faturas processadas! 🎉\n\n✅ ${finalInseridos} novos itens inseridos nas Despesas.\n🛡️ ${finalDuplicados} itens ignorados (Barreira Anti-Duplicação).`);
+      alert(`Mágico! Faturas processadas! 🎉\n\n✅ ${finalInseridos} novos itens inseridos nas Despesas.\n🛡️ ${finalDuplicados} itens repetidos bloqueados.`);
       setSelecionados([]);
-    } catch (err: any) { alert(`Erro ao inserir no Supabase: ${err.message}`); } finally { setProcessando(false); setProgresso({ atual: 0, total: 0 }); setStatusTexto('A extrair itens...'); }
+    } catch (err: any) { alert(`Erro: ${err.message}`); } finally { setProcessando(false); setProgresso({ atual: 0, total: 0 }); setStatusTexto('A extrair itens...'); }
   };
 
   const toggleSelecionado = (id: string) => { setSelecionados(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]); };
@@ -297,7 +244,7 @@ export default function ConciliacaoPage() {
     <div className="p-8 font-sans max-w-7xl mx-auto relative">
       <div className="mb-8 border-b border-zinc-800 pb-4">
         <h1 className="text-3xl font-bold text-orange-500 flex items-center gap-3">
-          Conciliador Inteligente <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full">v10 Blindado</span>
+          Conciliador Inteligente <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full">v12 CFO</span>
         </h1>
       </div>
 
@@ -338,17 +285,19 @@ export default function ConciliacaoPage() {
                   </div>
                   {historico.map((sessao) => {
                     const dados = sessao.resumo || {};
-                    const listaItens = extrairListaItens(dados);
+                    const dadosExtraidos = dados.dadosExtraidos || dados;
+                    const listaItens = extrairListaItens(dadosExtraidos);
                     const nomeFicheiro = dados.fileName || dados.nome_arquivo || 'Fatura';
-                    const fornecedor = dados.dadosExtraidos?.fornecedor || dados.fornecedor || 'Desconhecido';
-                    const valorTotal = Number(dados.dadosExtraidos?.valorTotal || dados.valorTotal || dados.total || 0).toFixed(2);
+                    const fornecedor = dadosExtraidos?.fornecedor || 'Desconhecido';
+                    const nif = dadosExtraidos?.nif_fornecedor ? ` (NIF: ${dadosExtraidos.nif_fornecedor})` : '';
+                    const valorTotal = Number(dadosExtraidos?.valorTotal || 0).toFixed(2);
 
                     return (
                       <div key={sessao.id} onClick={() => setSessaoDetalhe(sessao)} className={`bg-zinc-900 border p-4 rounded-xl flex items-center cursor-pointer transition-all hover:bg-zinc-800/50 ${selecionados.includes(sessao.id) ? 'border-orange-500 bg-orange-950/20' : 'border-zinc-700'}`}>
                         <input type="checkbox" checked={selecionados.includes(sessao.id)} onChange={() => toggleSelecionado(sessao.id)} onClick={(e)=>e.stopPropagation()} className="w-5 h-5 mr-4 accent-orange-500 cursor-pointer" />
                         <div className="flex-1">
                           <h4 className="text-sm font-bold text-white">🧾 {nomeFicheiro}</h4>
-                          <p className="text-xs text-zinc-400 mt-1">{fornecedor} | <span className="text-zinc-200 font-bold">{valorTotal}€</span> | ✓ {listaItens.length} itens extraídos</p>
+                          <p className="text-xs text-zinc-400 mt-1">{fornecedor}{nif} | <span className="text-zinc-200 font-bold">{valorTotal}€</span> | ✓ {listaItens.length} itens lidos</p>
                         </div>
                       </div>
                     );
@@ -364,31 +313,37 @@ export default function ConciliacaoPage() {
         <div className="fixed inset-0 bg-black/80 z-[120] flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-zinc-900 w-full max-w-2xl rounded-3xl p-6 shadow-2xl flex flex-col max-h-[85vh] border border-zinc-800">
             <div className="flex justify-between items-start border-b border-zinc-800 pb-4 mb-4">
-              <h3 className="text-xl font-black text-white">Detalhes da Fatura</h3>
+              <h3 className="text-xl font-black text-white">Detalhes do Extrato / Fatura</h3>
               <button onClick={() => setSessaoDetalhe(null)} className="bg-zinc-800 hover:bg-zinc-700 text-white w-8 h-8 rounded-full font-bold transition-colors">✕</button>
             </div>
             <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar pr-2">
-              <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Itens Desmembrados da Fatura</h4>
+              <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Itens Desmembrados (CFO)</h4>
               {(() => {
-                const listaItens = extrairListaItens(sessaoDetalhe.resumo);
-                if (listaItens.length === 0) return <p className="text-zinc-500 text-sm py-4">Sem itens detalhados. A IA leu apenas o total.</p>;
+                const dados = sessaoDetalhe.resumo || {};
+                const dadosExtraidos = dados.dadosExtraidos || dados;
+                const listaItens = extrairListaItens(dadosExtraidos);
+                if (listaItens.length === 0) return <p className="text-zinc-500 text-sm py-4">Nenhum item detalhado.</p>;
                 return (
                   <div className="space-y-2">
                     {listaItens.map((item: any, idx: number) => (
                       <div key={idx} className="bg-zinc-950 border border-zinc-800 p-3 rounded-xl flex justify-between items-center hover:border-zinc-700 transition-colors">
                         <div>
-                          <h4 className="text-sm font-bold text-zinc-200">{item.nome_extraido || item.nome || item.descricao || 'Item Descrito'}</h4>
-                          <span className="text-[10px] text-zinc-500">Qtd: {item.quantidade || 1} {item.unidade || 'un'}</span>
+                          <h4 className="text-sm font-bold text-zinc-200">{item.nome_extraido || item.nome || 'Item Descrito'}</h4>
+                          <div className="flex items-center gap-2 mt-1">
+                             <span className="text-[10px] text-zinc-500">Qtd: {item.quantidade || 1} {item.unidade || 'un'}</span>
+                             {item.categoria_sugerida && (
+                               <span className="text-[9px] bg-purple-500/20 text-purple-400 px-1.5 py-0.5 rounded border border-purple-500/30 uppercase tracking-wider">
+                                 {item.categoria_sugerida}
+                               </span>
+                             )}
+                          </div>
                         </div>
-                        <span className="text-sm font-black text-orange-400">{(Number(item.valor_total || item.valor || item.preco || 0)).toFixed(2)}€</span>
+                        <span className="text-sm font-black text-orange-400">{(Number(item.valor_total || item.valor || 0)).toFixed(2)}€</span>
                       </div>
                     ))}
                   </div>
                 );
               })()}
-            </div>
-            <div className="border-t border-zinc-800 pt-4 mt-4 text-center">
-              <button onClick={() => setSessaoDetalhe(null)} className="bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-bold px-6 py-2.5 rounded-xl transition-all">Fechar Detalhes</button>
             </div>
           </div>
         </div>
