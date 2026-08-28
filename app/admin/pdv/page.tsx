@@ -89,6 +89,9 @@ export default function CaixaPDV() {
   const [comboSelecionado, setComboSelecionado] = useState<Combo | null>(null);
   const [selecoesCombo, setSelecoesCombo] = useState<{ [grupoId: string]: ProdutoVinculado[] }>({});
 
+  // 🎯 NOVO ESTADO: Controlo da janela de sucesso
+  const [modalSucesso, setModalSucesso] = useState<{ visivel: boolean; numeroPedido: string }>({ visivel: false, numeroPedido: '' });
+
   const supabase = createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
@@ -542,6 +545,9 @@ export default function CaixaPDV() {
 
           imprimirReciboTermico(dadosRecibo);
         }
+        
+        // 🎯 Lança a Janela de Sucesso e bloqueia o ecrã com o número da Senha!
+        setModalSucesso({ visivel: true, numeroPedido: novoNumeroStr });
       }
       
       setCarrinho([]); 
@@ -610,7 +616,6 @@ export default function CaixaPDV() {
                 className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-3 pr-10 py-2 text-sm focus:border-orange-500 outline-none text-white font-bold transition-all"
                 autoComplete="off" 
               />
-              {/* BOTÃO MÁGICO DE COLAR */}
               <button
                 type="button"
                 onMouseDown={async (e) => {
@@ -816,6 +821,31 @@ export default function CaixaPDV() {
             </div>
           </aside>
 
+        </div>
+      )}
+
+      {/* 🎯 MODAL DE SUCESSO - ECRÃ BLOQUEADO */}
+      {modalSucesso.visivel && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex justify-center items-center z-[200] p-4 animate-in fade-in duration-200">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-3xl p-8 flex flex-col items-center text-center shadow-[0_0_50px_rgba(249,115,22,0.2)] animate-in zoom-in-95 duration-300">
+            <div className="w-20 h-20 bg-green-500/20 text-green-500 rounded-full flex items-center justify-center text-4xl mb-6 shadow-inner border border-green-500/50">
+              ✓
+            </div>
+            <h2 className="text-2xl font-black text-white mb-2">Pedido Registado!</h2>
+            <p className="text-zinc-400 text-sm mb-6">
+              O pedido foi guardado com sucesso e o stock atualizado.
+            </p>
+            <div className="bg-zinc-950 border border-zinc-800 rounded-2xl w-full py-4 mb-8">
+              <span className="block text-[10px] uppercase font-bold text-zinc-500 mb-1">Senha do Pedido</span>
+              <span className="text-4xl font-black text-orange-500 font-mono">#{modalSucesso.numeroPedido}</span>
+            </div>
+            <button 
+              onClick={() => setModalSucesso({ visivel: false, numeroPedido: '' })}
+              className="w-full bg-orange-600 hover:bg-orange-500 text-white font-black py-4 rounded-xl uppercase tracking-widest shadow-lg transition-transform active:scale-95"
+            >
+              OK, Próximo Cliente
+            </button>
+          </div>
         </div>
       )}
 

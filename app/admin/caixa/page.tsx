@@ -18,7 +18,6 @@ const getHojeLisboa = () => {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Lisbon' }).format(new Date());
 };
 
-// ✂️ MODO CRU TAMBÉM NA CAIXA
 const extrairDataEstatica = (dataIso: string) => {
   if (!dataIso) return '';
   return dataIso.substring(0, 10);
@@ -39,7 +38,6 @@ export default function GestaoCaixa() {
   const [form, setForm] = useState({ valor: 0, descricao: '', subtipo: 'Pagamento' });
   const [processando, setProcessando] = useState(false);
 
-  // 🎯 OBRIGA A PRIORIDADE MÁXIMA AO data_pedido
   const obterDataEfetiva = (p: any) => {
     if (p.data_pedido) return p.data_pedido;
     return p.criado_em || '';
@@ -62,6 +60,10 @@ export default function GestaoCaixa() {
 
       if (pedidosError) throw pedidosError;
 
+      let lastClosedBalance = 0;
+      let previousDayClosedSuccessfully = false;
+
+      // 1. Procurar a última Abertura antes da data selecionada
       const { data: ultimaAbertura } = await supabase
         .from('caixa').select('data_dia').eq('tipo', 'Abertura').lt('data_dia', dataFiltro)
         .order('data_dia', { ascending: false }).limit(1);
@@ -70,9 +72,14 @@ export default function GestaoCaixa() {
         const dataAntigaEsquecida = ultimaAbertura[0].data_dia;
         
         const { data: fechoAntigo } = await supabase
-          .from('caixa').select('id').eq('data_dia', dataAntigaEsquecida).eq('tipo', 'Fechamento');
+          .from('caixa').select('valor').eq('data_dia', dataAntigaEsquecida).eq('tipo', 'Fechamento');
 
-        if (!fechoAntigo || fechoAntigo.length === 0) {
+        if (fechoAntigo && fechoAntigo.length > 0) {
+          // O dia anterior já estava fechado, memorizamos o valor exato
+          lastClosedBalance = Number(fechoAntigo[0].valor);
+          previousDayClosedSuccessfully = true;
+        } else {
+          // O dia anterior não foi fechado. Calculamos a matemática perfeita em memória.
           const { data: movsAntigos } = await supabase.from('caixa').select('tipo, valor').eq('data_dia', dataAntigaEsquecida);
           
           let abAnt = 0, entAnt = 0, saiAnt = 0;
@@ -90,39 +97,48 @@ export default function GestaoCaixa() {
              }
           });
           
-          const saldoFinalEsquecido = abAnt + entAnt + vendasAnt - saiAnt;
+          lastClosedBalance = abAnt + entAnt + vendasAnt - saiAnt;
           
-          await supabase.from('caixa').insert([{
-             data_dia: dataAntigaEsquecida, tipo: 'Fechamento', descricao: 'Fecho Automático do Sistema (00:00 Lisboa)', valor: saldoFinalEsquecido
+          // Insere o Fecho com o valor calculado
+          const { error: errFecho } = await supabase.from('caixa').insert([{
+             data_dia: dataAntigaEsquecida, tipo: 'Fechamento', descricao: 'Fecho Automático do Sistema (00:00 Lisboa)', valor: lastClosedBalance
           }]);
+
+          if (!errFecho) {
+             previousDayClosedSuccessfully = true;
+          }
+        }
+      } else {
+        // Se não encontrou aberturas antigas, procura o último fecho perdido
+        const { data: ultimoFecho } = await supabase
+          .from('caixa').select('valor').eq('tipo', 'Fechamento').lt('data_dia', dataFiltro)
+          .order('data_dia', { ascending: false }).limit(1);
+
+        if (ultimoFecho && ultimoFecho.length > 0) {
+          lastClosedBalance = Number(ultimoFecho[0].valor);
+          previousDayClosedSuccessfully = true;
         }
       }
 
+      // 2. Tratar o dia de HOJE (dataFiltro)
       let { data: caixaData, error: caixaError } = await supabase.from('caixa').select('*').eq('data_dia', dataFiltro);
       if (caixaError) throw caixaError;
 
       const temAberturaHoje = caixaData?.some(m => m.tipo === 'Abertura');
       
-      if (!temAberturaHoje) {
-        const { data: ultimoFecho } = await supabase
-          .from('caixa').select('valor').eq('tipo', 'Fechamento').lt('data_dia', dataFiltro)
-          .order('data_dia', { ascending: false }).order('created_at', { ascending: false }).limit(1);
+      if (!temAberturaHoje && previousDayClosedSuccessfully) {
+        // Usa ESTRITAMENTE o lastClosedBalance calculado em memória, anulando qualquer atraso do servidor!
+        const { error: erroInsert } = await supabase.from('caixa').insert([{
+          data_dia: dataFiltro, tipo: 'Abertura', descricao: 'Fundo de Maneio (Abertura Automática às 00:01)', valor: lastClosedBalance
+        }]);
 
-        if (ultimoFecho && ultimoFecho.length > 0) {
-          const valorTransitado = Number(ultimoFecho[0].valor);
-          
-          const { error: erroInsert } = await supabase.from('caixa').insert([{
-            data_dia: dataFiltro, tipo: 'Abertura', descricao: 'Fundo de Maneio (Abertura Automática às 00:01)', valor: valorTransitado
-          }]);
-
-          if (!erroInsert) {
-            const { data: novoCaixaData } = await supabase.from('caixa').select('*').eq('data_dia', dataFiltro);
-            caixaData = novoCaixaData;
-          }
+        if (!erroInsert) {
+          const { data: novoCaixaData } = await supabase.from('caixa').select('*').eq('data_dia', dataFiltro);
+          caixaData = novoCaixaData;
         }
       }
 
-      // 🎯 Filtra ESTRITAMENTE pela data CORTADA no formato original inserido!
+      // 3. Renderizar a lista rigorosa do dia
       const pedidosValidos = (todosPedidos || []).filter(p => {
         const dataPedidoStr = extrairDataEstatica(obterDataEfetiva(p));
         return dataPedidoStr === dataFiltro && p.pago === true && (p.forma_pagamento === 'Dinheiro' || p.forma_pagamento === 'Dinheiro Glovo');
