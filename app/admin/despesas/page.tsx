@@ -29,7 +29,6 @@ export default function DespesasPage() {
   const [filtroMes, setFiltroMes] = useState(getMesAtual());
   const [ordenacao, setOrdenacao] = useState('data_desc');
 
-  // Estados para o Modal de Edição
   const [modalAberto, setModalAberto] = useState(false);
   const [despesaEditando, setDespesaEditando] = useState<Despesa | null>(null);
   const [form, setForm] = useState({ descricao: '', categoria: '', valor: 0, data_despesa: '', metodo_pagamento: '' });
@@ -46,7 +45,6 @@ export default function DespesasPage() {
       .gte('data_despesa', inicioMes)
       .lte('data_despesa', fimMes);
 
-    // Ordenação flexível (sem 'created_at' para não dar erro)
     if (ordenacao === 'data_desc') query = query.order('data_despesa', { ascending: false });
     if (ordenacao === 'data_asc') query = query.order('data_despesa', { ascending: true });
     if (ordenacao === 'valor_desc') query = query.order('valor', { ascending: false });
@@ -102,7 +100,6 @@ export default function DespesasPage() {
 
   const totalDespesas = despesas.reduce((acc, d) => acc + Number(d.valor), 0);
 
-  // 📊 CÁLCULOS DOS GRÁFICOS (Categorias e Fornecedores)
   const totaisPorCategoria = despesas.reduce((acc, desp) => {
     const cat = desp.categoria || 'Sem Categoria';
     acc[cat] = (acc[cat] || 0) + Number(desp.valor);
@@ -128,7 +125,7 @@ export default function DespesasPage() {
   const fornecedoresOrdenados = Object.entries(totaisPorFornecedor)
     .map(([nome, total]) => ({ nome, total }))
     .sort((a, b) => b.total - a.total)
-    .slice(0, 5); // Top 5
+    .slice(0, 5);
 
   const maxCategoria = categoriasOrdenadas.length > 0 ? categoriasOrdenadas[0].total : 1;
   const maxFornecedor = fornecedoresOrdenados.length > 0 ? fornecedoresOrdenados[0].total : 1;
@@ -146,8 +143,6 @@ export default function DespesasPage() {
 
   return (
     <div className="p-8 font-sans max-w-7xl mx-auto relative min-h-screen">
-      
-      {/* CABEÇALHO & FILTROS */}
       <div className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
         <h1 className="text-3xl font-black text-white flex items-center gap-3 tracking-tight">
           Gestão de Despesas <span className="text-xl">💸</span>
@@ -155,29 +150,17 @@ export default function DespesasPage() {
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <span className="text-xs font-bold text-zinc-500 uppercase">Ordenar:</span>
-            <select 
-              value={ordenacao} 
-              onChange={(e) => setOrdenacao(e.target.value)} 
-              className="bg-zinc-900 border border-zinc-800 text-zinc-300 px-3 py-2.5 rounded-xl text-sm outline-none focus:border-orange-500 cursor-pointer font-medium"
-            >
+            <select value={ordenacao} onChange={(e) => setOrdenacao(e.target.value)} className="bg-zinc-900 border border-zinc-800 text-zinc-300 px-3 py-2.5 rounded-xl text-sm outline-none focus:border-orange-500 cursor-pointer font-medium">
               <option value="data_desc">Data (Mais Recentes)</option>
               <option value="data_asc">Data (Mais Antigas)</option>
               <option value="valor_desc">Valor (Maior a Menor)</option>
             </select>
           </div>
-          <input 
-            type="month" 
-            value={filtroMes} 
-            onChange={(e) => setFiltroMes(e.target.value)} 
-            className="bg-zinc-900 border border-zinc-800 text-zinc-300 px-4 py-2.5 rounded-xl text-sm outline-none focus:border-orange-500 font-medium" 
-          />
+          <input type="month" value={filtroMes} onChange={(e) => setFiltroMes(e.target.value)} className="bg-zinc-900 border border-zinc-800 text-zinc-300 px-4 py-2.5 rounded-xl text-sm outline-none focus:border-orange-500 font-medium" />
         </div>
       </div>
 
-      {/* BLOCOS DE ANÁLISE GRÁFICA (O layout que faltava) */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-        
-        {/* Box: Centros de Custo */}
         <div className="bg-[#121214] border border-zinc-800/80 p-6 rounded-[24px] shadow-xl">
           <h3 className="text-[11px] font-black text-orange-500 uppercase tracking-widest mb-6">Centros de Custo (Top Categorias)</h3>
           <div className="space-y-5">
@@ -196,7 +179,6 @@ export default function DespesasPage() {
           </div>
         </div>
 
-        {/* Box: Top Fornecedores */}
         <div className="bg-[#121214] border border-zinc-800/80 p-6 rounded-[24px] shadow-xl">
           <h3 className="text-[11px] font-black text-green-500 uppercase tracking-widest mb-6">Top 5 Fornecedores</h3>
           <div className="space-y-5">
@@ -214,10 +196,8 @@ export default function DespesasPage() {
             {fornecedoresOrdenados.length === 0 && <div className="text-zinc-600 text-sm">Sem dados para o mês selecionado.</div>}
           </div>
         </div>
-
       </div>
 
-      {/* RESUMO RÁPIDO */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
         <div className="bg-zinc-900/90 border border-zinc-800/80 p-6 rounded-[20px] flex flex-col justify-center">
           <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Total Gasto no Mês</span>
@@ -233,7 +213,6 @@ export default function DespesasPage() {
         </div>
       </div>
 
-      {/* LISTAGEM DETALHADA */}
       <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-[24px] overflow-hidden shadow-2xl">
         <div className="p-5 border-b border-zinc-800/80 bg-zinc-950/40 flex justify-between items-center">
           <h3 className="text-xs font-extrabold text-zinc-400 uppercase tracking-widest">Listagem Detalhada</h3>
@@ -293,7 +272,6 @@ export default function DespesasPage() {
         </div>
       </div>
 
-      {/* MODAL DE EDIÇÃO */}
       {modalAberto && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex flex-col justify-center items-center p-4 animate-in fade-in duration-200">
           <div className="bg-zinc-900 w-full max-w-lg rounded-[32px] flex flex-col overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.5)] border border-zinc-800">
