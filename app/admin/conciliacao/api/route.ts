@@ -22,9 +22,7 @@ export async function POST(req: Request) {
     const body = await req.json();
     const { fileBase64, tipoArquivo, periodoRef } = body;
 
-    if (!fileBase64 || fileBase64.length < 100) {
-      throw new Error("O ficheiro recebido está vazio ou corrompido.");
-    }
+    if (!fileBase64 || fileBase64.length < 100) throw new Error("O ficheiro recebido está vazio ou corrompido.");
 
     let base64Data = fileBase64;
     if (fileBase64.includes(',')) base64Data = fileBase64.split(',')[1];
@@ -38,32 +36,39 @@ export async function POST(req: Request) {
     if (!geminiKey) throw new Error("Chave de API não configurada no servidor.");
 
     const genAI = new GoogleGenerativeAI(geminiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
+    // 🧠 NOVO CÉREBRO: INSTRUÇÕES CIRÚRGICAS PARA O GOOGLE GEMINI
     const promptContexto = `
-      És um auditor financeiro e de stock experiente. Analisa este documento (tipo: ${tipoArquivo}).
-      Devolve APENAS um objeto JSON válido, sem blocos de código markdown (\`\`\`json).
+      És um auditor financeiro especialista em Portugal. Analisa este documento (tipo: ${tipoArquivo}).
+      A tua tarefa é extrair os dados com precisão absoluta, replicando a exatidão de um contabilista.
+      Devolve APENAS um objeto JSON válido, sem formatação markdown.
       
-      Se o documento for uma Fatura/Recibo, extrai obrigatoriamente os dados gerais E a lista detalhada de produtos/itens comprados:
+      Regras de Extração OBRIGATÓRIAS (Faturas):
+      1. Extrai o "fornecedor" (Nome da Empresa emissora).
+      2. Extrai o "nif_fornecedor" (Apenas os 9 números do NIF/Contribuinte. Se não houver, envia vazio "").
+      3. Extrai o "numero_fatura" (A Referência exata, ex: FS 123/45, FR 2026/1). Se não houver, usa "S/N".
+      4. Extrai a "data" no formato "YYYY-MM-DD".
+      5. Extrai o "valorTotal" (o valor final cobrado no documento).
+      6. Na chave "itens", cria uma lista com TODOS os produtos.
+      7. SEGREGAÇÃO DE IMPOSTOS E TAXAS: É OBRIGATÓRIO adicionar itens individuais para o IVA (ex: "IVA 23%"), Taxas (ex: "Saco Plástico", "Valor de Depósito"), e Descontos (com valor negativo). A soma de todos os "valor_total" dos itens DEVE bater matematicamente certo com o "valorTotal".
+
+      Formato JSON exigido para Faturas:
       {
-        "fornecedor": string,
+        "fornecedor": "Nome da Empresa",
+        "nif_fornecedor": "123456789",
+        "numero_fatura": "FS 2024/1",
         "data": "YYYY-MM-DD",
-        "valorTotal": number,
+        "valorTotal": 100.50,
         "itens": [
-          {
-            "nome_extraido": string,
-            "quantidade": number,
-            "unidade": string (ex: "kg", "un", "L", "cx", "g"),
-            "tipo": "alimentar" | "embalagem" | "geral",
-            "valor_total": number
-          }
+          { "nome_extraido": "Nome do Produto ou Imposto", "quantidade": 1, "unidade": "un", "valor_total": 50.00 }
         ]
       }
 
-      Se o documento for um Extrato Bancário ou de Plataformas, devolve:
+      Formato JSON exigido para Extratos/Glovo/Uber:
       { 
         "movimentos": [
-          { "data": "YYYY-MM-DD", "descricao": string, "valor": number, "tipo": "entrada" | "saida" }
+          { "data": "YYYY-MM-DD", "descricao": "Descrição do Movimento", "valor": 10.00, "tipo": "entrada" | "saida" }
         ] 
       }
     `;
@@ -76,17 +81,18 @@ export async function POST(req: Request) {
     try {
       dadosExtraidos = JSON.parse(cleanJson);
     } catch (parseError) {
-      throw new Error(`A Inteligência Artificial falhou ao ler a fatura. O documento pode estar ilegível ou protegido. Resposta da IA: ${cleanJson.substring(0, 150)}...`);
+      throw new Error(`A Inteligência Artificial falhou ao ler o JSON. A conta Google pode ter atingido o limite ou o formato falhou.`);
     }
 
     const divergencias: any[] = [];
     const retiradasSocios: any[] = [];
     const conciliacoes: any[] = [];
 
-    // --- ALIMENTAÇÃO DA DESPENSA ---
+    // --- ALIMENTAÇÃO DA DESPENSA (Insumos) ---
     if (tipoArquivo === 'Fatura' && dadosExtraidos.itens && Array.isArray(dadosExtraidos.itens)) {
       for (const item of dadosExtraidos.itens) {
-        if (!item.nome_extraido) continue;
+        if (!item.nome_extraido || item.nome_extraido.toUpperCase().includes('IVA') || item.nome_extraido.toUpperCase().includes('DESCONTO')) continue;
+        
         const qtdComprada = Number(item.quantidade || 1);
         const custoTotalItem = Number(item.valor_total || 0);
         const custoUnitCalc = qtdComprada > 0 ? custoTotalItem / qtdComprada : 0;
@@ -97,27 +103,39 @@ export async function POST(req: Request) {
           const novaQtd = Number(insumoExistente.quantidade_atual || 0) + qtdComprada;
           await supabase.from('insumos').update({ quantidade_atual: novaQtd, custo_por_unidade: custoUnitCalc > 0 ? custoUnitCalc : undefined }).eq('id', insumoExistente.id);
         } else {
-          await supabase.from('insumos').insert([{ nome: item.nome_extraido.trim(), unidade_medida: item.unidade || 'unid', quantidade_atual: qtdComprada, quantidade_alerta: 2, custo_por_unidade: custoUnitCalc }]);
+          await supabase.from('insumos').insert([{ nome: item.nome_extraido.trim(), unidade_medida: item.unidade || 'un', quantidade_atual: qtdComprada, quantidade_alerta: 2, custo_por_unidade: custoUnitCalc }]);
         }
       }
     }
 
-    // --- CRUZAMENTO ---
-    if (tipoArquivo === 'Fatura') {
-      const valorTotalFatura = Number(dadosExtraidos.valorTotal || 0);
-      const { data: despesaExistente } = await supabase.from('despesas').select('*').gte('valor', valorTotalFatura - 1).lte('valor', valorTotalFatura + 1).maybeSingle();
-
-      if (!despesaExistente) {
-        const novoId = crypto.randomUUID();
-        await supabase.from('despesas').insert([{ id: novoId, data_despesa: dadosExtraidos.data || new Date().toISOString().split('T')[0], descricao: dadosExtraidos.fornecedor || 'Fatura Desconhecida', categoria: 'Fatura Física', valor: valorTotalFatura, status: 'Falta Pagamento' }]);
-        conciliacoes.push({ detalhe: `Fatura inserida aguardando pagamento.`, status: 'Inserida' });
-      } else {
-        await supabase.from('despesas').update({ status: 'Validado', descricao: `[VALIDADO] ${dadosExtraidos.fornecedor || 'Fornecedor'}` }).eq('id', despesaExistente.id);
-        conciliacoes.push({ detalhe: `Fatura validada com movimento bancário!`, status: 'Validado' });
+    // --- EXTRATOS BANCÁRIOS (MBWAY) ---
+    if (['Extrato', 'Glovo', 'Palmbites'].includes(tipoArquivo) && dadosExtraidos.movimentos) {
+      for (const mov of dadosExtraidos.movimentos) {
+        if (mov.tipo === 'saida') {
+          let socioEncontrado = false;
+          const descLimpa = mov.descricao.replace(/\s+/g, '');
+          for (const [numero, nome] of Object.entries(SOCIOS_MBWAY)) {
+            if (descLimpa.includes(numero)) {
+              retiradasSocios.push({ data: mov.data, socio: nome, numero_mbway: numero, valor: mov.valor, descricao: mov.descricao });
+              socioEncontrado = true;
+              break;
+            }
+          }
+          if (!socioEncontrado) {
+            const { data: despesaCorresp } = await supabase.from('despesas').select('*').gte('valor', mov.valor - 0.5).lte('valor', mov.valor + 0.5).maybeSingle();
+            if (despesaCorresp) {
+              await supabase.from('despesas').update({ status: 'Validado' }).eq('id', despesaCorresp.id);
+              conciliacoes.push({ detalhe: `Pagamento validou a fatura ${despesaCorresp.descricao}`, status: 'Validado' });
+            } else {
+              await supabase.from('despesas').insert([{ id: crypto.randomUUID(), data_despesa: mov.data, descricao: mov.descricao, categoria: 'Extrato Bancário', valor: mov.valor, status: 'Falta Fatura' }]);
+              divergencias.push({ alerta: 'Saída bancária sem fatura.', detalhe: mov.descricao, tipo: 'Falta Fatura' });
+            }
+          }
+        }
       }
-    } 
+    }
 
-    const resumo: any = { status: `Auditoria Concluída`, dadosExtraidos, itens: dadosExtraidos.itens || [], relatorio_socios: retiradasSocios.length > 0 ? retiradasSocios : "Limpo", conciliacoes: conciliacoes.length > 0 ? conciliacoes : "Nenhum cruzamento exato encontrado." };
+    const resumo: any = { status: `Auditoria Concluída`, dadosExtraidos, itens: dadosExtraidos.itens || [], relatorio_socios: retiradasSocios.length > 0 ? retiradasSocios : "Limpo", conciliacoes: conciliacoes.length > 0 ? conciliacoes : "Nenhuma conciliação bancária direta." };
 
     const { data: sessao, error } = await supabase.from('auditoria_sessoes').insert([{ tipo_arquivo: tipoArquivo, periodo_ref: periodoRef, resumo, divergencias }]).select().single();
     if (error) throw error;
