@@ -36,18 +36,16 @@ export default function ConciliacaoPage() {
   const [autoDetectado, setAutoDetectado] = useState(false);
   const [filtroMes, setFiltroMes] = useState(getMesAtual);
   const [selecionados, setSelecionados] = useState<string[]>([]);
-  
-  // Estado para controlar as linhas expandidas (Acordeão)
-  const [linhasExpandidas, setLinhasExpandidas] = useState<string[]>([]);
+  const [sessaoDetalhe, setSessaoDetalhe] = useState<SessaoAuditoria | null>(null);
 
   async function carregarHistorico() {
     setLoading(true);
-    let query = supabase.from('auditoria_sessoes').select('*').order('periodo_ref', { ascending: false }).order('created_at', { ascending: false }); 
+    let query = supabase.from('auditoria_sessoes').select('*').order('periodo_ref', { ascending: false }); 
     if (filtroMes) query = query.eq('periodo_ref', filtroMes);
 
     const { data, error } = await query;
     if (error) alert("Erro ao puxar histórico: " + error.message);
-    else if (data) setHistorico(data);
+    else if (data) setHistorico([...data].sort((a, b) => b.id.localeCompare(a.id)));
     setLoading(false);
   }
 
@@ -77,12 +75,14 @@ export default function ConciliacaoPage() {
     return [];
   };
 
+  // 🛡️ A INSERÇÃO DE DIRETOR FINANCEIRO + FILTRO UNIFICADOR DE MARCAS
   const processarInsercaoGlobal = async (dadosLidos: any, mesRef: string, arquivoNome: string, tipoArquivo: string, dataFaturaDoc = '') => {
     const itens = extrairListaItens(dadosLidos);
     if (!itens || itens.length === 0) return { inseridos: 0, duplicados: 0 };
 
     let totalInseridos = 0, totalDuplicados = 0;
     
+    // FILTRO UNIFICADOR DE MARCAS
     const normalizarFornecedor = (nome: string) => {
       if (!nome) return 'Fornecedor Diversos';
       const n = nome.toUpperCase();
@@ -131,6 +131,7 @@ export default function ConciliacaoPage() {
         continue;
       }
 
+      // 🎯 PRIORIDADE MÁXIMA PARA A CATEGORIZAÇÃO GLOVO/META DA I.A.
       let catItem = categoriaAutomatica;
       if (item.categoria_sugerida && item.categoria_sugerida !== "") {
         catItem = item.categoria_sugerida;
@@ -247,17 +248,8 @@ export default function ConciliacaoPage() {
     } catch (err: any) { alert(`Erro: ${err.message}`); } finally { setProcessando(false); setProgresso({ atual: 0, total: 0 }); setStatusTexto('A extrair itens...'); }
   };
 
-  const apagarSessaoIndividual = async (id: string, e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    if (!confirm('Tem a certeza que deseja eliminar este documento do histórico?')) return;
-    await supabase.from('auditoria_sessoes').delete().eq('id', id);
-    setHistorico(prev => prev.filter(item => item.id !== id));
-    setSelecionados(prev => prev.filter(itemId => itemId !== id));
-  };
-
   const toggleSelecionado = (id: string) => { setSelecionados(prev => prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]); };
   const toggleTodos = () => { setSelecionados(selecionados.length === historico.length ? [] : historico.map(h => h.id)); };
-  
   const apagarSelecionados = async () => {
     if (selecionados.length === 0) return;
     if (!confirm(`Deseja eliminar ${selecionados.length} documento(s)?`)) return;
@@ -265,123 +257,65 @@ export default function ConciliacaoPage() {
     setHistorico(prev => prev.filter(item => !selecionados.includes(item.id))); setSelecionados([]);
   };
 
-  const toggleExpand = (id: string) => {
-    setLinhasExpandidas(prev => prev.includes(id) ? prev.filter(rowId => rowId !== id) : [...prev, id]);
-  };
-
   return (
-    <div className="p-8 font-sans max-w-7xl mx-auto relative bg-[#09090b] min-h-screen text-zinc-300">
+    <div className="p-8 font-sans max-w-7xl mx-auto relative">
       <div className="mb-8 border-b border-zinc-800 pb-4">
         <h1 className="text-3xl font-bold text-orange-500 flex items-center gap-3">
-          Conciliador Inteligente
+          Conciliador Inteligente <span className="bg-orange-500 text-white text-xs px-2 py-1 rounded-full">v13 Unificador</span>
         </h1>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-1 space-y-6">
-          <div className="bg-[#121214] border border-zinc-800/50 p-6 rounded-xl">
-            <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-wider mb-4">Anexar Lote</h3>
-            <div className="border border-dashed border-zinc-700 hover:border-orange-500 bg-[#09090b] rounded-lg p-8 text-center relative mb-4">
+          <div className="bg-zinc-900 border border-zinc-800 p-6 rounded-2xl shadow-xl">
+            <h3 className="text-sm font-bold text-zinc-300 uppercase tracking-wider mb-4">Anexar Lote</h3>
+            <div className="border-2 border-dashed border-zinc-700 hover:border-orange-500 bg-zinc-950 rounded-xl p-8 text-center relative mb-4">
               <input type="file" multiple onChange={handleFileChange} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" accept=".pdf,.png,.jpg,.jpeg,.csv" />
               <div className="text-4xl mb-2">📂</div>
-              {files.length > 0 ? (<p className="text-sm font-bold text-green-500">{files.length} ficheiro(s)</p>) : (<p className="text-xs text-zinc-500 font-medium">Escolher ficheiros</p>)}
+              {files.length > 0 ? (<p className="text-sm font-bold text-green-500">{files.length} ficheiro(s)</p>) : (<p className="text-sm font-bold text-zinc-300">Escolher ficheiros</p>)}
             </div>
-            <button onClick={iniciarAuditoria} disabled={processando || files.length === 0} className="w-full py-3 rounded-lg text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white transition-all disabled:opacity-50">Ler Faturas & Extrair</button>
+            <button onClick={iniciarAuditoria} disabled={processando || files.length === 0} className="w-full py-3 rounded-xl text-sm font-bold bg-purple-600 hover:bg-purple-700 text-white transition-all disabled:opacity-50 shadow-[0_0_15px_rgba(147,51,234,0.3)]">Ler Faturas & Extrair Dados 🚀</button>
           </div>
         </div>
 
         <div className="lg:col-span-2">
-          <div className="bg-[#121214] border border-zinc-800/50 rounded-xl flex flex-col h-full min-h-[500px]">
-            <div className="p-4 border-b border-zinc-800/50 flex justify-between items-center">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl shadow-xl flex flex-col h-full min-h-[500px]">
+            <div className="p-5 border-b border-zinc-800 bg-zinc-900/80 flex justify-between items-center">
               <div className="flex items-center gap-4">
-                <input type="checkbox" checked={selecionados.length === historico.length && historico.length > 0} onChange={toggleTodos} className="w-4 h-4 rounded bg-zinc-900 border-zinc-700 accent-blue-500" />
+                <h3 className="text-sm font-bold text-zinc-300 uppercase">🗄️ Histórico de Faturas</h3>
                 {selecionados.length > 0 && (
                   <div className="flex gap-2">
-                    <button onClick={reprocessarParaDespesas} className="text-blue-400 hover:text-blue-300 text-xs font-bold transition-all">Reprocessar ({selecionados.length})</button>
-                    <button onClick={apagarSelecionados} className="text-red-500 hover:text-red-400 text-xs font-bold transition-all">Eliminar</button>
+                    <button onClick={reprocessarParaDespesas} className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-md transition-all">💸 Enviar Rascunhos ({selecionados.length})</button>
+                    <button onClick={apagarSelecionados} className="bg-red-950 border border-red-900 text-red-400 text-xs font-bold px-3 py-1.5 rounded-lg hover:bg-red-900 hover:text-white transition-all">🗑️ Eliminar</button>
                   </div>
                 )}
               </div>
-              <input type="month" value={filtroMes} onChange={(e) => setFiltroMes(e.target.value)} className="bg-[#09090b] px-3 py-1.5 border border-zinc-800 rounded text-xs text-zinc-400 outline-none" />
+              <input type="month" value={filtroMes} onChange={(e) => setFiltroMes(e.target.value)} className="bg-zinc-950 px-3 py-1.5 border border-zinc-700 rounded-lg text-sm text-white" />
             </div>
             
-            <div className="flex-1 overflow-y-auto">
-              {loading ? (<div className="text-center text-zinc-600 text-xs py-10">A carregar...</div>) : historico.length === 0 ? (<div className="text-center text-zinc-600 text-xs py-10">Nenhum documento.</div>) : (
-                <div className="flex flex-col">
+            <div className="p-5 flex-1 overflow-y-auto bg-zinc-950/30">
+              {loading ? (<div className="text-center text-zinc-500">A carregar...</div>) : historico.length === 0 ? (<div className="text-center text-zinc-600 py-10">Nenhum documento.</div>) : (
+                <div className="space-y-3">
+                  <div className="flex items-center px-4 py-2 border-b border-zinc-800 mb-2">
+                     <input type="checkbox" checked={selecionados.length === historico.length && historico.length > 0} onChange={toggleTodos} className="w-4 h-4 rounded border-zinc-700 bg-zinc-950 accent-orange-500 cursor-pointer" />
+                     <span className="text-xs text-zinc-500 font-bold uppercase ml-3">Selecionar Todos</span>
+                  </div>
                   {historico.map((sessao) => {
                     const dados = sessao.resumo || {};
                     const dadosExtraidos = dados.dadosExtraidos || dados;
                     const listaItens = extrairListaItens(dadosExtraidos);
-                    const nomeFicheiro = dados.fileName || dados.nome_arquivo || dadosExtraidos.fornecedor || 'Doc. Extraído';
-                    
-                    const fornecedor = dadosExtraidos?.fornecedor || 'FORNECEDOR DIVERSO';
-                    const dataFatura = dadosExtraidos?.data || sessao.created_at?.split('T')[0] || 'S/Data';
-                    
-                    const isExpanded = linhasExpandidas.includes(sessao.id);
+                    const nomeFicheiro = dados.fileName || dados.nome_arquivo || 'Fatura';
+                    const fornecedor = dadosExtraidos?.fornecedor || 'Desconhecido';
+                    const nif = dadosExtraidos?.nif_fornecedor ? ` (NIF: ${dadosExtraidos.nif_fornecedor})` : '';
+                    const valorTotal = Number(dadosExtraidos?.valorTotal || 0).toFixed(2);
 
                     return (
-                      <div key={sessao.id} className="flex flex-col border-b border-zinc-800/40">
-                        {/* Linha Principal */}
-                        <div className="flex items-center p-3 hover:bg-[#18181b] transition-colors gap-4">
-                          <input type="checkbox" checked={selecionados.includes(sessao.id)} onChange={() => toggleSelecionado(sessao.id)} className="w-4 h-4 rounded bg-zinc-900 border-zinc-700 accent-blue-500 ml-1" />
-                          
-                          <button onClick={() => toggleExpand(sessao.id)} className="w-6 h-6 rounded flex items-center justify-center bg-[#1e293b] text-blue-400 hover:bg-[#334155] transition-colors flex-shrink-0">
-                            {isExpanded ? '▼' : '▶'}
-                          </button>
-                          
-                          <div className="w-24 text-xs text-zinc-400 font-mono tracking-tighter flex-shrink-0">
-                            {dataFatura}
-                          </div>
-                          
-                          <div className="flex-1 text-xs font-black text-white uppercase truncate pr-4">
-                            {fornecedor}
-                          </div>
-                          
-                          <div className="w-64 flex flex-col items-start flex-shrink-0">
-                            <span className="text-xs font-bold text-blue-500 truncate w-full">{nomeFicheiro}</span>
-                            <span className="text-[10px] text-zinc-500">{listaItens.length} itens extraídos</span>
-                          </div>
-
-                          <button onClick={(e) => apagarSessaoIndividual(sessao.id, e)} className="w-8 h-8 rounded flex items-center justify-center text-zinc-600 hover:text-red-500 hover:bg-red-500/10 transition-colors flex-shrink-0">
-                            🗑️
-                          </button>
+                      <div key={sessao.id} onClick={() => setSessaoDetalhe(sessao)} className={`bg-zinc-900 border p-4 rounded-xl flex items-center cursor-pointer transition-all hover:bg-zinc-800/50 ${selecionados.includes(sessao.id) ? 'border-orange-500 bg-orange-950/20' : 'border-zinc-700'}`}>
+                        <input type="checkbox" checked={selecionados.includes(sessao.id)} onChange={() => toggleSelecionado(sessao.id)} onClick={(e)=>e.stopPropagation()} className="w-5 h-5 mr-4 accent-orange-500 cursor-pointer" />
+                        <div className="flex-1">
+                          <h4 className="text-sm font-bold text-white">🧾 {nomeFicheiro}</h4>
+                          <p className="text-xs text-zinc-400 mt-1">{fornecedor}{nif} | <span className="text-zinc-200 font-bold">{valorTotal}€</span> | ✓ {listaItens.length} itens lidos</p>
                         </div>
-
-                        {/* Itens Expandidos (Acordeão) */}
-                        {isExpanded && (
-                          <div className="bg-[#09090b] flex flex-col py-1 border-t border-zinc-800/30">
-                            {listaItens.length === 0 ? (
-                              <div className="pl-24 py-2 text-[10px] text-zinc-600">Sem itens detalhados.</div>
-                            ) : (
-                              listaItens.map((item: any, idx: number) => {
-                                const qtd = item.quantidade || item.qtd || 1;
-                                const unid = item.unidade || 'un';
-                                const nomeItem = item.nome_extraido || item.nome || item.descricao || 'Item desconhecido';
-                                const categoria = item.categoria_sugerida || 'POR CLASSIFICAR';
-                                
-                                return (
-                                  <div key={idx} className="flex items-center p-2 pl-12 hover:bg-[#121214] gap-3">
-                                    <input type="checkbox" disabled className="w-3.5 h-3.5 rounded bg-zinc-900 border-zinc-800 opacity-30" />
-                                    <span className="text-zinc-600 font-mono text-sm ml-2">↳</span>
-                                    <div className="flex-1 text-xs text-zinc-300 truncate">
-                                      <span className="text-zinc-500 mr-2">[{qtd} {unid}]</span>
-                                      {nomeItem}
-                                    </div>
-                                    <div className="flex-shrink-0 mr-12">
-                                      <span className={`text-[9px] font-bold px-2 py-0.5 rounded border tracking-wider uppercase flex items-center gap-1
-                                        ${categoria === 'POR CLASSIFICAR' 
-                                          ? 'text-amber-500 bg-amber-500/10 border-amber-500/20' 
-                                          : 'text-blue-400 bg-blue-500/10 border-blue-500/20'}`}>
-                                        {categoria === 'POR CLASSIFICAR' && '⚠️ '}
-                                        {categoria}
-                                      </span>
-                                    </div>
-                                  </div>
-                                )
-                              })
-                            )}
-                          </div>
-                        )}
                       </div>
                     );
                   })}
@@ -392,11 +326,50 @@ export default function ConciliacaoPage() {
         </div>
       </div>
 
+      {sessaoDetalhe && (
+        <div className="fixed inset-0 bg-black/80 z-[120] flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-zinc-900 w-full max-w-2xl rounded-3xl p-6 shadow-2xl flex flex-col max-h-[85vh] border border-zinc-800">
+            <div className="flex justify-between items-start border-b border-zinc-800 pb-4 mb-4">
+              <h3 className="text-xl font-black text-white">Detalhes do Extrato / Fatura</h3>
+              <button onClick={() => setSessaoDetalhe(null)} className="bg-zinc-800 hover:bg-zinc-700 text-white w-8 h-8 rounded-full font-bold transition-colors">✕</button>
+            </div>
+            <div className="flex-1 overflow-y-auto space-y-4 custom-scrollbar pr-2">
+              <h4 className="text-xs font-bold text-zinc-400 uppercase tracking-widest">Itens Desmembrados (CFO)</h4>
+              {(() => {
+                const dados = sessaoDetalhe.resumo || {};
+                const dadosExtraidos = dados.dadosExtraidos || dados;
+                const listaItens = extrairListaItens(dadosExtraidos);
+                if (listaItens.length === 0) return <p className="text-zinc-500 text-sm py-4">Nenhum item detalhado.</p>;
+                return (
+                  <div className="space-y-2">
+                    {listaItens.map((item: any, idx: number) => (
+                      <div key={idx} className="bg-zinc-950 border border-zinc-800 p-3 rounded-xl flex justify-between items-center hover:border-zinc-700 transition-colors">
+                        <div>
+                          <h4 className="text-sm font-bold text-zinc-200">{item.nome_extraido || item.nome || 'Item Descrito'}</h4>
+                          <div className="flex items-center gap-2 mt-1">
+                             <span className="text-[10px] text-zinc-500">Qtd: {item.quantidade || 1} {item.unidade || 'un'}</span>
+                             {item.categoria_sugerida && (
+                               <span className="text-[9px] bg-purple-500/20 text-purple-400 px-1.5 py-0.5 rounded border border-purple-500/30 uppercase tracking-wider">
+                                 {item.categoria_sugerida}
+                               </span>
+                             )}
+                          </div>
+                        </div>
+                        <span className="text-sm font-black text-orange-400">{(Number(item.valor_total || item.valor || 0)).toFixed(2)}€</span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
       {processando && (
         <div className="fixed inset-0 bg-black/90 z-[120] flex flex-col items-center justify-center backdrop-blur-sm">
-           <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-6"></div>
-           <h2 className="text-sm font-bold text-white tracking-widest uppercase">{statusTexto}</h2>
-           <p className="text-[10px] text-zinc-500 mt-2 font-mono">Processo {progresso.atual}/{progresso.total}</p>
+           <div className="w-16 h-16 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mb-6 shadow-[0_0_20px_rgba(249,115,22,0.5)]"></div>
+           <h2 className="text-xl font-bold text-white tracking-wider">{statusTexto}</h2>
+           <p className="text-xs text-zinc-500 mt-2 font-mono">Processo nº {progresso.atual} / {progresso.total}</p>
         </div>
       )}
     </div>
