@@ -36,8 +36,8 @@ export async function POST(req: Request) {
     if (!geminiKey) throw new Error("Chave de API não configurada no servidor.");
 
     const genAI = new GoogleGenerativeAI(geminiKey);
-    // 🎯 MODELO OFICIAL ATUALIZADO (GEMINI 2.0 FLASH)
-    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    // 🎯 UTILIZANDO O MODELO INDICADO PELA API DA GOOGLE
+    const model = genAI.getGenerativeModel({ model: "gemini-3.6-flash" });
 
     const promptContexto = `
       És um auditor financeiro e Diretor Financeiro (CFO) em Portugal. Analisa este documento (tipo: ${tipoArquivo}).
