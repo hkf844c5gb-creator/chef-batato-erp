@@ -36,8 +36,7 @@ export async function POST(req: Request) {
     if (!geminiKey) throw new Error("Chave de API não configurada no servidor.");
 
     const genAI = new GoogleGenerativeAI(geminiKey);
-    
-    // 🎯 A ÚNICA ALTERAÇÃO: UTILIZAR O MODELO ATUALIZADO PARA EVITAR O ERRO 404
+    // 🎯 MODELO CORRIGIDO AQUI PARA LER A FATURA:
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
 
     // 🧠 CÉREBRO ATUALIZADO: SEPARAÇÃO ESTRITA DE MARKETING (GLOVO vs META)
