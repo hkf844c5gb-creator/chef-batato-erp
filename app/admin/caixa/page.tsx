@@ -1,367 +1,352 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createBrowserClient } from '@supabase/ssr';
+import { createClient } from '@supabase/supabase-js';
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 interface MovimentoCaixa {
   id: string;
-  created_at: string;
-  data_dia: string;
-  tipo: 'Abertura' | 'Entrada' | 'Saida' | 'Fechamento';
+  tipo: string; 
   descricao: string;
   valor: number;
-  isAutomatico?: boolean; 
-  isFromPDV?: boolean; 
+  metodo_pagamento: string;
+  data_movimento: string;
+  pedido_id?: string;
+  created_at?: string;
 }
 
-const getHojeLisboa = () => {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Lisbon' }).format(new Date());
-};
-
-const extrairDataEstatica = (dataIso: string) => {
-  if (!dataIso) return '';
-  return dataIso.substring(0, 10);
-};
-
-export default function GestaoCaixa() {
-  const supabase = createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
-
+export default function CaixaPage() {
   const [movimentos, setMovimentos] = useState<MovimentoCaixa[]>([]);
   const [loading, setLoading] = useState(true);
-  
-  const [dataFiltro, setDataFiltro] = useState(getHojeLisboa());
-
-  const [modalAberto, setModalAberto] = useState(false);
-  const [tipoModal, setTipoModal] = useState<'Abertura' | 'Entrada' | 'Saida' | 'Fechamento' | null>(null);
-  const [idEditando, setIdEditando] = useState<string | null>(null);
-  
-  const [form, setForm] = useState({ valor: 0, descricao: '', subtipo: 'Pagamento' });
   const [processando, setProcessando] = useState(false);
+  
+  const getHoje = () => new Date().toISOString().split('T')[0];
+  const [dataFiltro, setDataFiltro] = useState(getHoje());
 
-  const obterDataEfetiva = (p: any) => {
-    if (p.data_pedido) return p.data_pedido;
-    return p.criado_em || '';
-  };
+  // Estado para controlo de Fecho Manual
+  const [caixaFechado, setCaixaFechado] = useState(false);
 
-  useEffect(() => {
-    const relogio = setInterval(() => {
-      const dataHoje = getHojeLisboa();
-      if (dataHoje !== dataFiltro) setDataFiltro(dataHoje); 
-    }, 60000); 
-    return () => clearInterval(relogio);
-  }, [dataFiltro]);
+  // Modal para Nova Entrada/Saída Manual
+  const [modalAberto, setModalAberto] = useState(false);
+  const [form, setForm] = useState({ tipo: 'Saída', descricao: '', valor: 0, metodo_pagamento: 'Dinheiro' });
 
   async function carregarCaixa() {
     setLoading(true);
-    try {
-      const { data: todosPedidos, error: pedidosError } = await supabase
-        .from('pedidos')
-        .select('id, numero_pedido, total_geral, criado_em, data_pedido, forma_pagamento, canal, pago');
+    
+    // 1. Carrega todos os Movimentos do dia
+    const { data, error } = await supabase
+      .from('caixa')
+      .select('*')
+      .eq('data_movimento', dataFiltro)
+      .order('created_at', { ascending: false });
 
-      if (pedidosError) throw pedidosError;
+    if (error) {
+      console.error(error);
+    } else if (data) {
+      setMovimentos(data);
+    }
 
-      let lastClosedBalance = 0;
-      let previousDayClosedSuccessfully = false;
+    // 2. Verifica se o caixa deste dia já foi Fechado Manualmente
+    const { data: fechoData } = await supabase
+      .from('caixa')
+      .select('id')
+      .eq('data_movimento', dataFiltro)
+      .eq('descricao', 'FECHO DE CAIXA MANUAL')
+      .limit(1);
 
-      // 1. Procurar a última Abertura antes da data selecionada
-      const { data: ultimaAbertura } = await supabase
-        .from('caixa').select('data_dia').eq('tipo', 'Abertura').lt('data_dia', dataFiltro)
-        .order('data_dia', { ascending: false }).limit(1);
-
-      if (ultimaAbertura && ultimaAbertura.length > 0) {
-        const dataAntigaEsquecida = ultimaAbertura[0].data_dia;
-        
-        const { data: fechoAntigo } = await supabase
-          .from('caixa').select('valor').eq('data_dia', dataAntigaEsquecida).eq('tipo', 'Fechamento');
-
-        if (fechoAntigo && fechoAntigo.length > 0) {
-          // O dia anterior já estava fechado, memorizamos o valor exato
-          lastClosedBalance = Number(fechoAntigo[0].valor);
-          previousDayClosedSuccessfully = true;
-        } else {
-          // O dia anterior não foi fechado. Calculamos a matemática perfeita em memória.
-          const { data: movsAntigos } = await supabase.from('caixa').select('tipo, valor').eq('data_dia', dataAntigaEsquecida);
-          
-          let abAnt = 0, entAnt = 0, saiAnt = 0;
-          (movsAntigos || []).forEach(m => {
-            if (m.tipo === 'Abertura') abAnt += Number(m.valor);
-            else if (m.tipo === 'Entrada') entAnt += Number(m.valor);
-            else if (m.tipo === 'Saida') saiAnt += Number(m.valor);
-          });
-
-          let vendasAnt = 0;
-          (todosPedidos || []).forEach(p => {
-             const dStr = extrairDataEstatica(obterDataEfetiva(p));
-             if (dStr === dataAntigaEsquecida && p.pago === true && (p.forma_pagamento === 'Dinheiro' || p.forma_pagamento === 'Dinheiro Glovo')) {
-                vendasAnt += Number(p.total_geral);
-             }
-          });
-          
-          lastClosedBalance = abAnt + entAnt + vendasAnt - saiAnt;
-          
-          // Insere o Fecho com o valor calculado
-          const { error: errFecho } = await supabase.from('caixa').insert([{
-             data_dia: dataAntigaEsquecida, tipo: 'Fechamento', descricao: 'Fecho Automático do Sistema (00:00 Lisboa)', valor: lastClosedBalance
-          }]);
-
-          if (!errFecho) {
-             previousDayClosedSuccessfully = true;
-          }
-        }
-      } else {
-        // Se não encontrou aberturas antigas, procura o último fecho perdido
-        const { data: ultimoFecho } = await supabase
-          .from('caixa').select('valor').eq('tipo', 'Fechamento').lt('data_dia', dataFiltro)
-          .order('data_dia', { ascending: false }).limit(1);
-
-        if (ultimoFecho && ultimoFecho.length > 0) {
-          lastClosedBalance = Number(ultimoFecho[0].valor);
-          previousDayClosedSuccessfully = true;
-        }
-      }
-
-      // 2. Tratar o dia de HOJE (dataFiltro)
-      let { data: caixaData, error: caixaError } = await supabase.from('caixa').select('*').eq('data_dia', dataFiltro);
-      if (caixaError) throw caixaError;
-
-      const temAberturaHoje = caixaData?.some(m => m.tipo === 'Abertura');
-      
-      if (!temAberturaHoje && previousDayClosedSuccessfully) {
-        // Usa ESTRITAMENTE o lastClosedBalance calculado em memória, anulando qualquer atraso do servidor!
-        const { error: erroInsert } = await supabase.from('caixa').insert([{
-          data_dia: dataFiltro, tipo: 'Abertura', descricao: 'Fundo de Maneio (Abertura Automática às 00:01)', valor: lastClosedBalance
-        }]);
-
-        if (!erroInsert) {
-          const { data: novoCaixaData } = await supabase.from('caixa').select('*').eq('data_dia', dataFiltro);
-          caixaData = novoCaixaData;
-        }
-      }
-
-      // 3. Renderizar a lista rigorosa do dia
-      const pedidosValidos = (todosPedidos || []).filter(p => {
-        const dataPedidoStr = extrairDataEstatica(obterDataEfetiva(p));
-        return dataPedidoStr === dataFiltro && p.pago === true && (p.forma_pagamento === 'Dinheiro' || p.forma_pagamento === 'Dinheiro Glovo');
-      });
-
-      const movimentosManuais: MovimentoCaixa[] = (caixaData || []).map(m => ({
-        id: m.id, created_at: m.created_at, data_dia: m.data_dia, tipo: m.tipo, descricao: m.descricao, valor: Number(m.valor),
-        isAutomatico: m.descricao.includes('Abertura Automática') || m.descricao.includes('Fecho Automático'), isFromPDV: false
-      }));
-
-      const movimentosPDV: MovimentoCaixa[] = pedidosValidos.map(p => ({
-        id: p.id, created_at: p.criado_em, data_dia: dataFiltro, tipo: 'Entrada', 
-        descricao: `Venda PDV #${p.numero_pedido || 'S/N'} (${p.canal}) - ${p.forma_pagamento}`,
-        valor: Number(p.total_geral), isAutomatico: true, isFromPDV: true
-      }));
-
-      const todosMovimentos = [...movimentosManuais, ...movimentosPDV];
-      todosMovimentos.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-
-      setMovimentos(todosMovimentos);
-    } catch (err) { console.error("Erro ao carregar caixa:", err); } finally { setLoading(false); }
+    setCaixaFechado(fechoData && fechoData.length > 0 ? true : false);
+    setLoading(false);
   }
 
-  useEffect(() => { carregarCaixa(); }, [dataFiltro]);
+  useEffect(() => {
+    carregarCaixa();
+  }, [dataFiltro]);
 
-  const temAbertura = movimentos.some(m => m.tipo === 'Abertura');
-  const temFechamento = movimentos.some(m => m.tipo === 'Fechamento');
-  const caixaAberto = temAbertura && !temFechamento;
+  // 🛡️ CRUZAMENTO DE DADOS: VERIFICA PEDIDOS vs CAIXA
+  const sincronizarAuditoria = async () => {
+    if (caixaFechado) return alert("O caixa deste dia já foi fechado. Não é possível alterar movimentos.");
+    
+    setProcessando(true);
+    try {
+      // 1. Puxa todos os pedidos em Dinheiro do dia selecionado
+      const inicioDia = `${dataFiltro}T00:00:00.000Z`;
+      const fimDia = `${dataFiltro}T23:59:59.999Z`;
 
-  const totalEntradas = movimentos.filter(m => m.tipo === 'Entrada').reduce((acc, m) => acc + Number(m.valor), 0);
-  const totalSaidas = movimentos.filter(m => m.tipo === 'Saida').reduce((acc, m) => acc + Number(m.valor), 0);
-  const valorAbertura = movimentos.find(m => m.tipo === 'Abertura')?.valor || 0;
-  const saldoAtual = Number(valorAbertura) + totalEntradas - totalSaidas;
+      const { data: pedidos } = await supabase
+        .from('pedidos')
+        .select('*')
+        .gte('created_at', inicioDia)
+        .lte('created_at', fimDia)
+        .in('metodo_pagamento', ['Dinheiro', 'Dinheiro Glovo']);
 
-  const abrirModal = (tipo: 'Abertura' | 'Entrada' | 'Saida' | 'Fechamento', movEdit?: MovimentoCaixa) => {
-    setTipoModal(tipo);
-    setIdEditando(movEdit ? movEdit.id : null);
-    if (movEdit) {
-      let desc = movEdit.descricao;
-      let subtipo = tipo === 'Saida' ? 'Pagamento' : 'Levantamento Banco';
-      if (desc.startsWith('[')) {
-        const match = desc.match(/^\[(.*?)\]\s*(.*)$/);
-        if (match) { subtipo = match[1]; desc = match[2]; }
+      let inseridos = 0;
+
+      if (pedidos && pedidos.length > 0) {
+        for (const ped of pedidos) {
+          // Ignorar pedidos cancelados
+          if (ped.status === 'Cancelado') continue;
+
+          // 2. Verifica se o pedido JÁ ESTÁ no caixa (Cruza o ID)
+          const jaRegistado = movimentos.some(m => 
+             m.pedido_id === ped.id || 
+             m.descricao.includes(ped.id.substring(0, 6))
+          );
+
+          // 3. Se NÃO estiver, regista-o agora como Entrada (MANTENDO TUDO O RESTO)
+          if (!jaRegistado) {
+            await supabase.from('caixa').insert([{
+              tipo: 'Entrada',
+              descricao: `Pedido #${ped.id.substring(0, 6)} - ${ped.cliente_nome || 'Balcão'}`,
+              valor: ped.total,
+              metodo_pagamento: ped.metodo_pagamento,
+              data_movimento: dataFiltro,
+              pedido_id: ped.id
+            }]);
+            inseridos++;
+          }
+        }
       }
-      setForm({ valor: movEdit.valor, descricao: desc, subtipo });
-    } else {
-      if (tipo === 'Abertura') setForm({ valor: 0, descricao: 'Fundo de Maneio Inicial', subtipo: '' });
-      else if (tipo === 'Fechamento') setForm({ valor: saldoAtual, descricao: 'Fecho do Dia', subtipo: '' });
-      else if (tipo === 'Entrada') setForm({ valor: 0, descricao: '', subtipo: 'Levantamento Banco' });
-      else setForm({ valor: 0, descricao: '', subtipo: 'Pagamento' });
+
+      alert(`✅ Conferência Concluída!\n\n${inseridos} pedidos em dinheiro que faltavam foram adicionados ao Caixa.\nAs suas saídas e pagamentos antigos foram mantidos intactos.`);
+      carregarCaixa();
+    } catch (error: any) {
+      alert("Erro na auditoria: " + error.message);
+    } finally {
+      setProcessando(false);
     }
-    setModalAberto(true);
   };
 
-  const excluirMovimento = async (id: string) => {
-    if (!confirm('Tem a certeza que deseja excluir este movimento definitivamente?')) return;
+  // 🔒 FECHO MANUAL DO CAIXA
+  const fecharCaixaManual = async () => {
+    if (caixaFechado) return;
+    if (!confirm('Tem a certeza que conferiu tudo e deseja FECHAR o caixa de hoje? Nenhum movimento poderá ser adicionado depois.')) return;
+
     setProcessando(true);
-    try {
-      const { error } = await supabase.from('caixa').delete().eq('id', id);
-      if (error) throw error;
+    // Insere um registo "fantasma" que tranca o dia
+    const { error } = await supabase.from('caixa').insert([{
+      tipo: 'Fecho',
+      descricao: 'FECHO DE CAIXA MANUAL',
+      valor: saldoFinal,
+      metodo_pagamento: 'Sistema',
+      data_movimento: dataFiltro
+    }]);
+
+    if (!error) {
+      alert('🔒 Caixa Fechado com sucesso!');
+      setCaixaFechado(true);
       carregarCaixa();
-    } catch (err: any) { alert('Erro ao excluir: ' + err.message); } finally { setProcessando(false); }
+    }
+    setProcessando(false);
   };
 
-  const registarMovimento = async (e: React.FormEvent) => {
+  // ➕ NOVA ENTRADA / SAÍDA MANUAL
+  const salvarMovimentoManual = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!tipoModal) return;
-    if (form.valor < 0) return alert('O valor não pode ser negativo.');
-    if (tipoModal !== 'Fechamento' && form.valor === 0 && tipoModal !== 'Abertura') return alert('Insira um valor maior que zero.');
-
+    if (caixaFechado) return alert("O Caixa já foi fechado hoje!");
+    
     setProcessando(true);
-    try {
-      let descFinal = form.descricao;
-      if (tipoModal === 'Saida' || tipoModal === 'Entrada') { descFinal = `[${form.subtipo}] ${form.descricao}`; }
+    const { error } = await supabase.from('caixa').insert([{
+      tipo: form.tipo,
+      descricao: form.descricao,
+      valor: form.valor,
+      metodo_pagamento: form.metodo_pagamento,
+      data_movimento: dataFiltro
+    }]);
 
-      const payload = { data_dia: dataFiltro, tipo: tipoModal, descricao: descFinal, valor: form.valor };
-
-      if (idEditando) {
-        const { error } = await supabase.from('caixa').update(payload).eq('id', idEditando);
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.from('caixa').insert([payload]);
-        if (error) throw error;
-      }
+    if (error) {
+      alert("Erro: " + error.message);
+    } else {
       setModalAberto(false);
+      setForm({ tipo: 'Saída', descricao: '', valor: 0, metodo_pagamento: 'Dinheiro' });
       carregarCaixa();
-    } catch (error: any) { alert('Erro ao registar movimento: ' + error.message); } finally { setProcessando(false); }
+    }
+    setProcessando(false);
   };
 
-  if (loading && movimentos.length === 0) return <div className="min-h-screen bg-zinc-950 flex items-center justify-center text-zinc-500 font-bold uppercase tracking-widest text-xs">A Abrir Gaveta...</div>;
+  // 🗑️ APAGAR MOVIMENTO
+  const apagarMovimento = async (id: string) => {
+    if (caixaFechado) return alert("Não pode alterar registos de um caixa fechado.");
+    if (!confirm("Tem a certeza que deseja remover este registo?")) return;
+    await supabase.from('caixa').delete().eq('id', id);
+    carregarCaixa();
+  };
+
+  // 📊 CÁLCULOS DO CAIXA
+  const movimentosReais = movimentos.filter(m => m.tipo !== 'Fecho');
+  const entradas = movimentosReais.filter(m => m.tipo === 'Entrada').reduce((acc, m) => acc + Number(m.valor), 0);
+  const saidas = movimentosReais.filter(m => m.tipo === 'Saída').reduce((acc, m) => acc + Number(m.valor), 0);
+  const saldoFinal = entradas - saidas;
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white font-sans flex flex-col pb-24 selection:bg-orange-500/30">
-      <header className="sticky top-0 z-20 bg-zinc-950/80 backdrop-blur-xl border-b border-zinc-800/60 px-5 py-5 flex justify-between items-center transition-all">
+    <div className="p-8 font-sans max-w-7xl mx-auto relative min-h-screen">
+      
+      {/* CABEÇALHO */}
+      <div className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-zinc-800 pb-4">
+        <h1 className="text-3xl font-black text-white flex items-center gap-3 tracking-tight">
+          Gestão de Caixa <span className="text-xl">💰</span>
+          {caixaFechado && <span className="bg-red-500/20 text-red-500 text-xs px-3 py-1 rounded-full border border-red-500/30 uppercase tracking-widest ml-2">Fechado</span>}
+        </h1>
         <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 to-green-700 flex items-center justify-center shadow-lg shadow-green-900/40 text-2xl">💶</div>
-          <div><h1 className="text-2xl font-black text-white tracking-tight">Frente de Caixa</h1><p className="text-[11px] text-zinc-400 font-bold uppercase tracking-widest mt-0.5">Controlo de Dinheiro Físico</p></div>
+          <input 
+            type="date" 
+            value={dataFiltro} 
+            onChange={(e) => setDataFiltro(e.target.value)} 
+            className="bg-zinc-900 border border-zinc-800 text-zinc-300 px-4 py-2.5 rounded-xl text-sm outline-none focus:border-orange-500 shadow-xl font-medium" 
+          />
         </div>
-        <input type="date" max="9999-12-31" value={dataFiltro} onChange={(e) => { if (e.target.value) setDataFiltro(e.target.value); }} className="bg-zinc-900 border border-zinc-800 text-white px-4 py-2.5 rounded-xl text-sm font-bold outline-none focus:border-green-500 shadow-lg w-40" />
-      </header>
+      </div>
 
-      <main className="flex-1 w-full max-w-[1200px] mx-auto p-5 md:p-8 space-y-8">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className={`p-6 rounded-[32px] shadow-xl flex flex-col justify-center border ${caixaAberto ? 'bg-gradient-to-br from-green-900/20 to-green-950/20 border-green-500/30' : 'bg-gradient-to-br from-red-900/20 to-red-950/20 border-red-500/30'}`}>
-            <span className={`text-[10px] font-bold uppercase tracking-widest ${caixaAberto ? 'text-green-500' : 'text-red-500'}`}>Estado do Dia</span>
-            <div className="text-2xl font-black text-white mt-2 tracking-tight">{temFechamento ? '🔒 Fechado' : caixaAberto ? '🟢 Aberto' : '⚪ Não Iniciado'}</div>
-          </div>
-          <div className="bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-800/80 p-6 rounded-[32px] shadow-xl flex flex-col justify-center md:col-span-1">
-            <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest">Saldo Atual na Gaveta</span>
-            <div className={`text-4xl font-black font-mono mt-2 tracking-tighter ${saldoAtual >= 0 ? 'text-white' : 'text-red-500'}`}>{saldoAtual.toFixed(2)}<span className="text-2xl ml-1 text-zinc-500">€</span></div>
-          </div>
-          <div className="bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-800/80 p-6 rounded-[32px] shadow-xl flex flex-col justify-center">
-            <span className="text-[10px] font-bold text-green-500/80 uppercase tracking-widest">Entradas (Vendas + Reforços)</span>
-            <div className="text-2xl font-black text-green-400 font-mono mt-2 tracking-tighter">+ {totalEntradas.toFixed(2)}€</div>
-          </div>
-          <div className="bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-800/80 p-6 rounded-[32px] shadow-xl flex flex-col justify-center">
-            <span className="text-[10px] font-bold text-red-500/80 uppercase tracking-widest">Saídas (Despesas/Retiradas)</span>
-            <div className="text-2xl font-black text-red-400 font-mono mt-2 tracking-tighter">- {totalSaidas.toFixed(2)}€</div>
+      {/* BLOCOS DE ANÁLISE GRÁFICA */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div className="bg-[#121214] border border-zinc-800/80 p-6 rounded-[24px] shadow-xl flex flex-col justify-center">
+          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Entradas (Faturação)</span>
+          <div className="text-3xl font-black text-emerald-500 font-mono mt-2 tracking-tighter">
+            + {entradas.toFixed(2)}<span className="text-xl ml-1 text-zinc-600">€</span>
           </div>
         </div>
+        <div className="bg-[#121214] border border-zinc-800/80 p-6 rounded-[24px] shadow-xl flex flex-col justify-center">
+          <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Saídas (Despesas/Trocos)</span>
+          <div className="text-3xl font-black text-red-500 font-mono mt-2 tracking-tighter">
+            - {saidas.toFixed(2)}<span className="text-xl ml-1 text-zinc-600">€</span>
+          </div>
+        </div>
+        <div className="bg-zinc-900 border border-orange-500/30 p-6 rounded-[24px] shadow-[0_0_20px_rgba(249,115,22,0.1)] flex flex-col justify-center">
+          <span className="text-[10px] font-bold text-orange-400 uppercase tracking-widest">Saldo em Caixa (Gaveta)</span>
+          <div className="text-4xl font-black text-white font-mono mt-2 tracking-tighter">
+            {saldoFinal.toFixed(2)}<span className="text-2xl ml-1 text-zinc-500">€</span>
+          </div>
+        </div>
+      </div>
 
-        <div className="flex flex-wrap gap-4">
-          {!temAbertura && (<button onClick={() => abrirModal('Abertura')} className="bg-green-600 hover:bg-green-500 text-white px-6 py-3 rounded-xl text-sm font-black shadow-lg shadow-green-900/50 transition-transform active:scale-95 flex-1 md:flex-none">🔓 Abrir Caixa Manualmente</button>)}
-          {caixaAberto && (
-            <>
-              <button onClick={() => abrirModal('Entrada')} className="bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-500 hover:border-emerald-400 px-6 py-3 rounded-xl text-sm font-black shadow-lg transition-transform active:scale-95 flex-1 md:flex-none">+ Nova Entrada / Reforço</button>
-              <button onClick={() => abrirModal('Saida')} className="bg-zinc-800 hover:bg-zinc-700 text-red-400 border border-zinc-700 hover:border-red-500/50 px-6 py-3 rounded-xl text-sm font-black shadow-lg transition-transform active:scale-95 flex-1 md:flex-none">- Nova Saída / Retirada</button>
-              <button onClick={() => abrirModal('Fechamento')} className="bg-red-600 hover:bg-red-500 text-white px-6 py-3 rounded-xl text-sm font-black shadow-lg shadow-red-900/50 transition-transform active:scale-95 flex-1 md:flex-none md:ml-auto">🔒 Fechar Caixa</button>
-            </>
+      {/* BOTÕES DE AÇÃO DO DIRETOR */}
+      <div className="flex flex-wrap items-center gap-4 mb-8">
+        <button 
+          onClick={sincronizarAuditoria} 
+          disabled={caixaFechado || processando}
+          className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white text-sm font-bold px-6 py-3 rounded-xl transition-all shadow-lg flex items-center gap-2"
+        >
+          🔄 Auditar Pedidos (Cruzar Dados)
+        </button>
+        
+        <button 
+          onClick={() => setModalAberto(true)} 
+          disabled={caixaFechado}
+          className="bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 disabled:opacity-50 text-white text-sm font-bold px-6 py-3 rounded-xl transition-all flex items-center gap-2"
+        >
+          ➕ Entrada / Saída Manual
+        </button>
+
+        <div className="flex-1"></div>
+
+        <button 
+          onClick={fecharCaixaManual} 
+          disabled={caixaFechado || processando}
+          className="bg-red-950 border border-red-900 hover:bg-red-900 disabled:opacity-50 text-red-400 hover:text-white text-sm font-bold px-6 py-3 rounded-xl transition-all shadow-lg flex items-center gap-2"
+        >
+          🔒 Fechar Caixa
+        </button>
+      </div>
+
+      {/* LISTAGEM DE MOVIMENTOS */}
+      <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-[24px] overflow-hidden shadow-2xl">
+        <div className="p-5 border-b border-zinc-800/80 bg-zinc-950/40 flex justify-between items-center">
+          <h3 className="text-xs font-extrabold text-zinc-400 uppercase tracking-widest">Histórico de Movimentos</h3>
+        </div>
+        
+        <div className="p-4">
+          {loading ? (
+            <div className="text-center text-zinc-500 py-12 font-bold uppercase tracking-widest text-xs">A carregar caixa...</div>
+          ) : movimentosReais.length === 0 ? (
+            <div className="text-center text-zinc-600 py-12 italic text-sm">O caixa está vazio neste dia.</div>
+          ) : (
+            <div className="space-y-3">
+              {movimentosReais.map((mov) => (
+                <div key={mov.id} className="flex items-center justify-between p-4 bg-[#121214] border border-zinc-800/60 hover:border-zinc-700 rounded-2xl transition-all gap-4 shadow-sm">
+                  
+                  {/* Ícone Entrada/Saida */}
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg ${mov.tipo === 'Entrada' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
+                    {mov.tipo === 'Entrada' ? '↓' : '↑'}
+                  </div>
+
+                  <div className="flex-1 min-w-0 pr-4">
+                    <p className="text-sm font-bold text-zinc-200 line-clamp-1 leading-snug">
+                      {mov.descricao}
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2.5 mt-2">
+                      <span className={`text-[9px] px-2.5 py-0.5 rounded border uppercase tracking-wider font-bold ${mov.tipo === 'Entrada' ? 'border-emerald-500/30 text-emerald-400' : 'border-red-500/30 text-red-400'}`}>
+                        {mov.tipo}
+                      </span>
+                      <span className="text-[10px] text-zinc-400 font-mono bg-zinc-900 px-2 py-0.5 rounded border border-zinc-800">
+                        {mov.metodo_pagamento}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <div className="flex items-center gap-4 flex-shrink-0">
+                    <div className={`text-lg font-black font-mono tracking-tight ${mov.tipo === 'Entrada' ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {mov.tipo === 'Entrada' ? '+' : '-'}{Number(mov.valor).toFixed(2)}€
+                    </div>
+                    {!caixaFechado && (
+                      <button 
+                        onClick={() => apagarMovimento(mov.id)} 
+                        className="w-9 h-9 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-red-950 hover:border-red-900 flex items-center justify-center text-zinc-400 hover:text-red-400 transition-all shadow-sm" 
+                        title="Eliminar Movimento"
+                      >
+                        🗑️
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
         </div>
+      </div>
 
-        <div className="bg-zinc-900 border border-zinc-800 rounded-[24px] overflow-hidden">
-          <div className="p-5 border-b border-zinc-800/80 bg-zinc-950/50">
-            <h3 className="text-xs font-black uppercase text-zinc-400 tracking-widest">Movimentos do Dia (Horário de Lisboa)</h3>
-          </div>
-          <div className="p-2">
-            {movimentos.length === 0 ? (
-              <div className="p-8 text-center text-zinc-600 italic text-sm">Nenhum movimento registado neste dia.</div>
-            ) : (
-              <div className="space-y-1">
-                {movimentos.map((mov) => {
-                  let badgeCategoria = ''; let textoDescricao = mov.descricao;
-                  if (textoDescricao.startsWith('[')) { const match = textoDescricao.match(/^\[(.*?)\]\s*(.*)$/); if (match) { badgeCategoria = match[1]; textoDescricao = match[2]; } }
-                  const badgeCor = mov.tipo === 'Abertura' ? 'bg-green-950 text-green-400' : mov.tipo === 'Entrada' && !mov.isAutomatico ? 'bg-emerald-950 text-emerald-400 border border-emerald-500/30' : mov.isAutomatico ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' : mov.tipo === 'Saida' ? 'bg-red-950 text-red-400' : 'bg-zinc-700 text-zinc-300';
-                  const iconMov = mov.tipo === 'Abertura' ? '🔓' : mov.tipo === 'Entrada' && !mov.isAutomatico ? '💵' : mov.isAutomatico ? '🤖' : mov.tipo === 'Saida' ? '📉' : '🔒';
-
-                  return (
-                    <div key={mov.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 hover:bg-zinc-800/40 rounded-xl transition-colors gap-4">
-                      <div className="flex items-center gap-4 flex-1">
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg shadow-sm flex-shrink-0 ${badgeCor}`}>{iconMov}</div>
-                        <div>
-                          <p className="text-sm font-bold text-white flex flex-wrap items-center gap-2">
-                            {textoDescricao}
-                            {mov.isAutomatico && <span className="text-[9px] bg-orange-600 text-white px-1.5 py-0.5 rounded uppercase">Automático</span>}
-                            {badgeCategoria && (<span className={`text-[9px] border px-1.5 py-0.5 rounded uppercase ${mov.tipo === 'Entrada' ? 'border-emerald-500/30 text-emerald-400' : 'border-red-500/30 text-red-400'}`}>{badgeCategoria}</span>)}
-                          </p>
-                          <p className="text-[10px] text-zinc-500 font-mono mt-0.5">{new Date(mov.created_at).toLocaleTimeString('pt-PT', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Lisbon' })} • {mov.tipo}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-6 justify-end sm:justify-between w-full sm:w-auto pl-14 sm:pl-0">
-                        <div className={`text-base font-black font-mono whitespace-nowrap ${mov.tipo === 'Saida' ? 'text-red-400' : mov.tipo === 'Fechamento' ? 'text-zinc-500' : 'text-green-400'}`}>
-                          {mov.tipo === 'Saida' ? '-' : mov.tipo === 'Fechamento' ? '=' : '+'}{Number(mov.valor).toFixed(2)}€
-                        </div>
-                        {!mov.isFromPDV ? (
-                          <div className="flex gap-2">
-                            <button onClick={() => abrirModal(mov.tipo, mov)} className="w-8 h-8 rounded-lg bg-zinc-800/80 hover:bg-blue-600 flex items-center justify-center text-zinc-400 hover:text-white transition-colors" title="Editar">✏️</button>
-                            <button onClick={() => excluirMovimento(mov.id)} className="w-8 h-8 rounded-lg bg-zinc-800/80 hover:bg-red-600 flex items-center justify-center text-zinc-400 hover:text-white transition-colors" title="Excluir">🗑️</button>
-                          </div>
-                        ) : (<div className="w-16"></div>)}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      </main>
-
+      {/* MODAL DE ENTRADA / SAÍDA MANUAL */}
       {modalAberto && (
-        <div className="fixed inset-0 bg-zinc-950/80 backdrop-blur-md z-[60] flex flex-col justify-end md:justify-center items-center p-0 md:p-4 animate-in fade-in duration-200">
-          <div className="bg-zinc-900 w-full md:max-w-md rounded-t-[32px] md:rounded-[32px] flex flex-col overflow-hidden shadow-[0_-20px_50px_rgba(0,0,0,0.5)] border border-zinc-800 animate-in slide-in-from-bottom-10 duration-300">
-            <div className={`p-6 pb-4 flex justify-between items-center border-b border-zinc-800/80 ${tipoModal === 'Saida' || tipoModal === 'Fechamento' ? 'border-b-red-500/20' : 'border-b-green-500/20'}`}>
-              <h2 className="text-xl font-black text-white">{idEditando ? '✏️ Editar Movimento' : tipoModal === 'Abertura' ? '🔓 Abrir Caixa' : tipoModal === 'Entrada' ? '💵 Nova Entrada' : tipoModal === 'Saida' ? '📉 Nova Saída' : '🔒 Fechar Caixa'}</h2>
-              <button onClick={() => setModalAberto(false)} className="w-8 h-8 bg-zinc-800 rounded-full flex items-center justify-center text-zinc-400 font-bold hover:text-white">✕</button>
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex flex-col justify-center items-center p-4 animate-in fade-in duration-200">
+          <div className="bg-zinc-900 w-full max-w-lg rounded-[32px] flex flex-col overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.5)] border border-zinc-800">
+            <div className="p-6 pb-4 flex justify-between items-center border-b border-zinc-800 bg-zinc-950/50">
+              <h2 className="text-xl font-black text-white">💰 Registo de Caixa</h2>
+              <button onClick={() => setModalAberto(false)} className="w-8 h-8 bg-zinc-800 rounded-full flex items-center justify-center text-zinc-400 font-bold hover:text-white hover:bg-zinc-700 transition-colors">✕</button>
             </div>
             
-            <form onSubmit={registarMovimento} className="p-6 space-y-5">
-              {tipoModal === 'Fechamento' && !idEditando ? (
-                <div className="bg-orange-500/10 border border-orange-500/20 p-4 rounded-2xl mb-4 text-center">
-                  <p className="text-xs font-bold text-orange-400 uppercase tracking-widest mb-1">Saldo Esperado na Gaveta</p>
-                  <p className="text-3xl font-black text-white font-mono">{saldoAtual.toFixed(2)}€</p>
-                  <p className="text-xs text-zinc-400 mt-2">Conte as notas e moedas. Se o valor real for diferente, ajuste abaixo e justifique na descrição.</p>
-                </div>
-              ) : null}
-
-              {(tipoModal === 'Saida' || tipoModal === 'Entrada') && (
+            <form onSubmit={salvarMovimentoManual} className="p-6 space-y-5">
+              
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[10px] text-zinc-400 font-black uppercase tracking-widest mb-2">Categoria da {tipoModal}</label>
-                  <select value={form.subtipo} onChange={e => setForm({...form, subtipo: e.target.value})} className={`w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3.5 text-sm text-white outline-none font-bold appearance-none cursor-pointer ${tipoModal === 'Saida' ? 'focus:border-red-500' : 'focus:border-emerald-500'}`}>
-                    {tipoModal === 'Saida' ? (
-                      <><option value="Pagamento">Pagamento (Fornecedores/Despesas)</option><option value="Sangria (Depósito)">Sangria (Depósito no Banco/Cofre)</option><option value="Pagamento Estafetas">Pagamento Estafetas (Acertos)</option><option value="Retirada Sócios">Retirada Sócios (Distribuição)</option></>
-                    ) : (
-                      <><option value="Levantamento Banco">Levantamento de Conta Bancária</option><option value="Reforço de Caixa">Reforço de Caixa / Trocos</option><option value="Outras Entradas">Outras Entradas</option></>
-                    )}
+                  <label className="block text-[10px] text-zinc-400 font-black uppercase tracking-widest mb-2">Tipo de Movimento</label>
+                  <select value={form.tipo} onChange={e => setForm({...form, tipo: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3 text-sm text-white outline-none focus:border-orange-500 cursor-pointer">
+                    <option value="Entrada">Entrada (Reforço/Fundo)</option>
+                    <option value="Saída">Saída (Despesa/Pagamento)</option>
                   </select>
                 </div>
-              )}
-
-              <div>
-                <label className="block text-[10px] text-zinc-400 font-black uppercase tracking-widest mb-2">Descrição / Motivo</label>
-                <input required type="text" value={form.descricao} onChange={e => setForm({...form, descricao: e.target.value})} className={`w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3.5 text-sm text-white outline-none font-bold ${tipoModal === 'Saida' ? 'focus:border-red-500' : 'focus:border-green-500'}`} placeholder={tipoModal === 'Entrada' ? 'Ex: Trocos de 5€, Banco Santander...' : 'Ex: Reforço de Caixa, Levantamento...'} />
+                <div>
+                  <label className="block text-[10px] text-zinc-400 font-black uppercase tracking-widest mb-2">Método</label>
+                  <select value={form.metodo_pagamento} onChange={e => setForm({...form, metodo_pagamento: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3 text-sm text-white outline-none focus:border-orange-500 cursor-pointer">
+                    <option value="Dinheiro">Dinheiro</option>
+                    <option value="Dinheiro Glovo">Dinheiro Glovo</option>
+                  </select>
+                </div>
               </div>
 
               <div>
-                <label className="block text-[10px] text-zinc-400 font-black uppercase tracking-widest mb-2">{tipoModal === 'Abertura' ? 'Fundo de Maneio (€)' : tipoModal === 'Fechamento' ? 'Valor Real Contado (€)' : 'Valor (€)'}</label>
-                <input required type="number" step="0.01" value={form.valor === 0 && !idEditando && tipoModal !== 'Abertura' ? '' : form.valor} onChange={e => setForm({...form, valor: parseFloat(e.target.value) || 0})} className={`w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3.5 text-2xl font-black font-mono text-center outline-none ${tipoModal === 'Saida' ? 'text-red-400 focus:border-red-500' : 'text-green-400 focus:border-green-500'}`} placeholder="0.00" />
+                <label className="block text-[10px] text-zinc-400 font-black uppercase tracking-widest mb-2">Descrição (O que foi?)</label>
+                <input required type="text" placeholder="Ex: Compra supermercado, Troco..." value={form.descricao} onChange={e => setForm({...form, descricao: e.target.value})} className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3 text-sm text-white outline-none focus:border-orange-500" />
+              </div>
+
+              <div>
+                <label className="block text-[10px] text-zinc-400 font-black uppercase tracking-widest mb-2">Valor (€)</label>
+                <input required type="number" step="0.01" value={form.valor} onChange={e => setForm({...form, valor: parseFloat(e.target.value) || 0})} className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3 text-2xl font-black font-mono text-center outline-none text-orange-400 focus:border-orange-500" />
               </div>
 
               <div className="pt-4">
-                <button type="submit" disabled={processando} className={`w-full py-4 rounded-2xl text-sm font-black shadow-lg transition-transform active:scale-95 uppercase tracking-wider disabled:opacity-50 text-white ${tipoModal === 'Saida' || tipoModal === 'Fechamento' ? 'bg-red-600 hover:bg-red-500' : 'bg-green-600 hover:bg-green-500'}`}>
-                  {processando ? 'A Processar...' : (idEditando ? 'Salvar Alterações' : 'Confirmar Lançamento')}
+                <button type="submit" disabled={processando} className="w-full bg-orange-600 hover:bg-orange-500 py-4 rounded-2xl text-sm font-black shadow-lg transition-transform active:scale-95 uppercase tracking-wider disabled:opacity-50 text-white">
+                  {processando ? 'A Gravar...' : 'Confirmar Movimento'}
                 </button>
               </div>
             </form>
