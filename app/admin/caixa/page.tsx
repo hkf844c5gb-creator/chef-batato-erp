@@ -22,33 +22,29 @@ export default function CaixaPage() {
   const [loading, setLoading] = useState(true);
   const [processando, setProcessando] = useState(false);
   
-  // Captura a data local de forma segura (sem falhas de fuso horário)
+  // Captura o dia de hoje automaticamente
   const getHoje = () => {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   };
   
   const [dataFiltro, setDataFiltro] = useState(getHoje());
-
-  // Estado para controlo de Fecho Manual
   const [caixaFechado, setCaixaFechado] = useState(false);
-
-  // Modal para Nova Entrada/Saída Manual
   const [modalAberto, setModalAberto] = useState(false);
   const [form, setForm] = useState({ tipo: 'Saída', descricao: '', valor: 0, metodo_pagamento: 'Dinheiro' });
 
   async function carregarCaixa() {
     setLoading(true);
     
-    // 🎯 CORREÇÃO 1: Conversão de datas para garantir que apanha exatamente as 24h locais (Portugal)
-    const dateStart = new Date(`${dataFiltro}T00:00:00`);
-    const dateEnd = new Date(`${dataFiltro}T23:59:59.999`);
+    // Filtro cirúrgico com conversão de fuso horário (Portugal)
+    const dateStart = new Date(`${dataFiltro}T00:00:00`).toISOString();
+    const dateEnd = new Date(`${dataFiltro}T23:59:59.999`).toISOString();
 
     const { data, error } = await supabase
       .from('caixa')
       .select('*')
-      .gte('created_at', dateStart.toISOString())
-      .lte('created_at', dateEnd.toISOString())
+      .gte('created_at', dateStart)
+      .lte('created_at', dateEnd)
       .order('created_at', { ascending: false });
 
     if (error) {
@@ -72,20 +68,19 @@ export default function CaixaPage() {
     
     setProcessando(true);
     try {
-      const dateStart = new Date(`${dataFiltro}T00:00:00`);
-      const dateEnd = new Date(`${dataFiltro}T23:59:59.999`);
+      const dateStart = new Date(`${dataFiltro}T00:00:00`).toISOString();
+      const dateEnd = new Date(`${dataFiltro}T23:59:59.999`).toISOString();
 
       const { data: pedidos } = await supabase
         .from('pedidos')
         .select('*')
-        .gte('created_at', dateStart.toISOString())
-        .lte('created_at', dateEnd.toISOString());
+        .gte('created_at', dateStart)
+        .lte('created_at', dateEnd);
 
       let inseridos = 0;
 
       if (pedidos && pedidos.length > 0) {
-        
-        // 🎯 CORREÇÃO 2: Filtro à prova de falhas para apanhar "Dinheiro" ou "dinheiro glovo" sem errar
+        // Apanha qualquer variante da palavra dinheiro (Dinheiro, dinheiro glovo, etc)
         const pedidosDinheiro = pedidos.filter(p => 
           p.status !== 'Cancelado' && 
           p.metodo_pagamento && 
@@ -95,14 +90,14 @@ export default function CaixaPage() {
         for (const ped of pedidosDinheiro) {
           const pedShortId = String(ped.id).substring(0, 6);
           
-          // Verifica se o ID ou a descrição curta já existem no caixa
+          // Verifica se já existe para não duplicar
           const jaRegistado = movimentos.some(m => 
              m.pedido_id === ped.id || 
              (m.descricao && m.descricao.includes(pedShortId))
           );
 
           if (!jaRegistado) {
-            // Forçamos o registo a ficar no meio-dia da data selecionada
+            // Força o registo a pertencer visualmente ao dia que estamos a auditar
             const fakeDataInsercao = new Date(`${dataFiltro}T12:00:00`).toISOString();
 
             await supabase.from('caixa').insert([{
@@ -118,7 +113,7 @@ export default function CaixaPage() {
         }
       }
 
-      alert(`✅ Conferência Concluída!\n\n${inseridos} pedidos em dinheiro que faltavam foram adicionados ao Caixa.\nAs suas saídas antigas foram mantidas intactas.`);
+      alert(`✅ Conferência Concluída!\n\n${inseridos} pedidos em dinheiro encontrados no dia ${dataFiltro.split('-').reverse().join('/')} e adicionados ao Caixa.\nAs suas saídas antigas foram mantidas intactas.`);
       carregarCaixa();
     } catch (error: any) {
       alert("Erro na auditoria: " + error.message);
@@ -177,7 +172,6 @@ export default function CaixaPage() {
     setProcessando(false);
   };
 
-  // 🗑️ APAGAR MOVIMENTO
   const apagarMovimento = async (id: string) => {
     if (caixaFechado) return alert("Não pode alterar registos de um caixa fechado.");
     if (!confirm("Tem a certeza que deseja remover este registo?")) return;
@@ -193,8 +187,6 @@ export default function CaixaPage() {
 
   return (
     <div className="p-8 font-sans max-w-7xl mx-auto relative min-h-screen">
-      
-      {/* CABEÇALHO */}
       <div className="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-zinc-800 pb-4">
         <h1 className="text-3xl font-black text-white flex items-center gap-3 tracking-tight">
           Gestão de Caixa <span className="text-xl">💰</span>
@@ -210,7 +202,6 @@ export default function CaixaPage() {
         </div>
       </div>
 
-      {/* BLOCOS DE ANÁLISE GRÁFICA */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
         <div className="bg-[#121214] border border-zinc-800/80 p-6 rounded-[24px] shadow-xl flex flex-col justify-center">
           <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Entradas (Faturação)</span>
@@ -232,7 +223,6 @@ export default function CaixaPage() {
         </div>
       </div>
 
-      {/* BOTÕES DE AÇÃO DO DIRETOR */}
       <div className="flex flex-wrap items-center gap-4 mb-8">
         <button 
           onClick={sincronizarAuditoria} 
@@ -261,7 +251,6 @@ export default function CaixaPage() {
         </button>
       </div>
 
-      {/* LISTAGEM DE MOVIMENTOS */}
       <div className="bg-zinc-900/90 border border-zinc-800/80 rounded-[24px] overflow-hidden shadow-2xl">
         <div className="p-5 border-b border-zinc-800/80 bg-zinc-950/40 flex justify-between items-center">
           <h3 className="text-xs font-extrabold text-zinc-400 uppercase tracking-widest">Histórico de Movimentos</h3>
@@ -271,13 +260,12 @@ export default function CaixaPage() {
           {loading ? (
             <div className="text-center text-zinc-500 py-12 font-bold uppercase tracking-widest text-xs">A carregar caixa...</div>
           ) : movimentosReais.length === 0 ? (
-            <div className="text-center text-zinc-600 py-12 italic text-sm">O caixa está vazio neste dia.</div>
+            <div className="text-center text-zinc-600 py-12 italic text-sm">O caixa está vazio neste dia. Verifique outra data.</div>
           ) : (
             <div className="space-y-3">
               {movimentosReais.map((mov) => (
                 <div key={mov.id} className="flex items-center justify-between p-4 bg-[#121214] border border-zinc-800/60 hover:border-zinc-700 rounded-2xl transition-all gap-4 shadow-sm">
                   
-                  {/* Ícone Entrada/Saida */}
                   <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg ${mov.tipo === 'Entrada' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-red-500/10 text-red-500'}`}>
                     {mov.tipo === 'Entrada' ? '↓' : '↑'}
                   </div>
@@ -317,7 +305,6 @@ export default function CaixaPage() {
         </div>
       </div>
 
-      {/* MODAL DE ENTRADA / SAÍDA MANUAL */}
       {modalAberto && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex flex-col justify-center items-center p-4 animate-in fade-in duration-200">
           <div className="bg-zinc-900 w-full max-w-lg rounded-[32px] flex flex-col overflow-hidden shadow-[0_0_50px_rgba(0,0,0,0.5)] border border-zinc-800">
