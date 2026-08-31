@@ -13,9 +13,8 @@ interface MovimentoCaixa {
   descricao: string;
   valor: number;
   metodo_pagamento: string;
-  data_movimento: string;
   pedido_id?: string;
-  created_at?: string;
+  created_at: string;
 }
 
 export default function CaixaPage() {
@@ -23,7 +22,12 @@ export default function CaixaPage() {
   const [loading, setLoading] = useState(true);
   const [processando, setProcessando] = useState(false);
   
-  const getHoje = () => new Date().toISOString().split('T')[0];
+  // Captura a data local de forma segura (sem falhas de fuso horário)
+  const getHoje = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  };
+  
   const [dataFiltro, setDataFiltro] = useState(getHoje());
 
   // Estado para controlo de Fecho Manual
@@ -36,28 +40,25 @@ export default function CaixaPage() {
   async function carregarCaixa() {
     setLoading(true);
     
-    // 1. Carrega todos os Movimentos do dia
+    // 🎯 CORREÇÃO 1: Conversão de datas para garantir que apanha exatamente as 24h locais (Portugal)
+    const dateStart = new Date(`${dataFiltro}T00:00:00`);
+    const dateEnd = new Date(`${dataFiltro}T23:59:59.999`);
+
     const { data, error } = await supabase
       .from('caixa')
       .select('*')
-      .eq('data_movimento', dataFiltro)
+      .gte('created_at', dateStart.toISOString())
+      .lte('created_at', dateEnd.toISOString())
       .order('created_at', { ascending: false });
 
     if (error) {
       console.error(error);
     } else if (data) {
       setMovimentos(data);
+      const fecho = data.find(m => m.descricao === 'FECHO DE CAIXA MANUAL');
+      setCaixaFechado(!!fecho);
     }
 
-    // 2. Verifica se o caixa deste dia já foi Fechado Manualmente
-    const { data: fechoData } = await supabase
-      .from('caixa')
-      .select('id')
-      .eq('data_movimento', dataFiltro)
-      .eq('descricao', 'FECHO DE CAIXA MANUAL')
-      .limit(1);
-
-    setCaixaFechado(fechoData && fechoData.length > 0 ? true : false);
     setLoading(false);
   }
 
@@ -71,46 +72,53 @@ export default function CaixaPage() {
     
     setProcessando(true);
     try {
-      // 1. Puxa todos os pedidos em Dinheiro do dia selecionado
-      const inicioDia = `${dataFiltro}T00:00:00.000Z`;
-      const fimDia = `${dataFiltro}T23:59:59.999Z`;
+      const dateStart = new Date(`${dataFiltro}T00:00:00`);
+      const dateEnd = new Date(`${dataFiltro}T23:59:59.999`);
 
       const { data: pedidos } = await supabase
         .from('pedidos')
         .select('*')
-        .gte('created_at', inicioDia)
-        .lte('created_at', fimDia)
-        .in('metodo_pagamento', ['Dinheiro', 'Dinheiro Glovo']);
+        .gte('created_at', dateStart.toISOString())
+        .lte('created_at', dateEnd.toISOString());
 
       let inseridos = 0;
 
       if (pedidos && pedidos.length > 0) {
-        for (const ped of pedidos) {
-          // Ignorar pedidos cancelados
-          if (ped.status === 'Cancelado') continue;
+        
+        // 🎯 CORREÇÃO 2: Filtro à prova de falhas para apanhar "Dinheiro" ou "dinheiro glovo" sem errar
+        const pedidosDinheiro = pedidos.filter(p => 
+          p.status !== 'Cancelado' && 
+          p.metodo_pagamento && 
+          p.metodo_pagamento.toLowerCase().includes('dinheiro')
+        );
 
-          // 2. Verifica se o pedido JÁ ESTÁ no caixa (Cruza o ID)
+        for (const ped of pedidosDinheiro) {
+          const pedShortId = String(ped.id).substring(0, 6);
+          
+          // Verifica se o ID ou a descrição curta já existem no caixa
           const jaRegistado = movimentos.some(m => 
              m.pedido_id === ped.id || 
-             m.descricao.includes(ped.id.substring(0, 6))
+             (m.descricao && m.descricao.includes(pedShortId))
           );
 
-          // 3. Se NÃO estiver, regista-o agora como Entrada (MANTENDO TUDO O RESTO)
           if (!jaRegistado) {
+            // Forçamos o registo a ficar no meio-dia da data selecionada
+            const fakeDataInsercao = new Date(`${dataFiltro}T12:00:00`).toISOString();
+
             await supabase.from('caixa').insert([{
               tipo: 'Entrada',
-              descricao: `Pedido #${ped.id.substring(0, 6)} - ${ped.cliente_nome || 'Balcão'}`,
+              descricao: `Pedido #${pedShortId} - ${ped.cliente_nome || 'Balcão'}`,
               valor: ped.total,
               metodo_pagamento: ped.metodo_pagamento,
-              data_movimento: dataFiltro,
-              pedido_id: ped.id
+              pedido_id: ped.id,
+              created_at: fakeDataInsercao
             }]);
             inseridos++;
           }
         }
       }
 
-      alert(`✅ Conferência Concluída!\n\n${inseridos} pedidos em dinheiro que faltavam foram adicionados ao Caixa.\nAs suas saídas e pagamentos antigos foram mantidos intactos.`);
+      alert(`✅ Conferência Concluída!\n\n${inseridos} pedidos em dinheiro que faltavam foram adicionados ao Caixa.\nAs suas saídas antigas foram mantidas intactas.`);
       carregarCaixa();
     } catch (error: any) {
       alert("Erro na auditoria: " + error.message);
@@ -122,16 +130,17 @@ export default function CaixaPage() {
   // 🔒 FECHO MANUAL DO CAIXA
   const fecharCaixaManual = async () => {
     if (caixaFechado) return;
-    if (!confirm('Tem a certeza que conferiu tudo e deseja FECHAR o caixa de hoje? Nenhum movimento poderá ser adicionado depois.')) return;
+    if (!confirm('Tem a certeza que conferiu tudo e deseja FECHAR o caixa deste dia?')) return;
 
     setProcessando(true);
-    // Insere um registo "fantasma" que tranca o dia
+    const fakeDataInsercao = new Date(`${dataFiltro}T23:55:00`).toISOString();
+    
     const { error } = await supabase.from('caixa').insert([{
       tipo: 'Fecho',
       descricao: 'FECHO DE CAIXA MANUAL',
       valor: saldoFinal,
       metodo_pagamento: 'Sistema',
-      data_movimento: dataFiltro
+      created_at: fakeDataInsercao
     }]);
 
     if (!error) {
@@ -145,15 +154,17 @@ export default function CaixaPage() {
   // ➕ NOVA ENTRADA / SAÍDA MANUAL
   const salvarMovimentoManual = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (caixaFechado) return alert("O Caixa já foi fechado hoje!");
+    if (caixaFechado) return alert("O Caixa deste dia já foi fechado!");
     
     setProcessando(true);
+    const fakeDataInsercao = new Date(`${dataFiltro}T15:00:00`).toISOString();
+
     const { error } = await supabase.from('caixa').insert([{
       tipo: form.tipo,
       descricao: form.descricao,
       valor: form.valor,
       metodo_pagamento: form.metodo_pagamento,
-      data_movimento: dataFiltro
+      created_at: fakeDataInsercao
     }]);
 
     if (error) {
@@ -194,7 +205,7 @@ export default function CaixaPage() {
             type="date" 
             value={dataFiltro} 
             onChange={(e) => setDataFiltro(e.target.value)} 
-            className="bg-zinc-900 border border-zinc-800 text-zinc-300 px-4 py-2.5 rounded-xl text-sm outline-none focus:border-orange-500 shadow-xl font-medium" 
+            className="bg-zinc-900 border border-zinc-800 text-zinc-300 px-4 py-2.5 rounded-xl text-sm outline-none focus:border-orange-500 shadow-xl font-medium cursor-pointer" 
           />
         </div>
       </div>
