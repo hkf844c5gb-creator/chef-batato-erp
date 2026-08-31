@@ -59,6 +59,7 @@ export default function CentralRelatorios() {
   // ESTADOS - DADOS BRUTOS
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
   const [caixaBruta, setCaixaBruta] = useState<MovimentoCaixa[]>([]);
+  const [totalMovimentosCaixaCarregados, setTotalMovimentosCaixaCarregados] = useState(0);
   const [produtosCatalogo, setProdutosCatalogo] = useState<any[]>([]);
 
   // ESTADOS - UI E FILTROS globais
@@ -118,6 +119,25 @@ export default function CentralRelatorios() {
     return `${dia}/${mes}/${ano}`;
   };
 
+  const normalizarDataDia = (dataStr: string | null | undefined) => {
+    if (!dataStr) return '';
+
+    const valor = String(dataStr).trim();
+
+    // Supabase date normalmente chega como AAAA-MM-DD.
+    if (/^\d{4}-\d{2}-\d{2}/.test(valor)) {
+      return valor.substring(0, 10);
+    }
+
+    // Segurança para dados/textos que eventualmente venham em DD/MM/AAAA.
+    const pt = valor.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+    if (pt) {
+      return `${pt[3]}-${pt[2]}-${pt[1]}`;
+    }
+
+    return valor.substring(0, 10);
+  };
+
   const normalizarTipoCaixa = (tipo: string | null | undefined) =>
     String(tipo || '')
       .normalize('NFD')
@@ -162,8 +182,32 @@ export default function CentralRelatorios() {
       }));
       setPedidos(pedidosMapeados);
 
-      const { data: cData } = await supabase.from('caixa').select('*');
-      setCaixaBruta(cData || []);
+      // CAIXA: carregamento independente, explícito e paginado.
+      // Não usamos created_at para período financeiro: data_dia é a data oficial.
+      const todosMovimentosCaixa: MovimentoCaixa[] = [];
+      let inicioCaixa = 0;
+
+      while (true) {
+        const { data: loteCaixa, error: errCaixa } = await supabase
+          .from('caixa')
+          .select('id,created_at,data_dia,tipo,descricao,valor')
+          .order('data_dia', { ascending: true })
+          .order('created_at', { ascending: true })
+          .range(inicioCaixa, inicioCaixa + 999);
+
+        if (errCaixa) {
+          throw new Error(`Falha na tabela 'caixa': ${errCaixa.message}`);
+        }
+
+        const lote = (loteCaixa || []) as MovimentoCaixa[];
+        todosMovimentosCaixa.push(...lote);
+
+        if (lote.length < 1000) break;
+        inicioCaixa += 1000;
+      }
+
+      setCaixaBruta(todosMovimentosCaixa);
+      setTotalMovimentosCaixaCarregados(todosMovimentosCaixa.length);
 
     } catch (err: any) {
       setErroDB(err.message);
@@ -372,7 +416,7 @@ export default function CentralRelatorios() {
       .filter((m: any) => m && m.data_dia)
       .map((m: any) => ({
         ...m,
-        data_dia: String(m.data_dia).substring(0, 10),
+        data_dia: normalizarDataDia(m.data_dia),
         valor: Number(m.valor || 0),
       }));
 
@@ -473,7 +517,20 @@ export default function CentralRelatorios() {
     // Só depois de reconstruir a sequência completa aplicamos o filtro
     // de dia/mês/ano/período.
     const filtrado = calculado
-      .filter((dia) => validarIntervaloData(dia.data))
+      .filter((dia) => {
+        const itemDate = normalizarDataDia(dia.data);
+        const itemMes = itemDate.substring(0, 7);
+        const itemAno = itemDate.substring(0, 4);
+
+        if (tipoIntervalo === 'dia') return itemDate === dataUnica;
+        if (tipoIntervalo === 'mes') return itemMes === mesSelecionado;
+        if (tipoIntervalo === 'ano') return itemAno === anoSelecionado;
+        if (tipoIntervalo === 'personalizado') {
+          return itemDate >= dataInicio && itemDate <= dataFim;
+        }
+
+        return true;
+      })
       .sort((a, b) => b.data.localeCompare(a.data));
 
     setRelatorioDias(filtrado);
@@ -564,8 +621,8 @@ export default function CentralRelatorios() {
   };
 
   const labelPeriodo = tipoIntervalo === 'dia' ? '(Dia)' : tipoIntervalo === 'mes' ? '(Mês)' : tipoIntervalo === 'ano' ? '(Ano)' : '(Período)';
-  const textoPeriodoPDF = tipoIntervalo === 'dia' ? new Date(dataUnica).toLocaleDateString('pt-PT') : 
-                          tipoIntervalo === 'personalizado' ? `${new Date(dataInicio).toLocaleDateString('pt-PT')} a ${new Date(dataFim).toLocaleDateString('pt-PT')}` : 
+  const textoPeriodoPDF = tipoIntervalo === 'dia' ? formatarDataDDMMYYYY(dataUnica) : 
+                          tipoIntervalo === 'personalizado' ? `${formatarDataDDMMYYYY(dataInicio)} a ${formatarDataDDMMYYYY(dataFim)}` : 
                           'Filtro Aplicado';
 
   return (
@@ -1228,16 +1285,19 @@ export default function CentralRelatorios() {
                   <div className={`text-3xl font-black font-mono mt-2 tracking-tighter ${balancoDiferencasCaixa < 0 ? 'text-red-400' : balancoDiferencasCaixa > 0 ? 'text-emerald-400' : 'text-white'}`}>
                     {balancoDiferencasCaixa > 0 ? '+' : ''}{balancoDiferencasCaixa.toFixed(2)}€
                   </div>
-                  <p className="text-[9px] text-zinc-500 mt-2">Diferença acumulada entre o esperado e o contado na gaveta.</p>
+                  <p className="text-[9px] text-zinc-500 mt-2">Diferença acumulada entre o saldo esperado e o fechamento registado.</p>
                 </div>
               </div>
 
               <div className="bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl">
-                <div className="p-5 border-b border-zinc-800/80 bg-zinc-950/50">
+                <div className="p-5 border-b border-zinc-800/80 bg-zinc-950/50 flex flex-col md:flex-row md:items-center justify-between gap-2">
                   <h3 className="text-xs font-black uppercase text-zinc-400 tracking-widest">Extrato Diário do Caixa</h3>
+                  <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-wider">
+                    Fonte: caixa.data_dia · {totalMovimentosCaixaCarregados} movimento(s) carregado(s)
+                  </span>
                 </div>
                 <div className="overflow-x-auto">
-                  {loading ? <div className="p-12 text-center text-zinc-500 font-bold uppercase text-xs animate-pulse">A calcular dados...</div> : relatorioDias.length === 0 ? <div className="p-12 text-center text-zinc-600 italic">Nenhum registo de caixa encontrado nestas datas.</div> : (
+                  {loading ? <div className="p-12 text-center text-zinc-500 font-bold uppercase text-xs animate-pulse">A calcular dados...</div> : relatorioDias.length === 0 ? <div className="p-12 text-center text-zinc-600 italic">Nenhum movimento da tabela caixa encontrado neste período. Confira o contador "Fonte: caixa.data_dia" acima.</div> : (
                     <table className="w-full text-left text-xs whitespace-nowrap">
                       <thead className="bg-zinc-950/80 text-[10px] font-bold text-zinc-500 uppercase tracking-widest border-b border-zinc-800">
                         <tr>
