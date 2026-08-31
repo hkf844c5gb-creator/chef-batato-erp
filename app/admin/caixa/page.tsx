@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
 type TipoCaixa = 'Abertura' | 'Entrada' | 'Saida' | 'Fechamento' | string;
@@ -68,7 +68,7 @@ interface ResultadoAuditoriaHistorica {
   diasComDiferenca: number;
 }
 
-const AUDITORIA_LOCAL_V3 = 'chef-batato-caixa-auditoria-historica-v3';
+const AUDITORIA_LOCAL_V4 = 'chef-batato-caixa-auditoria-historica-v4-sem-duplicidade';
 
 const hojeLisboa = () =>
   new Intl.DateTimeFormat('en-CA', {
@@ -157,6 +157,10 @@ export default function CaixaPage() {
     descricao: '',
     valor: 0,
   });
+
+  // Evita que a carga normal dispare ao mesmo tempo que a auditoria inicial.
+  const inicializacaoConcluidaRef = useRef(false);
+  const inicializacaoEmCursoRef = useRef(false);
 
   // ============================================================
   // LEITURA COMPLETA DO BANCO
@@ -329,7 +333,33 @@ export default function CaixaPage() {
   );
 
   const inserirEntradaPedido = useCallback(
-    async (pedido: PedidoAuditado) => {
+    async (pedido: PedidoAuditado): Promise<boolean> => {
+      // TRAVA 1: antes de qualquer INSERT, consulta novamente o banco.
+      // Isso evita que auditoria histórica e conferência diária lancem
+      // o mesmo pedido quase ao mesmo tempo.
+      const { data: entradasAtuais, error: erroConsulta } = await supabase
+        .from('caixa')
+        .select('id,created_at,data_dia,tipo,descricao,valor')
+        .eq('data_dia', pedido.data_pedido)
+        .eq('tipo', 'Entrada');
+
+      if (erroConsulta) throw erroConsulta;
+
+      const regex = new RegExp(
+        `\\bpedido\\s*#?\\s*${pedido.numero_pedido}\\b`,
+        'i'
+      );
+
+      const jaExiste = ((entradasAtuais || []) as MovimentoCaixa[]).some(
+        (mov) => regex.test(mov.descricao || '')
+      );
+
+      if (jaExiste) {
+        return false;
+      }
+
+      // TRAVA 2: descrição padronizada com o número do pedido.
+      // A auditoria futura sempre localizará esta entrada por Pedido #N.
       const { error } = await supabase.from('caixa').insert([
         {
           data_dia: pedido.data_pedido,
@@ -340,6 +370,7 @@ export default function CaixaPage() {
       ]);
 
       if (error) throw error;
+      return true;
     },
     [supabase]
   );
@@ -400,17 +431,24 @@ export default function CaixaPage() {
           faltantes++;
 
           if (corrigirPedidos) {
-            await inserirEntradaPedido(pedido);
-            corrigidos++;
+            const inseriu = await inserirEntradaPedido(pedido);
 
-            caixa.push({
-              id: `novo-${pedido.numero_pedido}`,
-              created_at: new Date().toISOString(),
-              data_dia: pedido.data_pedido,
-              tipo: 'Entrada',
-              descricao: descricaoEntradaPedido(pedido),
-              valor: pedido.total_geral,
-            });
+            if (inseriu) {
+              corrigidos++;
+
+              caixa.push({
+                id: `novo-${pedido.numero_pedido}`,
+                created_at: new Date().toISOString(),
+                data_dia: pedido.data_pedido,
+                tipo: 'Entrada',
+                descricao: descricaoEntradaPedido(pedido),
+                valor: pedido.total_geral,
+              });
+            } else {
+              // Outro processo já inseriu entre a leitura e a gravação.
+              // Recarrega o estado lógico sem criar duplicidade.
+              encontrados++;
+            }
           }
 
           continue;
@@ -509,7 +547,7 @@ export default function CaixaPage() {
   const auditoriaHistoricaCompleta = useCallback(async () => {
     if (typeof window === 'undefined') return;
 
-    const jaExecutou = localStorage.getItem(AUDITORIA_LOCAL_V3);
+    const jaExecutou = localStorage.getItem(AUDITORIA_LOCAL_V4);
     if (jaExecutou === 'sim') return;
 
     setAuditandoHistorico(true);
@@ -534,17 +572,20 @@ export default function CaixaPage() {
         const achados = entradasDoPedido(pedido, caixa);
 
         if (achados.length === 0) {
-          await inserirEntradaPedido(pedido);
-          entradasCriadas++;
+          const inseriu = await inserirEntradaPedido(pedido);
 
-          caixa.push({
-            id: `auditoria-${pedido.numero_pedido}`,
-            created_at: new Date().toISOString(),
-            data_dia: pedido.data_pedido,
-            tipo: 'Entrada',
-            descricao: descricaoEntradaPedido(pedido),
-            valor: pedido.total_geral,
-          });
+          if (inseriu) {
+            entradasCriadas++;
+
+            caixa.push({
+              id: `auditoria-${pedido.numero_pedido}`,
+              created_at: new Date().toISOString(),
+              data_dia: pedido.data_pedido,
+              tipo: 'Entrada',
+              descricao: descricaoEntradaPedido(pedido),
+              valor: pedido.total_geral,
+            });
+          }
         } else {
           if (achados.length > 1) duplicadosPedidos++;
 
@@ -602,7 +643,7 @@ export default function CaixaPage() {
         diasComDiferenca,
       };
 
-      localStorage.setItem(AUDITORIA_LOCAL_V3, 'sim');
+      localStorage.setItem(AUDITORIA_LOCAL_V4, 'sim');
 
       setMensagemAuditoria(
         `Auditoria completa concluída · ` +
@@ -766,10 +807,24 @@ export default function CaixaPage() {
     let ativo = true;
 
     const iniciar = async () => {
-      await auditoriaHistoricaCompleta();
+      // React pode executar efeitos de inicialização mais de uma vez em
+      // determinados cenários. Esta trava impede duas auditorias/cargas
+      // simultâneas no mesmo navegador.
+      if (inicializacaoEmCursoRef.current || inicializacaoConcluidaRef.current) {
+        return;
+      }
 
-      if (ativo) {
-        await carregarCaixa();
+      inicializacaoEmCursoRef.current = true;
+
+      try {
+        await auditoriaHistoricaCompleta();
+
+        if (ativo) {
+          await carregarCaixa();
+          inicializacaoConcluidaRef.current = true;
+        }
+      } finally {
+        inicializacaoEmCursoRef.current = false;
       }
     };
 
@@ -778,16 +833,21 @@ export default function CaixaPage() {
     return () => {
       ativo = false;
     };
-  }, [auditoriaHistoricaCompleta]);
+  }, [auditoriaHistoricaCompleta, carregarCaixa]);
 
   useEffect(() => {
+    // IMPORTANTE: no primeiro render, carregarCaixa já é chamado pelo
+    // efeito de inicialização acima. Portanto este efeito só reage às
+    // mudanças de data DEPOIS que a inicialização terminou.
+    if (!inicializacaoConcluidaRef.current) return;
+
     carregarCaixa();
-  }, [dataFiltro]);
+  }, [dataFiltro, carregarCaixa]);
 
   // Sincronização futura automática.
   useEffect(() => {
     const canal = supabase
-      .channel('caixa-pedidos-auditoria-v3')
+      .channel('caixa-pedidos-auditoria-v4')
       .on(
         'postgres_changes',
         {
@@ -977,13 +1037,47 @@ export default function CaixaPage() {
       normalizar(mov.tipo) === 'entrada' &&
       /\bpedido\s*#?\s*\d+\b/i.test(mov.descricao || '')
     ) {
-      alert(
-        'Esta entrada está associada a um pedido e é protegida pela auditoria.'
+      const match = (mov.descricao || '').match(
+        /\bpedido\s*#?\s*(\d+)\b/i
       );
-      return;
-    }
 
-    if (!confirm('Eliminar este movimento manual?')) return;
+      const numeroPedido = match ? Number(match[1]) : null;
+
+      const duplicadosDoMesmoPedido = numeroPedido
+        ? movimentos.filter((item) => {
+            if (normalizar(item.tipo) !== 'entrada') return false;
+
+            const itemMatch = (item.descricao || '').match(
+              /\bpedido\s*#?\s*(\d+)\b/i
+            );
+
+            return itemMatch && Number(itemMatch[1]) === numeroPedido;
+          })
+        : [];
+
+      // Uma entrada válida de pedido continua protegida.
+      if (duplicadosDoMesmoPedido.length <= 1) {
+        alert(
+          'Esta é a única entrada deste pedido e está protegida pela auditoria.'
+        );
+        return;
+      }
+
+      // Se existem 2 ou mais entradas do MESMO pedido, permite excluir
+      // uma delas para corrigir a duplicidade.
+      if (
+        !confirm(
+          `Foram encontradas ${duplicadosDoMesmoPedido.length} entradas do Pedido #${numeroPedido}.\n\n` +
+            `Deseja eliminar SOMENTE esta entrada duplicada de ${num(
+              mov.valor
+            ).toFixed(2)}€?`
+        )
+      ) {
+        return;
+      }
+    } else {
+      if (!confirm('Eliminar este movimento manual?')) return;
+    }
 
     const { error } = await supabase
       .from('caixa')
@@ -1179,7 +1273,7 @@ export default function CaixaPage() {
       <div className="flex flex-wrap items-center gap-4 mb-8">
         <div className="bg-emerald-500/10 border border-emerald-500/30 px-4 py-3 rounded-xl">
           <span className="text-xs font-bold text-emerald-400 uppercase">
-            ● Auditoria automática ativa
+            ● Auditoria automática ativa · Anti-duplicidade V4
           </span>
         </div>
 
