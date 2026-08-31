@@ -110,6 +110,21 @@ export default function CentralRelatorios() {
     return { dia, mes: meses[parseInt(mes) - 1] || '---' };
   };
 
+  const formatarDataDDMMYYYY = (dataStr: string | null | undefined) => {
+    if (!dataStr) return '--/--/----';
+    const data = String(dataStr).substring(0, 10);
+    const [ano, mes, dia] = data.split('-');
+    if (!ano || !mes || !dia) return data;
+    return `${dia}/${mes}/${ano}`;
+  };
+
+  const normalizarTipoCaixa = (tipo: string | null | undefined) =>
+    String(tipo || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+      .toLowerCase();
+
   const obterDataEfetiva = (p: Pedido) => p.data_pedido || p.criado_em || new Date().toISOString();
 
   const validarIntervaloData = (dataStr: string | null) => {
@@ -345,31 +360,132 @@ export default function CentralRelatorios() {
   const maxProduto = topProdutosVendas.length > 0 ? topProdutosVendas[0].quantidade : 0;
 
   // --- PROCESSAMENTO: CAIXA ---
+  // REGRA OFICIAL:
+  // 1. A data financeira é SEMPRE caixa.data_dia.
+  // 2. A Central de Relatórios NÃO recria vendas a partir de pedidos.
+  //    As vendas em dinheiro já são entradas físicas da tabela caixa.
+  // 3. Abertura do dia = Fechamento do dia anterior, quando existir.
+  // 4. Saldo esperado = Abertura + Entradas - Saídas.
+  // 5. Fechamento é o valor efetivamente registado na tabela caixa.
   useEffect(() => {
-    const movimentosManuais = caixaBruta.filter(c => validarIntervaloData(c.data_dia)).map(m => ({ ...m, valor: Number(m.valor) }));
-    const movimentosPDV = pedidos.filter(p => validarIntervaloData(obterDataEfetiva(p)) && p.pago && (p.forma_pagamento === 'Dinheiro' || p.forma_pagamento === 'Dinheiro Glovo')
-    ).map(p => ({
-      id: p.id, created_at: obterDataEfetiva(p), data_dia: obterDataEfetiva(p).substring(0, 10), tipo: 'Entrada' as const, descricao: `Venda PDV #${p.numero_pedido || 'S/N'} (${p.canal}) - ${p.forma_pagamento}`, valor: Number(p.total_geral)
-    }));
-    const caixaUnificada = [...movimentosManuais, ...movimentosPDV];
+    const movimentosValidos: MovimentoCaixa[] = (caixaBruta || [])
+      .filter((m: any) => m && m.data_dia)
+      .map((m: any) => ({
+        ...m,
+        data_dia: String(m.data_dia).substring(0, 10),
+        valor: Number(m.valor || 0),
+      }));
+
+    // Agrupa TODO o histórico primeiro. Isso é essencial porque a abertura
+    // do primeiro dia do mês pode depender do fechamento do mês anterior.
     const diasMap = new Map<string, ResumoDia>();
-    caixaUnificada.forEach(mov => {
-      if (!diasMap.has(mov.data_dia)) diasMap.set(mov.data_dia, { data: mov.data_dia, abertura: 0, entradas: 0, saidas: 0, esperado: 0, fechamento: null, diferenca: null, movimentos: [] });
-      const dia = diasMap.get(mov.data_dia)!;
+
+    movimentosValidos.forEach((mov) => {
+      const dataDia = mov.data_dia;
+
+      if (!diasMap.has(dataDia)) {
+        diasMap.set(dataDia, {
+          data: dataDia,
+          abertura: 0,
+          entradas: 0,
+          saidas: 0,
+          esperado: 0,
+          fechamento: null,
+          diferenca: null,
+          movimentos: [],
+        });
+      }
+
+      const dia = diasMap.get(dataDia)!;
       dia.movimentos.push(mov);
-      if (mov.tipo === 'Abertura') dia.abertura += mov.valor;
-      else if (mov.tipo === 'Entrada') dia.entradas += mov.valor;
-      else if (mov.tipo === 'Saida') dia.saidas += mov.valor;
-      else if (mov.tipo === 'Fechamento') dia.fechamento = mov.valor;
+
+      const tipo = normalizarTipoCaixa(mov.tipo);
+
+      if (tipo === 'abertura') {
+        dia.abertura += Number(mov.valor || 0);
+      } else if (tipo === 'entrada') {
+        dia.entradas += Number(mov.valor || 0);
+      } else if (tipo === 'saida') {
+        dia.saidas += Number(mov.valor || 0);
+      } else if (tipo === 'fechamento' || tipo === 'fecho') {
+        // Se houver mais de um fechamento histórico no mesmo data_dia,
+        // usa o último gravado cronologicamente como fechamento efetivo.
+        const fechamentosDoDia = dia.movimentos
+          .filter((m) => {
+            const t = normalizarTipoCaixa(m.tipo);
+            return t === 'fechamento' || t === 'fecho';
+          })
+          .sort(
+            (a, b) =>
+              new Date(a.created_at || `${a.data_dia}T00:00:00`).getTime() -
+              new Date(b.created_at || `${b.data_dia}T00:00:00`).getTime()
+          );
+
+        const ultimo = fechamentosDoDia[fechamentosDoDia.length - 1];
+        dia.fechamento = ultimo ? Number(ultimo.valor || 0) : Number(mov.valor || 0);
+      }
     });
-    const arrayFinal = Array.from(diasMap.values()).map(dia => {
-      const esperado = dia.abertura + dia.entradas - dia.saidas;
-      const diferenca = dia.fechamento !== null ? dia.fechamento - esperado : null;
-      return { ...dia, esperado, diferenca };
+
+    // Processa cronologicamente para carregar o fechamento anterior
+    // para a abertura do dia seguinte.
+    const cronologico = Array.from(diasMap.values()).sort((a, b) =>
+      a.data.localeCompare(b.data)
+    );
+
+    let fechamentoAnterior: number | null = null;
+
+    const calculado = cronologico.map((dia) => {
+      const aberturaRegistrada = Number(dia.abertura || 0);
+
+      // Regra principal solicitada:
+      // havendo fechamento anterior, ele é a abertura oficial do dia.
+      // Se ainda não houver fechamento anterior no histórico, preserva
+      // a abertura física registrada no próprio data_dia.
+      const aberturaOficial =
+        fechamentoAnterior !== null ? fechamentoAnterior : aberturaRegistrada;
+
+      const esperado =
+        aberturaOficial + Number(dia.entradas || 0) - Number(dia.saidas || 0);
+
+      const fechamento =
+        dia.fechamento !== null ? Number(dia.fechamento) : null;
+
+      const diferenca =
+        fechamento !== null ? fechamento - esperado : null;
+
+      const resultado: ResumoDia = {
+        ...dia,
+        abertura: aberturaOficial,
+        esperado,
+        fechamento,
+        diferenca,
+      };
+
+      // Só um fechamento REAL alimenta a abertura do próximo data_dia.
+      // Se o dia está em aberto, não inventamos fechamento.
+      if (fechamento !== null) {
+        fechamentoAnterior = fechamento;
+      }
+
+      return resultado;
     });
-    arrayFinal.sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime());
-    setRelatorioDias(arrayFinal);
-  }, [caixaBruta, pedidos, tipoIntervalo, dataUnica, dataInicio, dataFim, mesSelecionado, anoSelecionado]);
+
+    // Só depois de reconstruir a sequência completa aplicamos o filtro
+    // de dia/mês/ano/período.
+    const filtrado = calculado
+      .filter((dia) => validarIntervaloData(dia.data))
+      .sort((a, b) => b.data.localeCompare(a.data));
+
+    setRelatorioDias(filtrado);
+  }, [
+    caixaBruta,
+    tipoIntervalo,
+    dataUnica,
+    dataInicio,
+    dataFim,
+    mesSelecionado,
+    anoSelecionado,
+  ]);
 
   const totalEntradasCaixa = relatorioDias.reduce((acc, dia) => acc + dia.entradas, 0);
   const totalDespesasCaixa = relatorioDias.reduce((acc, dia) => acc + dia.saidas, 0);
@@ -429,10 +545,10 @@ export default function CentralRelatorios() {
     csv += "\n";
 
     csv += "=== AUDITORIA DE CAIXA ===\n";
-    csv += "Data;Abertura (€);Entradas (€);Saídas (€);Saldo Esperado (€);Contado Gaveta (€);Diferença (€)\n";
+    csv += "Data;Abertura (€);Entradas (€);Saídas (€);Fechamento (€);Saldo Esperado (€);Diferença (€)\n";
     relatorioDias.forEach(dia => {
       const pendente = dia.fechamento === null;
-      csv += `${new Date(dia.data).toLocaleDateString('pt-PT')};${fmtEuros(dia.abertura)};${fmtEuros(dia.entradas)};${fmtEuros(dia.saidas)};${fmtEuros(dia.esperado)};${pendente ? 'Em Aberto' : fmtEuros(dia.fechamento!)};${pendente ? '---' : fmtEuros(dia.diferenca!)}\n`;
+      csv += `${formatarDataDDMMYYYY(dia.data)};${fmtEuros(dia.abertura)};${fmtEuros(dia.entradas)};${fmtEuros(dia.saidas)};${pendente ? 'Em Aberto' : fmtEuros(dia.fechamento!)};${fmtEuros(dia.esperado)};${pendente ? '---' : fmtEuros(dia.diferenca!)}\n`;
     });
 
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
@@ -704,7 +820,7 @@ export default function CentralRelatorios() {
                   <th className="py-2 px-2 text-right border-r border-gray-300">Entradas</th>
                   <th className="py-2 px-2 text-right border-r border-gray-300">Saídas</th>
                   <th className="py-2 px-2 text-right bg-blue-50 text-blue-800 border-r border-gray-300">Esperado</th>
-                  <th className="py-2 px-2 text-right font-black border-r border-gray-300">Gaveta Real</th>
+                  <th className="py-2 px-2 text-right font-black border-r border-gray-300">Fechamento</th>
                   <th className="py-2 px-2 text-right">Diferença</th>
                 </tr>
               </thead>
@@ -714,7 +830,7 @@ export default function CentralRelatorios() {
                   const quebra = !pendente && dia.diferenca! < 0;
                   return (
                     <tr key={dia.data}>
-                      <td className="py-1.5 px-2 font-bold border-r border-gray-300">{new Date(dia.data).toLocaleDateString('pt-PT')}</td>
+                      <td className="py-1.5 px-2 font-bold border-r border-gray-300">{formatarDataDDMMYYYY(dia.data)}</td>
                       <td className="py-1.5 px-2 text-right text-gray-600 border-r border-gray-300">{dia.abertura.toFixed(2)}€</td>
                       <td className="py-1.5 px-2 text-right text-green-700 border-r border-gray-300">{dia.entradas.toFixed(2)}€</td>
                       <td className="py-1.5 px-2 text-right text-red-700 border-r border-gray-300">{dia.saidas.toFixed(2)}€</td>
@@ -1125,7 +1241,7 @@ export default function CentralRelatorios() {
                     <table className="w-full text-left text-xs whitespace-nowrap">
                       <thead className="bg-zinc-950/80 text-[10px] font-bold text-zinc-500 uppercase tracking-widest border-b border-zinc-800">
                         <tr>
-                          <th className="p-4">Data</th><th className="p-4 text-right">Abertura</th><th className="p-4 text-right text-green-500/70">Entradas</th><th className="p-4 text-right text-red-500/70">Saídas</th><th className="p-4 text-right bg-indigo-950/20 text-indigo-400">Saldo Esperado</th><th className="p-4 text-right text-white">Contado na Gaveta</th><th className="p-4 text-center">Diferença</th><th className="p-4 text-center">Ações</th>
+                          <th className="p-4">Data</th><th className="p-4 text-right">Abertura</th><th className="p-4 text-right text-green-500/70">Entradas</th><th className="p-4 text-right text-red-500/70">Saídas</th><th className="p-4 text-right bg-indigo-950/20 text-indigo-400">Saldo Esperado</th><th className="p-4 text-right text-white">Fechamento</th><th className="p-4 text-center">Diferença</th><th className="p-4 text-center">Ações</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-zinc-800/50 font-medium">
@@ -1136,7 +1252,7 @@ export default function CentralRelatorios() {
 
                           return (
                             <tr key={dia.data} className="hover:bg-zinc-800/30 transition-colors">
-                              <td className="p-4 text-white font-bold">{new Date(dia.data).toLocaleDateString('pt-PT')}</td>
+                              <td className="p-4 text-white font-bold">{formatarDataDDMMYYYY(dia.data)}</td>
                               <td className="p-4 text-right font-mono text-zinc-400">{dia.abertura.toFixed(2)}€</td>
                               <td className="p-4 text-right font-mono text-green-400">{dia.entradas.toFixed(2)}€</td>
                               <td className="p-4 text-right font-mono text-red-400">{dia.saidas.toFixed(2)}€</td>
@@ -1191,7 +1307,7 @@ export default function CentralRelatorios() {
               <div className="p-6 border-b border-zinc-800 flex justify-between items-center bg-zinc-950/50">
                 <div>
                   <h2 className="text-xl font-black text-white">Extrato de Movimentos</h2>
-                  <p className="text-xs font-bold text-orange-400 uppercase tracking-widest mt-1">{new Date(diaSelecionado.data).toLocaleDateString('pt-PT')}</p>
+                  <p className="text-xs font-bold text-orange-400 uppercase tracking-widest mt-1">{formatarDataDDMMYYYY(diaSelecionado.data)}</p>
                 </div>
                 <button onClick={() => setDiaSelecionado(null)} className="w-8 h-8 bg-zinc-800 rounded-full flex items-center justify-center text-zinc-400 font-bold hover:text-white">✕</button>
               </div>
