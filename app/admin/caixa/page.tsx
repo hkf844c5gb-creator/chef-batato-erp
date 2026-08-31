@@ -154,9 +154,22 @@ export default function CaixaPage() {
 
   const [form, setForm] = useState({
     tipo: 'Saida',
+    motivo: '',
     descricao: '',
     valor: 0,
   });
+
+  const motivosMovimento = [
+    'Retirada de Sócio',
+    'Sangria / Depósito',
+    'Compra de Mercadoria',
+    'Pagamento de Entregas / Estafetas',
+    'Pagamento de Fornecedor',
+    'Despesa Operacional',
+    'Reforço de Caixa',
+    'Recebimento Manual',
+    'Outros',
+  ];
 
   // Evita que a carga normal dispare ao mesmo tempo que a auditoria inicial.
   const inicializacaoConcluidaRef = useRef(false);
@@ -847,7 +860,7 @@ export default function CaixaPage() {
   // Sincronização futura automática.
   useEffect(() => {
     const canal = supabase
-      .channel('caixa-pedidos-auditoria-v4')
+      .channel('caixa-pedidos-auditoria-v5')
       .on(
         'postgres_changes',
         {
@@ -978,8 +991,13 @@ export default function CaixaPage() {
       return;
     }
 
-    if (!form.descricao.trim()) {
-      alert('Informe a descrição.');
+    if (!form.motivo) {
+      alert('Selecione o motivo do movimento.');
+      return;
+    }
+
+    if (form.motivo === 'Outros' && !form.descricao.trim()) {
+      alert('Em "Outros", informe uma descrição para o movimento.');
       return;
     }
 
@@ -988,6 +1006,11 @@ export default function CaixaPage() {
       return;
     }
 
+    const detalhe = form.descricao.trim();
+    const descricaoFinal = detalhe
+      ? `[${form.motivo}] ${detalhe}`
+      : `[${form.motivo}]`;
+
     setProcessando(true);
 
     try {
@@ -995,7 +1018,7 @@ export default function CaixaPage() {
         {
           data_dia: dataFiltro,
           tipo: form.tipo,
-          descricao: form.descricao.trim(),
+          descricao: descricaoFinal,
           valor: Number(form.valor.toFixed(2)),
         },
       ]);
@@ -1004,6 +1027,7 @@ export default function CaixaPage() {
 
       setForm({
         tipo: 'Saida',
+        motivo: '',
         descricao: '',
         valor: 0,
       });
@@ -1273,7 +1297,7 @@ export default function CaixaPage() {
       <div className="flex flex-wrap items-center gap-4 mb-8">
         <div className="bg-emerald-500/10 border border-emerald-500/30 px-4 py-3 rounded-xl">
           <span className="text-xs font-bold text-emerald-400 uppercase">
-            ● Auditoria automática ativa · Anti-duplicidade V4
+            ● Auditoria automática ativa · Anti-duplicidade V5
           </span>
         </div>
 
@@ -1446,11 +1470,38 @@ export default function CaixaPage() {
 
               <div>
                 <label className="block text-[10px] uppercase text-zinc-500 font-black mb-2">
-                  Descrição
+                  Motivo
+                </label>
+
+                <select
+                  required
+                  value={form.motivo}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      motivo: e.target.value,
+                    })
+                  }
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-white"
+                >
+                  <option value="">Selecione o motivo...</option>
+                  {motivosMovimento.map((motivo) => (
+                    <option key={motivo} value={motivo}>
+                      {motivo}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[10px] uppercase text-zinc-500 font-black mb-2">
+                  {form.motivo === 'Outros'
+                    ? 'Descrição / Motivo'
+                    : 'Observação / Detalhe'}
                 </label>
 
                 <input
-                  required
+                  required={form.motivo === 'Outros'}
                   value={form.descricao}
                   onChange={(e) =>
                     setForm({
@@ -1458,9 +1509,17 @@ export default function CaixaPage() {
                       descricao: e.target.value,
                     })
                   }
-                  placeholder="Ex: [Pagamento Estafetas] Acerto João"
+                  placeholder={
+                    form.motivo === 'Outros'
+                      ? 'Descreva o motivo...'
+                      : 'Opcional. Ex: Acerto João, Recheio, Makro...'
+                  }
                   className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-white"
                 />
+
+                <p className="text-[10px] text-zinc-600 mt-2">
+                  O motivo será gravado junto da descrição sem criar novas colunas no banco.
+                </p>
               </div>
 
               <div>
