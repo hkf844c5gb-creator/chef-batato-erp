@@ -1,1620 +1,1058 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useState, useEffect } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
-type TipoCaixa = 'Abertura' | 'Entrada' | 'Saida' | 'Fechamento' | string;
+// ============================================================================
+// 🖨️ MOTOR DE IMPRESSÃO TÉRMICA 80MM
+// - Mantém compatibilidade com o motor ESC/POS instalado no Windows.
+// - Se o motor não estiver disponível, usa a impressão normal do Windows/navegador.
+// ============================================================================
 
-interface MovimentoCaixa {
-  id: string;
-  created_at: string;
-  data_dia: string;
-  tipo: TipoCaixa;
-  descricao: string;
-  valor: number;
-}
+const escaparHtml = (valor: any) =>
+  String(valor ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
 
-interface PedidoLinha {
-  id: string;
-  numero_pedido: number;
-  data_pedido?: string | null;
-  cliente?: string | null;
-  forma_pagamento?: string | null;
-  taxa_entrega?: number | null;
-  desconto?: number | null;
-  total_geral?: number | null;
-  pago?: boolean | null;
-  criado_em?: string | null;
-  itens?: Array<{
-    quantidade?: number | null;
-    preco_unitario?: number | null;
-  }>;
-}
+const moedaTalao = (valor: any) => `${Number(valor || 0).toFixed(2)}€`;
 
-interface PedidoAuditado {
-  numero_pedido: number;
-  data_pedido: string;
-  cliente: string;
-  forma_pagamento: string;
-  total_geral: number;
-  pago: boolean;
-}
+const imprimirPeloWindows = (pedido: any) => {
+  if (typeof window === 'undefined') return;
 
-interface ConferenciaDia {
-  pedidosDinheiro: number;
-  valorPedidosDinheiro: number;
-  pedidosEncontrados: number;
-  pedidosCorrigidos: number;
-  pedidosFaltantes: number;
-  divergenciasPedidos: number;
-  duplicadosPedidos: number;
-  pedidosPendentes: number;
+  const itens = Array.isArray(pedido?.itens_pedido) ? pedido.itens_pedido : [];
 
-  abertura: number;
-  entradas: number;
-  saidas: number;
-  saldoCalculado: number;
+  const linhasItens = itens.map((item: any) => {
+    const qtd = Number(item.quantidade || 0);
+    const preco = Number(item.preco_unitario || 0);
+    const total = qtd * preco;
 
-  fechamentoHistorico: number | null;
-  diferencaFechamento: number | null;
-}
+    return `
+      <div class="item">
+        <div class="item-nome">${qtd}x ${escaparHtml(item.nome_produto)}</div>
+        <div class="item-valores">
+          <span>${moedaTalao(preco)} cada</span>
+          <strong>${moedaTalao(total)}</strong>
+        </div>
+      </div>
+    `;
+  }).join('');
 
-interface ResultadoAuditoriaHistorica {
-  totalPedidosDinheiro: number;
-  entradasCriadas: number;
-  divergenciasPedidos: number;
-  duplicadosPedidos: number;
-  diasAuditados: number;
-  diasComDiferenca: number;
-}
+  const taxaEntrega = Number(pedido?.taxa_entrega || 0);
+  const desconto = Number(pedido?.desconto || 0);
+  const total = Number(pedido?.total_geral || 0);
 
-const AUDITORIA_LOCAL_V4 = 'chef-batato-caixa-auditoria-historica-v4-sem-duplicidade';
+  const iframe = document.createElement('iframe');
+  iframe.setAttribute('aria-hidden', 'true');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  iframe.style.visibility = 'hidden';
+  document.body.appendChild(iframe);
 
-const hojeLisboa = () =>
-  new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Europe/Lisbon',
-  }).format(new Date());
+  const doc = iframe.contentWindow?.document;
+  if (!doc) {
+    iframe.remove();
+    alert('Não foi possível abrir o sistema de impressão do Windows.');
+    return;
+  }
 
-const soData = (v?: string | null) =>
-  v ? String(v).substring(0, 10) : '';
+  doc.open();
+  doc.write(`
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>Pedido #${escaparHtml(pedido?.numero_pedido)}</title>
+        <style>
+          @page { size: 80mm auto; margin: 2mm; }
+          * { box-sizing: border-box; }
+          html, body { margin: 0; padding: 0; background: #fff; color: #000; }
+          body {
+            width: 76mm;
+            font-family: "Courier New", Courier, monospace;
+            font-size: 11px;
+            line-height: 1.25;
+            padding: 1mm;
+          }
+          .centro { text-align: center; }
+          .titulo { font-size: 18px; font-weight: 900; margin-bottom: 2px; }
+          .pedido { font-size: 17px; font-weight: 900; margin: 4px 0; }
+          .linha { border-top: 1px dashed #000; margin: 6px 0; }
+          .dados { margin: 2px 0; word-break: break-word; }
+          .item { margin: 5px 0; page-break-inside: avoid; }
+          .item-nome { font-weight: 700; word-break: break-word; }
+          .item-valores, .total-linha { display: flex; justify-content: space-between; gap: 5px; }
+          .total-geral { font-size: 15px; font-weight: 900; margin-top: 4px; }
+          .rodape { margin-top: 8px; text-align: center; font-size: 10px; }
+          @media print { body { width: 76mm; } }
+        </style>
+      </head>
+      <body>
+        <div class="centro">
+          <div class="titulo">CHEF BATATÔ</div>
+          <div>Talão do Pedido</div>
+          <div class="pedido">#${escaparHtml(pedido?.numero_pedido)}</div>
+        </div>
 
-const dataBR = (iso?: string | null) => {
-  const d = soData(iso);
-  if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return d || '-';
-  const [ano, mes, dia] = d.split('-');
-  return `${dia}/${mes}/${ano}`;
+        <div class="linha"></div>
+
+        <div class="dados"><strong>Canal:</strong> ${escaparHtml(pedido?.canal)}</div>
+        <div class="dados"><strong>Cliente:</strong> ${escaparHtml(pedido?.cliente)}</div>
+        ${pedido?.contacto_cliente ? `<div class="dados"><strong>Contacto:</strong> ${escaparHtml(pedido.contacto_cliente)}</div>` : ''}
+        ${pedido?.endereco ? `<div class="dados"><strong>Morada:</strong> ${escaparHtml(pedido.endereco)}</div>` : ''}
+        <div class="dados"><strong>Pagamento:</strong> ${escaparHtml(pedido?.forma_pagamento)}</div>
+
+        <div class="linha"></div>
+
+        ${linhasItens || '<div>Nenhum item encontrado.</div>'}
+
+        <div class="linha"></div>
+
+        ${desconto > 0 ? `<div class="total-linha"><span>Desconto</span><span>-${moedaTalao(desconto)}</span></div>` : ''}
+        ${taxaEntrega > 0 ? `<div class="total-linha"><span>Entrega</span><span>${moedaTalao(taxaEntrega)}</span></div>` : ''}
+        <div class="total-linha total-geral">
+          <span>TOTAL</span>
+          <span>${moedaTalao(total)}</span>
+        </div>
+
+        <div class="linha"></div>
+        <div class="rodape">Obrigado pelo pedido!<br/>Chef Batatô</div>
+      </body>
+    </html>
+  `);
+  doc.close();
+
+  window.setTimeout(() => {
+    try {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+    } finally {
+      window.setTimeout(() => iframe.remove(), 1500);
+    }
+  }, 250);
 };
 
-const normalizar = (v?: string | null) =>
-  (v || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ' ');
+export const imprimirReciboTermico = async (pedido: any) => {
+  if (typeof window === 'undefined') return;
 
-const num = (v: any) => Number(v || 0);
+  const motorEscPos = (window as any).imprimirSilencioso;
 
-const dinheiro = (v?: string | null) => {
-  const f = normalizar(v);
-  return f === 'dinheiro' || f === 'dinheiro glovo';
+  if (typeof motorEscPos === 'function') {
+    try {
+      const resultado = motorEscPos(JSON.stringify(pedido));
+      if (resultado && typeof resultado.then === 'function') {
+        await resultado;
+      }
+      return;
+    } catch (erro) {
+      console.warn(
+        'Motor ESC/POS não conseguiu imprimir. A abrir impressão do Windows...',
+        erro
+      );
+    }
+  }
+
+  imprimirPeloWindows(pedido);
 };
+// ============================================================================
 
-const valorIgual = (a: number, b: number) =>
-  Math.abs(Number(a) - Number(b)) < 0.01;
+interface Produto {
+  id: string; codigo: string; nome: string; 
+  precoCardapio: number; precoWhatsapp: number; precoGlovo: number; 
+  custoUnitario: number; categoria: string; ativo: boolean;
+}
 
-const ehFechoAutomaticoLegado = (mov: MovimentoCaixa) =>
-  normalizar(mov.tipo) === 'fechamento' &&
-  normalizar(mov.descricao).includes('automatico');
+interface ProdutoVinculado {
+  produto_id: string;
+  acrescimo_preco: number;
+  ativo: boolean;
+  produto: {
+    id: string; codigo: string; nome: string; categoria: string;
+    preco_cardapio: number; preco_whatsapp: number; preco_glovo: number;
+  };
+}
 
-const ehFechoManual = (mov: MovimentoCaixa) =>
-  normalizar(mov.tipo) === 'fechamento' &&
-  normalizar(mov.descricao).includes('manual');
+interface GrupoCombo {
+  id: string; nome: string; quantidade_minima: number; quantidade_maxima: number;
+  obrigatorio: boolean; ordem: number;
+  combo_grupo_produtos: ProdutoVinculado[];
+}
 
-const descricaoEntradaPedido = (p: PedidoAuditado) =>
-  `[Pedido #${p.numero_pedido}] ${p.forma_pagamento} - ${
-    p.cliente || 'Cliente Anónimo'
-  }`;
+interface Combo {
+  id: string; codigo: string; nome: string; descricao: string;
+  tipo_preco: 'fixo' | 'desconto' | 'desconto_fixo' | 'item_gratis';
+  preco_fixo: number | null;
+  desconto_percentual: number;
+  desconto_absoluto: number;
+  item_gratis_categoria: string;
+  combo_grupos: GrupoCombo[];
+}
 
-export default function CaixaPage() {
-  const supabase = useMemo(
-    () =>
-      createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      ),
-    []
+interface ItemCarrinho {
+  produto: Produto;
+  quantidade: number;
+  isCombo?: boolean;
+  comboNome?: string;
+  detalhesCombo?: string[];
+  precoOriginal?: number;
+  precoAplicado: number;
+  itensBaseId?: string[]; 
+}
+
+type CategoriaFiltro = 'todos' | 'batatas' | 'adicionais' | 'sobremesas' | 'bebidas' | 'combos';
+
+export default function CaixaPDV() {
+  const [produtos, setProdutos] = useState<Produto[]>([]);
+  const [combos, setCombos] = useState<Combo[]>([]);
+  const [carrinho, setCarrinho] = useState<ItemCarrinho[]>([]);
+  const [listaEstafetas, setListaEstafetas] = useState<{ nome: string }[]>([]);
+  const [listaClientesCadastrados, setListaClientesCadastrados] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [erroCaixa, setErroCaixa] = useState<string | null>(null);
+  const [categoriaAtiva, setCategoriaAtiva] = useState<CategoriaFiltro>('todos');
+
+  const [cliente, setCliente] = useState('');
+  const [contactoCliente, setContactoCliente] = useState('');
+  const [moradaCliente, setMoradaCliente] = useState('');
+  const [mostrarSugestoes, setMostrarSugestoes] = useState(false);
+
+  const [dataPedido, setDataPedido] = useState(() => new Date().toISOString().split('T')[0]);
+  const [canal, setCanal] = useState<'Balcão' | 'WhatsApp' | 'Glovo' | 'Palmbites'>('Balcão');
+  const [formaPagamento, setFormaPagamento] = useState('Dinheiro');
+  const [entregador, setEntregador] = useState('');
+  const [taxaEntrega, setTaxaEntrega] = useState('0.00');
+  const [descontoManual, setDescontoManual] = useState('0.00');
+  
+  const [imprimirAtivado, setImprimirAtivado] = useState(false);
+  const [isProcessando, setIsProcessando] = useState(false);
+
+  const [mostrarModalCombo, setMostrarModalCombo] = useState(false);
+  const [comboSelecionado, setComboSelecionado] = useState<Combo | null>(null);
+  const [selecoesCombo, setSelecoesCombo] = useState<{ [grupoId: string]: ProdutoVinculado[] }>({});
+
+  // 🎯 NOVO ESTADO: Controlo da janela de sucesso
+  const [modalSucesso, setModalSucesso] = useState<{ visivel: boolean; numeroPedido: string }>({ visivel: false, numeroPedido: '' });
+
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   );
 
-  const [dataFiltro, setDataFiltro] = useState(hojeLisboa());
-  const [movimentos, setMovimentos] = useState<MovimentoCaixa[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [processando, setProcessando] = useState(false);
-  const [auditandoHistorico, setAuditandoHistorico] = useState(false);
-  const [caixaFechadoManual, setCaixaFechadoManual] = useState(false);
-  const [mensagemAuditoria, setMensagemAuditoria] = useState('');
-  const [modalAberto, setModalAberto] = useState(false);
+  const regrasPagamento = {
+    'Glovo': [
+      { value: 'Dinheiro Glovo', label: '💰 Dinheiro Glovo (Pago na recolha)' },
+      { value: 'Glovo', label: 'Faturamento Glovo' }
+    ],
+    'WhatsApp': [
+      { value: 'Dinheiro', label: 'Dinheiro' },
+      { value: 'MBWay', label: 'MBWay' },
+      { value: 'Multibanco', label: 'Multibanco' },
+      { value: 'Stripe', label: '💳 Stripe (Cartão/Online)' },
+      { value: 'Caderninho', label: '📓 Caderninho (Pagar depois)' }
+    ],
+    'Palmbites': [
+      { value: 'Dinheiro', label: 'Dinheiro' },
+      { value: 'MBWay', label: 'MBWay' },
+      { value: 'Multibanco', label: 'Multibanco' },
+      { value: 'Stripe', label: '💳 Stripe (Cartão/Online)' }
+    ],
+    'Balcão': [
+      { value: 'Dinheiro', label: 'Dinheiro' },
+      { value: 'MBWay', label: 'MBWay' },
+      { value: 'Multibanco', label: 'Multibanco' },
+      { value: 'Stripe', label: '💳 Stripe (Cartão/Online)' },
+      { value: 'Caderninho', label: '📓 Caderninho (Pagar depois)' }
+    ]
+  };
 
-  const [conferencia, setConferencia] = useState<ConferenciaDia>({
-    pedidosDinheiro: 0,
-    valorPedidosDinheiro: 0,
-    pedidosEncontrados: 0,
-    pedidosCorrigidos: 0,
-    pedidosFaltantes: 0,
-    divergenciasPedidos: 0,
-    duplicadosPedidos: 0,
-    pedidosPendentes: 0,
-    abertura: 0,
-    entradas: 0,
-    saidas: 0,
-    saldoCalculado: 0,
-    fechamentoHistorico: null,
-    diferencaFechamento: null,
-  });
+  async function carregarMenuCompleto() {
+    setLoading(true);
+    setErroCaixa(null);
+    try {
+      const { data: dataProds, error: errorProds } = await supabase
+        .from('produtos')
+        .select('*')
+        .eq('ativo', true)
+        .eq('esgotado', false);
+      
+      if (errorProds) throw errorProds;
 
-  const [form, setForm] = useState({
-    tipo: 'Saida',
-    motivo: '',
-    descricao: '',
-    valor: 0,
-  });
+      const produtosFormatados = (dataProds || []).map((p: any) => ({
+        id: p.id, codigo: p.codigo || '', nome: p.nome || '',
+        precoCardapio: Number(p.preco_cardapio || 0),
+        precoWhatsapp: Number(p.preco_whatsapp || p.preco_cardapio || 0),
+        precoGlovo: Number(p.preco_glovo || p.preco_cardapio || 0),
+        custoUnitario: Number(p.custo_unitario || 0),
+        categoria: (p.categoria || p.tipo || '').toLowerCase().trim(),
+        ativo: true
+      })).filter((p: any) => 
+        p.codigo !== 'ADI001' && p.categoria !== 'embalagem' && p.categoria !== 'material' && p.categoria !== 'uso interno'
+      );
 
-  const motivosMovimento = [
-    'Retirada de Sócio',
-    'Sangria / Depósito',
-    'Compra de Mercadoria',
-    'Pagamento de Entregas / Estafetas',
-    'Pagamento de Fornecedor',
-    'Despesa Operacional',
-    'Reforço de Caixa',
-    'Recebimento Manual',
-    'Outros',
-  ];
+      setProdutos(produtosFormatados);
 
-  // Evita que a carga normal dispare ao mesmo tempo que a auditoria inicial.
-  const inicializacaoConcluidaRef = useRef(false);
-  const inicializacaoEmCursoRef = useRef(false);
+      const clientesMap = new Map();
+      const { data: dataClientesTable } = await supabase.from('clientes').select('*');
+      if (dataClientesTable) {
+        dataClientesTable.forEach((c: any) => {
+          const nome = c.nome || c.cliente || '';
+          if (nome) {
+            clientesMap.set(nome.trim().toLowerCase(), { id: c.id, nome: nome.trim(), contacto: c.contacto || c.telefone || c.telemovel || '', morada: c.morada || c.endereco || '' });
+          }
+        });
+      }
 
-  // ============================================================
-  // LEITURA COMPLETA DO BANCO
-  // ============================================================
-
-  const buscarTodosCaixa = useCallback(async (): Promise<MovimentoCaixa[]> => {
-    const todos: MovimentoCaixa[] = [];
-    let inicio = 0;
-
-    while (true) {
-      const { data, error } = await supabase
-        .from('caixa')
-        .select('id,created_at,data_dia,tipo,descricao,valor')
-        .order('data_dia', { ascending: true })
-        .order('created_at', { ascending: true })
-        .range(inicio, inicio + 999);
-
-      if (error) throw error;
-
-      const lote = (data || []) as MovimentoCaixa[];
-      todos.push(...lote);
-
-      if (lote.length < 1000) break;
-      inicio += 1000;
-    }
-
-    return todos;
-  }, [supabase]);
-
-  const buscarTodosPedidos = useCallback(async (): Promise<PedidoLinha[]> => {
-    const todos: PedidoLinha[] = [];
-    let inicio = 0;
-
-    while (true) {
-      const { data, error } = await supabase
+      const { data: dataPedidosRecentes } = await supabase
         .from('pedidos')
+        .select('cliente, contacto_cliente, endereco')
+        .order('criado_em', { ascending: false })
+        .limit(1000);
+
+      if (dataPedidosRecentes) {
+        dataPedidosRecentes.forEach((p: any) => {
+          const nome = p.cliente ? p.cliente.trim() : '';
+          if (nome && !clientesMap.has(nome.toLowerCase())) {
+            clientesMap.set(nome.toLowerCase(), { id: `hist_${nome}`, nome: nome, contacto: p.contacto_cliente || '', morada: p.endereco || '' });
+          }
+        });
+      }
+
+      setListaClientesCadastrados(Array.from(clientesMap.values()));
+
+      const { data: dataCombos, error: errCombos } = await supabase
+        .from('combos')
         .select(`
-          id,
-          numero_pedido,
-          data_pedido,
-          cliente,
-          forma_pagamento,
-          taxa_entrega,
-          desconto,
-          total_geral,
-          pago,
-          criado_em,
-          itens:itens_pedido (
-            quantidade,
-            preco_unitario
+          id, codigo, nome, descricao, tipo_preco, preco_fixo, desconto_percentual, desconto_absolute:desconto_absoluto, item_gratis_categoria,
+          combo_grupos (
+            id, nome, quantidade_minima, quantidade_maxima, obrigatorio, ordem,
+            combo_grupo_produtos (produto_id, acrescimo_preco, ativo, produto:produtos (id, codigo, nome, categoria, preco_cardapio, preco_whatsapp, preco_glovo))
           )
         `)
-        .order('numero_pedido', { ascending: true })
-        .range(inicio, inicio + 999);
+        .eq('ativo', true)
+        .eq('esgotado', false);
 
-      if (error) throw error;
+      if (errCombos) throw errCombos;
 
-      const lote = (data || []) as PedidoLinha[];
-      todos.push(...lote);
+      const combosCarregados = (dataCombos || []).map((cb: any) => ({
+        ...cb, desconto_absoluto: cb.desconto_absolute || 0,
+        combo_grupos: (cb.combo_grupos || []).sort((a: any, b: any) => a.ordem - b.ordem)
+      }));
 
-      if (lote.length < 1000) break;
-      inicio += 1000;
-    }
+      setCombos(combosCarregados);
 
-    return todos;
-  }, [supabase]);
+      const { data: dataEsts } = await supabase.from('estafetas').select('nome').order('nome', { ascending: true });
+      setListaEstafetas(dataEsts || []);
 
-  // ============================================================
-  // AGRUPAMENTO DE PEDIDOS
-  // ============================================================
-
-  const agruparPedidos = useCallback((linhas: PedidoLinha[]): PedidoAuditado[] => {
-    const mapa = new Map<number, any>();
-
-    for (const linha of linhas) {
-      const numeroPedido = Number(linha.numero_pedido);
-      if (!numeroPedido) continue;
-
-      const dataPedido =
-        soData(linha.data_pedido) || soData(linha.criado_em);
-
-      if (!dataPedido) continue;
-
-      if (!mapa.has(numeroPedido)) {
-        mapa.set(numeroPedido, {
-          numero_pedido: numeroPedido,
-          data_pedido: dataPedido,
-          cliente: linha.cliente || 'Cliente Anónimo',
-          forma_pagamento: linha.forma_pagamento || '',
-          pago: linha.pago === true,
-          itens: [...(linha.itens || [])],
-          taxa_entrega: num(linha.taxa_entrega),
-          desconto: num(linha.desconto),
-          total_banco: num(linha.total_geral),
-        });
-      } else {
-        const p = mapa.get(numeroPedido);
-
-        p.itens.push(...(linha.itens || []));
-        p.taxa_entrega = Math.max(
-          p.taxa_entrega,
-          num(linha.taxa_entrega)
-        );
-        p.desconto = Math.max(
-          p.desconto,
-          num(linha.desconto)
-        );
-        p.total_banco = Math.max(
-          p.total_banco,
-          num(linha.total_geral)
-        );
-
-        if (linha.cliente) p.cliente = linha.cliente;
-        if (linha.forma_pagamento)
-          p.forma_pagamento = linha.forma_pagamento;
-        if (linha.pago === true) p.pago = true;
-      }
-    }
-
-    return Array.from(mapa.values()).map((p: any) => {
-      const subtotalItens = p.itens.reduce(
-        (acc: number, item: any) =>
-          acc + num(item.quantidade) * num(item.preco_unitario),
-        0
-      );
-
-      const total =
-        subtotalItens > 0
-          ? subtotalItens + p.taxa_entrega - p.desconto
-          : p.total_banco;
-
-      return {
-        numero_pedido: p.numero_pedido,
-        data_pedido: p.data_pedido,
-        cliente: p.cliente,
-        forma_pagamento: p.forma_pagamento,
-        total_geral: Number(Math.max(0, total).toFixed(2)),
-        pago: p.pago,
-      };
-    });
-  }, []);
-
-  // ============================================================
-  // RECONHECIMENTO DE PEDIDO NO HISTÓRICO DO CAIXA
-  //
-  // Aceita:
-  // [Pedido #415]
-  // Pedido #415
-  // pedido 415
-  // Venda João pedido 415
-  //
-  // Isso evita duplicar entradas manuais antigas que já citavam
-  // o número do pedido.
-  // ============================================================
-
-  const entradasDoPedido = useCallback(
-    (pedido: PedidoAuditado, caixa: MovimentoCaixa[]) => {
-      const regex = new RegExp(
-        `\\bpedido\\s*#?\\s*${pedido.numero_pedido}\\b`,
-        'i'
-      );
-
-      return caixa.filter(
-        (mov) =>
-          normalizar(mov.tipo) === 'entrada' &&
-          regex.test(mov.descricao || '')
-      );
-    },
-    []
-  );
-
-  const inserirEntradaPedido = useCallback(
-    async (pedido: PedidoAuditado): Promise<boolean> => {
-      // TRAVA 1: antes de qualquer INSERT, consulta novamente o banco.
-      // Isso evita que auditoria histórica e conferência diária lancem
-      // o mesmo pedido quase ao mesmo tempo.
-      const { data: entradasAtuais, error: erroConsulta } = await supabase
-        .from('caixa')
-        .select('id,created_at,data_dia,tipo,descricao,valor')
-        .eq('data_dia', pedido.data_pedido)
-        .eq('tipo', 'Entrada');
-
-      if (erroConsulta) throw erroConsulta;
-
-      const regex = new RegExp(
-        `\\bpedido\\s*#?\\s*${pedido.numero_pedido}\\b`,
-        'i'
-      );
-
-      const jaExiste = ((entradasAtuais || []) as MovimentoCaixa[]).some(
-        (mov) => regex.test(mov.descricao || '')
-      );
-
-      if (jaExiste) {
-        return false;
-      }
-
-      // TRAVA 2: descrição padronizada com o número do pedido.
-      // A auditoria futura sempre localizará esta entrada por Pedido #N.
-      const { error } = await supabase.from('caixa').insert([
-        {
-          data_dia: pedido.data_pedido,
-          tipo: 'Entrada',
-          descricao: descricaoEntradaPedido(pedido),
-          valor: pedido.total_geral,
-        },
-      ]);
-
-      if (error) throw error;
-      return true;
-    },
-    [supabase]
-  );
-
-  const movimentosDoDia = useCallback(
-    (caixa: MovimentoCaixa[], data: string) =>
-      caixa.filter((mov) => soData(mov.data_dia) === data),
-    []
-  );
-
-  // ============================================================
-  // CONFERÊNCIA COMPLETA DE UM DIA
-  //
-  // Tudo entra no cálculo:
-  // - Abertura
-  // - Entradas de pedidos
-  // - Outras entradas
-  // - Pagamentos
-  // - Pagamentos estafetas
-  // - Sangrias / depósitos
-  // - Retiradas de sócios
-  // - Todas as demais Saidas
-  //
-  // Fechamento é apenas fotografia do saldo e não é somado.
-  // ============================================================
-
-  const conferirDia = useCallback(
-    async (
-      data: string,
-      corrigirPedidos = true,
-      pedidosProntos?: PedidoAuditado[],
-      caixaPronto?: MovimentoCaixa[]
-    ): Promise<ConferenciaDia> => {
-      const pedidos =
-        pedidosProntos || agruparPedidos(await buscarTodosPedidos());
-
-      const caixa = caixaPronto
-        ? [...caixaPronto]
-        : await buscarTodosCaixa();
-
-      const pedidosDia = pedidos.filter(
-        (p) => p.data_pedido === data && dinheiro(p.forma_pagamento)
-      );
-
-      const pendentes = pedidosDia.filter((p) => !p.pago);
-      const pagos = pedidosDia.filter((p) => p.pago);
-
-      let encontrados = 0;
-      let corrigidos = 0;
-      let faltantes = 0;
-      let divergencias = 0;
-      let duplicados = 0;
-
-      for (const pedido of pagos) {
-        const encontradosCaixa = entradasDoPedido(pedido, caixa);
-
-        if (encontradosCaixa.length === 0) {
-          faltantes++;
-
-          if (corrigirPedidos) {
-            const inseriu = await inserirEntradaPedido(pedido);
-
-            if (inseriu) {
-              corrigidos++;
-
-              caixa.push({
-                id: `novo-${pedido.numero_pedido}`,
-                created_at: new Date().toISOString(),
-                data_dia: pedido.data_pedido,
-                tipo: 'Entrada',
-                descricao: descricaoEntradaPedido(pedido),
-                valor: pedido.total_geral,
-              });
-            } else {
-              // Outro processo já inseriu entre a leitura e a gravação.
-              // Recarrega o estado lógico sem criar duplicidade.
-              encontrados++;
-            }
-          }
-
-          continue;
-        }
-
-        encontrados++;
-
-        if (encontradosCaixa.length > 1) {
-          duplicados++;
-        }
-
-        const soma = encontradosCaixa.reduce(
-          (acc, mov) => acc + num(mov.valor),
-          0
-        );
-
-        if (!valorIgual(soma, pedido.total_geral)) {
-          divergencias++;
-        }
-      }
-
-      const movimentosAtualizados = movimentosDoDia(caixa, data);
-
-      const abertura = movimentosAtualizados
-        .filter((m) => normalizar(m.tipo) === 'abertura')
-        .reduce((acc, m) => acc + num(m.valor), 0);
-
-      const entradas = movimentosAtualizados
-        .filter((m) => normalizar(m.tipo) === 'entrada')
-        .reduce((acc, m) => acc + num(m.valor), 0);
-
-      const saidas = movimentosAtualizados
-        .filter((m) => normalizar(m.tipo) === 'saida')
-        .reduce((acc, m) => acc + num(m.valor), 0);
-
-      const saldoCalculado = abertura + entradas - saidas;
-
-      const fechamentos = movimentosAtualizados
-        .filter((m) => normalizar(m.tipo) === 'fechamento')
-        .sort(
-          (a, b) =>
-            new Date(b.created_at).getTime() -
-            new Date(a.created_at).getTime()
-        );
-
-      const fechamentoHistorico =
-        fechamentos.length > 0 ? num(fechamentos[0].valor) : null;
-
-      const diferencaFechamento =
-        fechamentoHistorico === null
-          ? null
-          : Number(
-              (saldoCalculado - fechamentoHistorico).toFixed(2)
-            );
-
-      return {
-        pedidosDinheiro: pagos.length,
-        valorPedidosDinheiro: pagos.reduce(
-          (acc, p) => acc + p.total_geral,
-          0
-        ),
-        pedidosEncontrados: encontrados,
-        pedidosCorrigidos: corrigidos,
-        pedidosFaltantes: faltantes,
-        divergenciasPedidos: divergencias,
-        duplicadosPedidos: duplicados,
-        pedidosPendentes: pendentes.length,
-        abertura,
-        entradas,
-        saidas,
-        saldoCalculado,
-        fechamentoHistorico,
-        diferencaFechamento,
-      };
-    },
-    [
-      agruparPedidos,
-      buscarTodosCaixa,
-      buscarTodosPedidos,
-      entradasDoPedido,
-      inserirEntradaPedido,
-      movimentosDoDia,
-    ]
-  );
-
-  // ============================================================
-  // AUDITORIA HISTÓRICA COMPLETA
-  //
-  // Executa uma vez por versão neste navegador.
-  // É idempotente: se executar novamente, não duplica pedidos
-  // porque procura o número do pedido nas Entradas existentes.
-  //
-  // NÃO apaga nem altera nenhuma movimentação histórica.
-  // ============================================================
-
-  const auditoriaHistoricaCompleta = useCallback(async () => {
-    if (typeof window === 'undefined') return;
-
-    const jaExecutou = localStorage.getItem(AUDITORIA_LOCAL_V4);
-    if (jaExecutou === 'sim') return;
-
-    setAuditandoHistorico(true);
-    setMensagemAuditoria(
-      'A auditar todo o histórico: pedidos, entradas, saídas, estafetas, sangrias, pagamentos e fechamentos...'
-    );
-
-    try {
-      const pedidos = agruparPedidos(await buscarTodosPedidos());
-      let caixa = await buscarTodosCaixa();
-
-      const pedidosDinheiroPagos = pedidos.filter(
-        (p) => dinheiro(p.forma_pagamento) && p.pago
-      );
-
-      let entradasCriadas = 0;
-      let divergenciasPedidos = 0;
-      let duplicadosPedidos = 0;
-
-      // 1. Corrige entradas ausentes de pedidos.
-      for (const pedido of pedidosDinheiroPagos) {
-        const achados = entradasDoPedido(pedido, caixa);
-
-        if (achados.length === 0) {
-          const inseriu = await inserirEntradaPedido(pedido);
-
-          if (inseriu) {
-            entradasCriadas++;
-
-            caixa.push({
-              id: `auditoria-${pedido.numero_pedido}`,
-              created_at: new Date().toISOString(),
-              data_dia: pedido.data_pedido,
-              tipo: 'Entrada',
-              descricao: descricaoEntradaPedido(pedido),
-              valor: pedido.total_geral,
-            });
-          }
-        } else {
-          if (achados.length > 1) duplicadosPedidos++;
-
-          const soma = achados.reduce(
-            (acc, mov) => acc + num(mov.valor),
-            0
-          );
-
-          if (!valorIgual(soma, pedido.total_geral)) {
-            divergenciasPedidos++;
-          }
-        }
-      }
-
-      // 2. Recarrega caixa com as correções realmente gravadas.
-      caixa = await buscarTodosCaixa();
-
-      // 3. Audita TODOS os dias existentes no caixa/pedidos.
-      const dias = Array.from(
-        new Set([
-          ...caixa.map((m) => soData(m.data_dia)),
-          ...pedidos.map((p) => p.data_pedido),
-        ])
-      )
-        .filter(Boolean)
-        .sort();
-
-      let diasAuditados = 0;
-      let diasComDiferenca = 0;
-
-      for (const data of dias) {
-        const resultado = await conferirDia(
-          data,
-          false,
-          pedidos,
-          caixa
-        );
-
-        diasAuditados++;
-
-        if (
-          resultado.diferencaFechamento !== null &&
-          !valorIgual(resultado.diferencaFechamento, 0)
-        ) {
-          diasComDiferenca++;
-        }
-      }
-
-      const resumo: ResultadoAuditoriaHistorica = {
-        totalPedidosDinheiro: pedidosDinheiroPagos.length,
-        entradasCriadas,
-        divergenciasPedidos,
-        duplicadosPedidos,
-        diasAuditados,
-        diasComDiferenca,
-      };
-
-      localStorage.setItem(AUDITORIA_LOCAL_V4, 'sim');
-
-      setMensagemAuditoria(
-        `Auditoria completa concluída · ` +
-          `${resumo.totalPedidosDinheiro} pedido(s) em dinheiro · ` +
-          `${resumo.entradasCriadas} entrada(s) histórica(s) corrigida(s) · ` +
-          `${resumo.diasAuditados} dia(s) conferido(s) · ` +
-          `${resumo.diasComDiferenca} dia(s) com diferença histórica`
-      );
-    } catch (error: any) {
-      console.error('Erro na auditoria histórica completa:', error);
-
-      setMensagemAuditoria(
-        `ERRO NA AUDITORIA: ${
-          error?.message || 'erro desconhecido'
-        }`
-      );
-    } finally {
-      setAuditandoHistorico(false);
-    }
-  }, [
-    agruparPedidos,
-    buscarTodosCaixa,
-    buscarTodosPedidos,
-    conferirDia,
-    entradasDoPedido,
-    inserirEntradaPedido,
-  ]);
-
-  // ============================================================
-  // ABERTURA AUTOMÁTICA
-  //
-  // Somente HOJE.
-  // Se já houver abertura, não duplica.
-  // Preferência para o último Fechamento MANUAL.
-  // Durante a transição, se ainda não existir fechamento manual,
-  // usa o fechamento anterior disponível.
-  // ============================================================
-
-  const garantirAberturaHoje = useCallback(
-    async (caixa: MovimentoCaixa[]) => {
-      const hoje = hojeLisboa();
-
-      const existeAberturaHoje = caixa.some(
-        (m) =>
-          soData(m.data_dia) === hoje &&
-          normalizar(m.tipo) === 'abertura'
-      );
-
-      if (existeAberturaHoje) return false;
-
-      const fechamentosAnteriores = caixa
-        .filter(
-          (m) =>
-            normalizar(m.tipo) === 'fechamento' &&
-            soData(m.data_dia) < hoje
-        )
-        .sort((a, b) => {
-          const manualA = ehFechoManual(a) ? 1 : 0;
-          const manualB = ehFechoManual(b) ? 1 : 0;
-
-          // Primeiro ordena por data; dentro da mesma data, manual ganha.
-          const dataCmp = soData(b.data_dia).localeCompare(
-            soData(a.data_dia)
-          );
-          if (dataCmp !== 0) return dataCmp;
-
-          if (manualA !== manualB) return manualB - manualA;
-
-          return (
-            new Date(b.created_at).getTime() -
-            new Date(a.created_at).getTime()
-          );
-        });
-
-      const ultimo = fechamentosAnteriores[0];
-
-      if (!ultimo) return false;
-
-      const { error } = await supabase.from('caixa').insert([
-        {
-          data_dia: hoje,
-          tipo: 'Abertura',
-          descricao: 'Fundo de Maneio (Abertura Automática)',
-          valor: num(ultimo.valor),
-        },
-      ]);
-
-      if (error) throw error;
-
-      return true;
-    },
-    [supabase]
-  );
-
-  // ============================================================
-  // CARREGAMENTO DA TELA
-  // ============================================================
-
-  const carregarCaixa = useCallback(async () => {
-    setLoading(true);
-
-    try {
-      let caixa = await buscarTodosCaixa();
-
-      if (dataFiltro === hojeLisboa()) {
-        const abriu = await garantirAberturaHoje(caixa);
-
-        if (abriu) {
-          caixa = await buscarTodosCaixa();
-        }
-      }
-
-      // Só o fechamento MANUAL bloqueia alterações.
-      // Fechos automáticos antigos ficam no histórico, mas não mandam
-      // no novo fluxo.
-      const listaDia = movimentosDoDia(caixa, dataFiltro);
-
-      const fechadoManual = listaDia.some(ehFechoManual);
-      setCaixaFechadoManual(fechadoManual);
-
-      const resultado = await conferirDia(
-        dataFiltro,
-        !fechadoManual,
-        undefined,
-        caixa
-      );
-
-      setConferencia(resultado);
-
-      const caixaFinal =
-        resultado.pedidosCorrigidos > 0
-          ? await buscarTodosCaixa()
-          : caixa;
-
-      setMovimentos(
-        movimentosDoDia(caixaFinal, dataFiltro).sort(
-          (a, b) =>
-            new Date(b.created_at).getTime() -
-            new Date(a.created_at).getTime()
-        )
-      );
-    } catch (error: any) {
-      console.error(error);
-      alert(
-        `Erro ao carregar caixa: ${
-          error?.message || 'erro desconhecido'
-        }`
-      );
+    } catch (err: any) {
+      setErroCaixa(`Falha crítica de carregamento: ${err.message || err}`);
     } finally {
       setLoading(false);
     }
-  }, [
-    buscarTodosCaixa,
-    conferirDia,
-    dataFiltro,
-    garantirAberturaHoje,
-    movimentosDoDia,
-  ]);
+  }
 
-  useEffect(() => {
-    let ativo = true;
+  useEffect(() => { carregarMenuCompleto(); }, [canal]);
 
-    const iniciar = async () => {
-      // React pode executar efeitos de inicialização mais de uma vez em
-      // determinados cenários. Esta trava impede duas auditorias/cargas
-      // simultâneas no mesmo navegador.
-      if (inicializacaoEmCursoRef.current || inicializacaoConcluidaRef.current) {
-        return;
+  const getPrecoPorCanal = (prod: any) => {
+    const precoGlovo = prod.precoGlovo !== undefined ? prod.precoGlovo : prod.preco_glovo;
+    const precoWhatsapp = prod.precoWhatsapp !== undefined ? prod.precoWhatsapp : prod.preco_whatsapp;
+    const precoCardapio = prod.precoCardapio !== undefined ? prod.precoCardapio : prod.preco_cardapio;
+
+    if (canal === 'Glovo') return Number(precoGlovo || precoCardapio || 0);
+    if (canal === 'WhatsApp') return Number(precoWhatsapp || precoCardapio || 0);
+    return Number(precoCardapio || 0);
+  };
+
+  const selecionarClienteSugerido = (c: any) => {
+    setCliente(c.nome || c.Nome || c.nome_cliente || c.cliente || c.NOME || '');
+    setContactoCliente(c.contacto || c.telefone || c.telemovel || c.Contacto || '');
+    setMoradaCliente(c.morada || c.endereco || c.Morada || '');
+    setMostrarSugestoes(false); 
+  };
+
+  const adicionarAoCarrinho = (produto: Produto) => {
+    const precoAtual = getPrecoPorCanal(produto);
+    setCarrinho((prev) => {
+      const itemExistente = prev.find((item) => item.produto.id === produto.id && !item.isCombo);
+      if (itemExistente) {
+        return prev.map((item) => item.produto.id === produto.id && !item.isCombo ? { ...item, quantidade: item.quantidade + 1 } : item);
+      }
+      return [...prev, { produto, quantidade: 1, precoAplicado: precoAtual }];
+    });
+  };
+
+  const removerDoCarrinho = (indexParaRemover: number) => {
+    setCarrinho((prev) => prev.map((item, idx) => (idx === indexParaRemover ? { ...item, quantidade: item.quantidade - 1 } : item)).filter((item) => item.quantidade > 0));
+  };
+
+  const iniciarMontagemCombo = (combo: Combo) => {
+    setComboSelecionado(combo);
+    setSelecoesCombo({});
+    setMostrarModalCombo(true);
+  };
+
+  const toggleSelecaoCombo = (grupo: GrupoCombo, item: ProdutoVinculado) => {
+    setSelecoesCombo(prev => {
+      const selecoesDoGrupo = prev[grupo.id] || [];
+      if (grupo.quantidade_maxima === 1) {
+        const jaSelecionado = selecoesDoGrupo.some(s => s.produto_id === item.produto_id);
+        if (jaSelecionado) return { ...prev, [grupo.id]: [] };
+        else return { ...prev, [grupo.id]: [item] };
+      }
+      const currentCount = selecoesDoGrupo.filter(s => s.produto_id === item.produto_id).length;
+      const remainingSpace = grupo.quantidade_maxima - selecoesDoGrupo.length;
+      const maxAllowedForThisItem = Math.min(grupo.quantidade_maxima, currentCount + remainingSpace);
+
+      let newCount = currentCount + 1;
+      if (newCount > maxAllowedForThisItem) newCount = 0; 
+      const otherItems = selecoesDoGrupo.filter(s => s.produto_id !== item.produto_id);
+      const newItemsToAdd = Array(newCount).fill(item);
+      return { ...prev, [grupo.id]: [...otherItems, ...newItemsToAdd] };
+    });
+  };
+
+  const confirmarMontagemCombo = () => {
+    if (!comboSelecionado) return;
+
+    for (const grupo of comboSelecionado.combo_grupos) {
+      const selecoes = selecoesCombo[grupo.id] || [];
+      if (grupo.obrigatorio && selecoes.length < grupo.quantidade_minima) {
+        return alert(`O grupo "${grupo.nome}" exige no mínimo ${grupo.quantidade_minima} item(ns).`);
+      }
+    }
+
+    let somaPrecosOriginais = 0, somaAcrescimos = 0;
+    const itensComDetalhes: any[] = [], idsDosProdutosBase: string[] = [];
+
+    Object.values(selecoesCombo).forEach(selecoesGrupo => {
+      selecoesGrupo.forEach(item => {
+        const precoItem = getPrecoPorCanal(item.produto);
+        somaPrecosOriginais += precoItem;
+        somaAcrescimos += Number(item.acrescimo_preco);
+        idsDosProdutosBase.push(item.produto_id);
+        
+        itensComDetalhes.push({
+          id: item.produto_id, nome: item.produto.nome,
+          categoria: (item.produto.categoria || '').toLowerCase().trim(),
+          precoBase: precoItem, acrescimo: Number(item.acrescimo_preco), isGratis: false
+        });
+      });
+    });
+
+    let precoBaseCombo = 0, detalheDesconto = '';
+
+    if (comboSelecionado.nome.toLowerCase().includes('para dois')) {
+      const descontoComboForcado = canal === 'Glovo' ? 1.70 : 1.50;
+      precoBaseCombo = Math.max(0, somaPrecosOriginais - descontoComboForcado);
+      detalheDesconto = `🔻 Desconto Combo (-${descontoComboForcado.toFixed(2)}€)`;
+    } else if (comboSelecionado.tipo_preco === 'fixo') {
+      precoBaseCombo = Number(comboSelecionado.preco_fixo);
+      detalheDesconto = `🏷️ Preço Fixo Especial`;
+    } else if (comboSelecionado.tipo_preco === 'desconto') {
+      const percentual = Number(comboSelecionado.desconto_percentual) || 0;
+      precoBaseCombo = somaPrecosOriginais * (1 - percentual / 100);
+      detalheDesconto = `🔻 Desconto Combo (-${percentual}%)`;
+    } else if (comboSelecionado.tipo_preco === 'desconto_fixo') {
+      const descontoFx = Number(comboSelecionado.desconto_absoluto) || 0;
+      precoBaseCombo = Math.max(0, somaPrecosOriginais - descontoFx);
+      detalheDesconto = `🔻 Desconto Combo (-${descontoFx.toFixed(2)}€)`;
+    } else if (comboSelecionado.tipo_preco === 'item_gratis') {
+      const catGratis = (comboSelecionado.item_gratis_categoria || '').toLowerCase().trim();
+      let itemParaFicarGratis = null;
+
+      if (catGratis === 'mais_barato') {
+        if (itensComDetalhes.length > 0) itemParaFicarGratis = itensComDetalhes.reduce((prev, curr) => prev.precoBase < curr.precoBase ? prev : curr);
+      } else {
+        const itensDaCat = itensComDetalhes.filter(it => it.categoria === catGratis || (catGratis === 'sobremesa' && it.categoria === 'brownie'));
+        if (itensDaCat.length > 0) itemParaFicarGratis = itensDaCat[0];
       }
 
-      inicializacaoEmCursoRef.current = true;
+      if (itemParaFicarGratis) {
+        itemParaFicarGratis.isGratis = true;
+        precoBaseCombo = Math.max(0, somaPrecosOriginais - itemParaFicarGratis.precoBase);
+      } else precoBaseCombo = somaPrecosOriginais;
+    }
 
-      try {
-        await auditoriaHistoricaCompleta();
-
-        if (ativo) {
-          await carregarCaixa();
-          inicializacaoConcluidaRef.current = true;
-        }
-      } finally {
-        inicializacaoEmCursoRef.current = false;
+    const detalhesFormatados = itensComDetalhes.map(it => {
+      if (it.isGratis) {
+         const txtAcrescimo = it.acrescimo > 0 ? ` (+${it.acrescimo.toFixed(2)}€ tx)` : '';
+         return `${it.nome} (🎁 Grátis${txtAcrescimo})`;
+      } else {
+         return `${it.nome} (${(it.precoBase + it.acrescimo).toFixed(2)}€)`;
       }
-    };
+    });
 
-    iniciar();
+    if (detalheDesconto) detalhesFormatados.push(detalheDesconto);
 
-    return () => {
-      ativo = false;
-    };
-  }, [auditoriaHistoricaCompleta, carregarCaixa]);
+    const precoFinalAplicado = precoBaseCombo + somaAcrescimos;
+    const precoSemDesconto = somaPrecosOriginais + somaAcrescimos;
 
-  useEffect(() => {
-    // IMPORTANTE: no primeiro render, carregarCaixa já é chamado pelo
-    // efeito de inicialização acima. Portanto este efeito só reage às
-    // mudanças de data DEPOIS que a inicialização terminou.
-    if (!inicializacaoConcluidaRef.current) return;
-
-    carregarCaixa();
-  }, [dataFiltro, carregarCaixa]);
-
-  // Sincronização futura automática.
-  useEffect(() => {
-    const canal = supabase
-      .channel('caixa-pedidos-auditoria-v5')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'pedidos',
+    setCarrinho((prev) => [
+      ...prev,
+      {
+        produto: {
+          id: `${comboSelecionado.id}_${Date.now()}`, codigo: 'COMBO', nome: comboSelecionado.nome,
+          precoCardapio: precoFinalAplicado, precoWhatsapp: precoFinalAplicado, precoGlovo: precoFinalAplicado, 
+          custoUnitario: 0, categoria: 'combo', ativo: true
         },
-        () => carregarCaixa()
-      )
-      .subscribe();
+        quantidade: 1, isCombo: true, comboNome: comboSelecionado.nome, 
+        detalhesCombo: detalhesFormatados, 
+        precoOriginal: Number(precoSemDesconto.toFixed(2)), 
+        precoAplicado: Number(precoFinalAplicado.toFixed(2)),
+        itensBaseId: idsDosProdutosBase 
+      }
+    ]);
 
-    return () => {
-      supabase.removeChannel(canal);
-    };
-  }, [carregarCaixa, supabase]);
+    setMostrarModalCombo(false);
+  };
 
-  // ============================================================
-  // FECHAMENTO MANUAL
-  // ============================================================
-
-  const fecharCaixaManual = async () => {
-    if (caixaFechadoManual) return;
-
-    setProcessando(true);
-
+  const descontarStockAutomaticamente = async (itensDoCarrinho: ItemCarrinho[], numeroDaFatura: string) => {
     try {
-      const final = await conferirDia(dataFiltro, true);
-      setConferencia(final);
+      const consumos = new Map<string, number>();
+      let quantidadePratos = 0; 
 
-      const faltandoDepoisCorrecao =
-        final.pedidosFaltantes - final.pedidosCorrigidos;
+      for (const item of itensDoCarrinho) {
+        const cat = (item.produto.categoria || '').toLowerCase();
+        
+        let qtdPratosDesteItem = item.quantidade;
+        if (cat === 'combo' && (item.produto.nome.toLowerCase().includes('dois') || item.produto.nome.toLowerCase().includes('duplo'))) {
+          qtdPratosDesteItem = item.quantidade * 2;
+        }
 
-      if (
-        final.divergenciasPedidos > 0 ||
-        final.duplicadosPedidos > 0 ||
-        faltandoDepoisCorrecao > 0
-      ) {
-        alert(
-          `⚠️ CAIXA NÃO FECHADO\n\n` +
-            `Divergências em pedidos: ${final.divergenciasPedidos}\n` +
-            `Possíveis duplicados: ${final.duplicadosPedidos}\n` +
-            `Pedidos ainda faltando: ${Math.max(
-              0,
-              faltandoDepoisCorrecao
-            )}\n\n` +
-            `Corrija as divergências antes do fechamento.`
-        );
+        if (cat === 'batata' || cat === 'combo') {
+          quantidadePratos += qtdPratosDesteItem;
+        }
 
-        await carregarCaixa();
-        return;
+        const idsParaProcessar = item.isCombo && item.itensBaseId && item.itensBaseId.length > 0 ? item.itensBaseId : [item.produto.id];
+        
+        for (const produtoBaseId of idsParaProcessar) {
+          if (!produtoBaseId) continue;
+          const qtdAtual = consumos.get(produtoBaseId) || 0;
+          consumos.set(produtoBaseId, qtdAtual + item.quantidade);
+        }
       }
 
-      // Recalcula com o banco já corrigido.
-      const caixaAtual = await buscarTodosCaixa();
-      const movimentosAtualizados = movimentosDoDia(
-        caixaAtual,
-        dataFiltro
-      );
+      for (const [produtoId, qtdGasta] of consumos.entries()) {
+        const { data: prodData, error: errSelect } = await supabase.from('produtos').select('id, nome, estoque_atual').eq('id', produtoId).single();
+        
+        if (prodData && !errSelect) {
+          const stockAtual = Number(prodData.estoque_atual) || 0;
 
-      const abertura = movimentosAtualizados
-        .filter((m) => normalizar(m.tipo) === 'abertura')
-        .reduce((acc, m) => acc + num(m.valor), 0);
+          // Permite stock negativo.
+          // Ex.: 0 - 1 = -1, -1 - 1 = -2, etc.
+          const novoStockProduto = stockAtual - qtdGasta;
+          
+          await supabase.from('produtos').update({ estoque_atual: novoStockProduto }).eq('id', produtoId);
 
-      const entradas = movimentosAtualizados
-        .filter((m) => normalizar(m.tipo) === 'entrada')
-        .reduce((acc, m) => acc + num(m.valor), 0);
+          await supabase.from('movimentos_estoque').insert([{
+            produto_id: produtoId, nome_produto: prodData.nome, tipo_movimento: 'SAÍDA', quantidade: qtdGasta,
+            saldo_atualizado: novoStockProduto, origem: 'VENDA PDV', observacoes: `Pedido #${numeroDaFatura}`
+          }]);
+        }
+      }
 
-      const saidas = movimentosAtualizados
-        .filter((m) => normalizar(m.tipo) === 'saida')
-        .reduce((acc, m) => acc + num(m.valor), 0);
+      if (quantidadePratos > 0) {
+        const { data: todasEmbalagens } = await supabase.from('produtos').select('id, nome, estoque_atual, categoria');
 
-      const saldo = abertura + entradas - saidas;
+        if (todasEmbalagens) {
+          const embsParaDescontar = todasEmbalagens.filter(e => {
+            const cat = (e.categoria || '').toLowerCase();
+            return cat.includes('embalagem') || cat.includes('material') || cat.includes('uso');
+          });
 
-      const confirmar = confirm(
-        `FECHAMENTO MANUAL - ${dataBR(dataFiltro)}\n\n` +
-          `Abertura: ${abertura.toFixed(2)}€\n` +
-          `Entradas totais: ${entradas.toFixed(2)}€\n` +
-          `Saídas totais: ${saidas.toFixed(2)}€\n` +
-          `-----------------------------\n` +
-          `SALDO ESPERADO: ${saldo.toFixed(2)}€\n\n` +
-          `Pedidos Dinheiro/Dinheiro Glovo: ${final.pedidosDinheiro}\n` +
-          `Valor desses pedidos: ${final.valorPedidosDinheiro.toFixed(
-            2
-          )}€\n\n` +
-          `Confirma que conferiu o dinheiro físico?`
-      );
+          for (const emb of embsParaDescontar) {
+            const nomeEmb = emb.nome.toLowerCase();
+            if (nomeEmb.includes('saco') || nomeEmb.includes('garfo') || nomeEmb.includes('pote') || nomeEmb.includes('embalagem')) {
+              const stockAtualEmb = Number(emb.estoque_atual) || 0;
 
-      if (!confirmar) return;
+              // Embalagens e materiais também podem ficar negativos,
+              // para o sistema continuar a contabilizar o consumo real.
+              const novoStockEmb = stockAtualEmb - quantidadePratos;
 
-      const { error } = await supabase.from('caixa').insert([
-        {
-          data_dia: dataFiltro,
-          tipo: 'Fechamento',
-          descricao: 'Fecho do Dia (Manual)',
-          valor: Number(saldo.toFixed(2)),
-        },
-      ]);
+              await supabase.from('produtos').update({ estoque_atual: novoStockEmb }).eq('id', emb.id);
+              await supabase.from('movimentos_estoque').insert([{
+                produto_id: emb.id, nome_produto: emb.nome, tipo_movimento: 'SAÍDA', quantidade: quantidadePratos,
+                saldo_atualizado: novoStockEmb, origem: 'VENDA PDV (Automático)', observacoes: `Acompanhamento Pedido #${numeroDaFatura}`
+              }]);
+            }
+          }
+        }
+      }
 
-      if (error) throw error;
-
-      alert(
-        `🔒 Caixa de ${dataBR(
-          dataFiltro
-        )} fechado manualmente com sucesso!`
-      );
-
-      await carregarCaixa();
-    } catch (error: any) {
-      alert(
-        `Erro ao fechar caixa: ${
-          error?.message || 'erro desconhecido'
-        }`
-      );
-    } finally {
-      setProcessando(false);
+    } catch (err) {
+      console.error("Erro fatal ao descontar stock:", err);
     }
   };
 
-  // ============================================================
-  // MOVIMENTO MANUAL
-  // ============================================================
+  const subtotalProdutos = carrinho.reduce((acc, item) => acc + item.precoAplicado * item.quantidade, 0);
+  const totalGeral = Math.max(0, subtotalProdutos - (parseFloat(descontoManual) || 0)) + (parseFloat(taxaEntrega) || 0);
 
-  const salvarMovimentoManual = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (caixaFechadoManual) {
-      alert('Este caixa já foi fechado manualmente.');
-      return;
-    }
-
-    if (!form.motivo) {
-      alert('Selecione o motivo do movimento.');
-      return;
-    }
-
-    if (form.motivo === 'Outros' && !form.descricao.trim()) {
-      alert('Em "Outros", informe uma descrição para o movimento.');
-      return;
-    }
-
-    if (form.valor <= 0) {
-      alert('Informe um valor maior que zero.');
-      return;
-    }
-
-    const detalhe = form.descricao.trim();
-    const descricaoFinal = detalhe
-      ? `[${form.motivo}] ${detalhe}`
-      : `[${form.motivo}]`;
-
-    setProcessando(true);
+  const finalizarVenda = async () => {
+    if (carrinho.length === 0) return alert('O carrinho está vazio!');
+    if (!cliente.trim()) return alert('Insira o nome do cliente!');
+    
+    setIsProcessando(true);
+    const estaPago = formaPagamento !== 'Caderninho';
+    const agora = new Date();
+    const dataHoraCriacaoCompleta = `${dataPedido}T${agora.toTimeString().split(' ')[0]}`;
 
     try {
-      const { error } = await supabase.from('caixa').insert([
-        {
-          data_dia: dataFiltro,
-          tipo: form.tipo,
-          descricao: descricaoFinal,
-          valor: Number(form.valor.toFixed(2)),
-        },
-      ]);
+      const nomeDoCliente = cliente.trim();
+      
+      const { data: clienteExistente } = await supabase.from('clientes').select('id').eq('nome', nomeDoCliente).single();
+        
+      if (clienteExistente) {
+        await supabase.from('clientes').update({ contacto: contactoCliente.trim(), morada: moradaCliente.trim() }).eq('id', clienteExistente.id);
+      } else {
+        await supabase.from('clientes').insert([{ nome: nomeDoCliente, contacto: contactoCliente.trim(), morada: moradaCliente.trim() }]);
+      }
 
-      if (error) throw error;
+      const { data: todosPedidosNum } = await supabase
+        .from('pedidos')
+        .select('numero_pedido');
+        
+      let maiorNumero = 365;
+      if (todosPedidosNum) {
+        todosPedidosNum.forEach(p => {
+          const num = parseInt(p.numero_pedido, 10);
+          if (!isNaN(num) && num > maiorNumero) maiorNumero = num;
+        });
+      }
 
-      setForm({
-        tipo: 'Saida',
-        motivo: '',
-        descricao: '',
-        valor: 0,
+      const novoNumeroStr = String(maiorNumero + 1);
+
+      const { data: pedidoGravado, error: erroPedido } = await supabase.from('pedidos').insert([{ 
+          numero_pedido: novoNumeroStr, 
+          cliente: nomeDoCliente, 
+          contacto_cliente: contactoCliente.trim(),
+          endereco: moradaCliente.trim(),
+          canal: canal, 
+          forma_pagamento: formaPagamento, 
+          entregador: entregador || null, 
+          taxa_entrega: parseFloat(taxaEntrega), 
+          desconto: parseFloat(descontoManual) || 0,
+          total_geral: totalGeral,
+          total_liquido: totalGeral,
+          pago: estaPago,
+          data_pedido: dataPedido, 
+          criado_em: dataHoraCriacaoCompleta
+        }]).select().single();
+      
+      if (erroPedido) throw erroPedido;
+      
+      if (pedidoGravado) {
+        const itensDB = carrinho.map(item => ({ 
+          pedido_id: pedidoGravado.id, 
+          produto_id: item.isCombo ? null : item.produto.id, 
+          codigo_produto: item.produto.codigo, 
+          nome_produto: item.isCombo ? `${item.produto.nome} (${item.detalhesCombo?.join(', ')})` : item.produto.nome, 
+          quantidade: item.quantidade, 
+          preco_unitario: item.precoAplicado 
+        }));
+        
+        const { error: errItens } = await supabase.from('itens_pedido').insert(itensDB);
+        if (errItens) throw errItens;
+        
+        await descontarStockAutomaticamente(carrinho, novoNumeroStr);
+
+        if (formaPagamento === 'Stripe') {
+          const taxaFixa = 0.25;
+          const taxaVariavel = totalGeral * 0.015;
+          const custoStripeFinal = Number((taxaFixa + taxaVariavel).toFixed(2));
+
+          const { error: errStripe } = await supabase.from('despesas').insert([{
+            descricao: `Comissão Stripe | Stripe 📄 Pedido #${novoNumeroStr}`,
+            categoria: 'Taxas e Comissões (Glovo/Uber)',
+            valor: custoStripeFinal,
+            data_despesa: dataPedido,
+            metodo_pagamento: 'Débito Automático Stripe',
+            status: 'Validado' 
+          }]);
+          
+          if (errStripe) console.error("Aviso: Falha ao lançar despesa Stripe:", errStripe);
+        }
+
+        if (imprimirAtivado) {
+          const dadosRecibo = {
+            numero_pedido: novoNumeroStr,
+            canal: canal,
+            cliente: nomeDoCliente,
+            contacto_cliente: contactoCliente.trim(),
+            endereco: moradaCliente.trim(),
+            itens_pedido: carrinho.map(item => ({
+              quantidade: item.quantidade,
+              nome_produto: item.isCombo ? `${item.produto.nome} (${item.detalhesCombo?.join(', ')})` : item.produto.nome,
+              preco_unitario: item.precoAplicado
+            })),
+            taxa_entrega: parseFloat(taxaEntrega),
+            desconto: parseFloat(descontoManual) || 0,
+            total_geral: totalGeral,
+            forma_pagamento: formaPagamento,
+            pago: estaPago
+          };
+
+          void imprimirReciboTermico(dadosRecibo);
+        }
+        
+        // 🎯 Lança a Janela de Sucesso e bloqueia o ecrã com o número da Senha!
+        setModalSucesso({ visivel: true, numeroPedido: novoNumeroStr });
+      }
+      
+      setCarrinho([]); 
+      setCliente(''); 
+      setContactoCliente(''); 
+      setMoradaCliente('');
+      setTaxaEntrega('0.00'); 
+      setDescontoManual('0.00');
+      
+      setListaClientesCadastrados(prev => {
+        if (!prev.some(c => c.nome.toLowerCase() === nomeDoCliente.toLowerCase())) {
+          return [...prev, { id: 'novo', nome: nomeDoCliente, contacto: contactoCliente.trim(), morada: moradaCliente.trim() }];
+        }
+        return prev;
       });
 
-      setModalAberto(false);
-      await carregarCaixa();
-    } catch (error: any) {
-      alert(`Erro: ${error?.message || 'erro desconhecido'}`);
+    } catch (err: any) { 
+      alert(`Erro ao gravar pedido: ${err.message}`); 
     } finally {
-      setProcessando(false);
+      setIsProcessando(false);
     }
   };
 
-  const apagarMovimentoManual = async (mov: MovimentoCaixa) => {
-    if (caixaFechadoManual) {
-      alert('Não pode alterar um caixa fechado manualmente.');
-      return;
-    }
-
-    if (normalizar(mov.tipo) === 'abertura') {
-      alert('A abertura não pode ser apagada por aqui.');
-      return;
-    }
-
-    if (normalizar(mov.tipo) === 'fechamento') {
-      alert('Fechamentos históricos não são apagados por aqui.');
-      return;
-    }
-
-    if (
-      normalizar(mov.tipo) === 'entrada' &&
-      /\bpedido\s*#?\s*\d+\b/i.test(mov.descricao || '')
-    ) {
-      const match = (mov.descricao || '').match(
-        /\bpedido\s*#?\s*(\d+)\b/i
-      );
-
-      const numeroPedido = match ? Number(match[1]) : null;
-
-      const duplicadosDoMesmoPedido = numeroPedido
-        ? movimentos.filter((item) => {
-            if (normalizar(item.tipo) !== 'entrada') return false;
-
-            const itemMatch = (item.descricao || '').match(
-              /\bpedido\s*#?\s*(\d+)\b/i
-            );
-
-            return itemMatch && Number(itemMatch[1]) === numeroPedido;
-          })
-        : [];
-
-      // Uma entrada válida de pedido continua protegida.
-      if (duplicadosDoMesmoPedido.length <= 1) {
-        alert(
-          'Esta é a única entrada deste pedido e está protegida pela auditoria.'
-        );
-        return;
-      }
-
-      // Se existem 2 ou mais entradas do MESMO pedido, permite excluir
-      // uma delas para corrigir a duplicidade.
-      if (
-        !confirm(
-          `Foram encontradas ${duplicadosDoMesmoPedido.length} entradas do Pedido #${numeroPedido}.\n\n` +
-            `Deseja eliminar SOMENTE esta entrada duplicada de ${num(
-              mov.valor
-            ).toFixed(2)}€?`
-        )
-      ) {
-        return;
-      }
-    } else {
-      if (!confirm('Eliminar este movimento manual?')) return;
-    }
-
-    const { error } = await supabase
-      .from('caixa')
-      .delete()
-      .eq('id', mov.id);
-
-    if (error) {
-      alert(`Erro ao eliminar: ${error.message}`);
-      return;
-    }
-
-    await carregarCaixa();
-  };
-
-  const temDiferencaHistorica =
-    conferencia.diferencaFechamento !== null &&
-    !valorIgual(conferencia.diferencaFechamento, 0);
-
-  const status =
-    conferencia.divergenciasPedidos > 0 ||
-    conferencia.duplicadosPedidos > 0 ||
-    temDiferencaHistorica
-      ? 'erro'
-      : conferencia.pedidosFaltantes >
-        conferencia.pedidosCorrigidos
-      ? 'alerta'
-      : 'ok';
+  const renderBotaoCombo = (combo: Combo) => (
+    <button key={combo.id} onClick={() => iniciarMontagemCombo(combo)} className="bg-zinc-900 hover:bg-zinc-800 border border-orange-500/20 p-5 rounded-2xl text-left h-40 flex flex-col justify-between transition-all">
+      <div><span className="text-[9px] font-bold text-orange-400 bg-orange-500/10 px-2 py-0.5 rounded">COMBO DINÂMICO</span><h3 className="font-bold mt-2 text-zinc-100">{combo.nome}</h3><p className="text-xs text-zinc-400 mt-1 line-clamp-2">{combo.descricao}</p></div>
+      <div className="text-xs font-semibold text-orange-500">Montar Opções ➜</div>
+    </button>
+  );
 
   return (
-    <div className="p-8 font-sans max-w-7xl mx-auto min-h-screen">
-      <div className="mb-8 flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-zinc-800 pb-5">
-        <div>
-          <h1 className="text-3xl font-black text-white flex items-center gap-3">
-            Gestão de Caixa 💰
-
-            {caixaFechadoManual && (
-              <span className="bg-red-500/20 text-red-400 border border-red-500/30 text-[10px] px-3 py-1 rounded-full uppercase tracking-widest">
-                Fechado Manualmente
-              </span>
-            )}
-          </h1>
-
-          <p className="text-xs text-zinc-500 mt-2">
-            Data em análise: {dataBR(dataFiltro)}
-          </p>
-
-          {auditandoHistorico && (
-            <p className="text-xs text-orange-400 font-bold mt-2">
-              🔎 Auditoria histórica completa em execução. Não feche esta página.
-            </p>
-          )}
-
-          {mensagemAuditoria && (
-            <p className="text-xs text-zinc-300 mt-2">
-              {mensagemAuditoria}
-            </p>
-          )}
+    <div className="min-h-screen bg-zinc-950 text-white flex flex-col relative font-sans">
+      
+      <div className="bg-zinc-900 border-b border-zinc-800 px-5 py-3 flex justify-between items-center">
+        <div className="flex gap-2">
+          <span className="px-4 py-1.5 rounded-lg text-xs font-bold bg-orange-600 text-white">PDV</span>
         </div>
-
-        <div>
-          <label className="block text-[10px] text-zinc-500 uppercase font-black mb-1">
-            Selecionar data
-          </label>
-
-          <input
-            type="date"
-            value={dataFiltro}
-            onChange={(e) => setDataFiltro(e.target.value)}
-            className="bg-zinc-900 border border-zinc-800 text-zinc-300 px-4 py-2.5 rounded-xl"
-          />
-
-          <p className="text-[10px] text-zinc-600 mt-1 text-center">
-            {dataBR(dataFiltro)}
-          </p>
+        <div className="flex items-center gap-3">
+          <span className="text-xl">🥔</span>
+          <span className="text-xs font-bold text-orange-500 uppercase tracking-widest flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> Caixa Aberta
+          </span>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-        <Card
-          titulo="Abertura"
-          valor={conferencia.abertura}
-          prefixo=""
-          classe="text-blue-400"
-        />
+      {erroCaixa && (
+        <div className="m-6 bg-red-950/50 border border-red-900 p-5 rounded-2xl z-50">
+          <h2 className="text-red-500 font-bold text-sm uppercase tracking-wider mb-2">⚠️ Bloqueio de Sincronização POS</h2>
+          <code className="block bg-black/50 p-3 rounded-lg text-red-400 font-mono text-xs">{erroCaixa}</code>
+        </div>
+      )}
 
-        <Card
-          titulo="Entradas"
-          valor={conferencia.entradas}
-          prefixo="+"
-          classe="text-emerald-400"
-        />
-
-        <Card
-          titulo="Saídas"
-          valor={conferencia.saidas}
-          prefixo="-"
-          classe="text-red-400"
-        />
-
-        <Card
-          titulo="Saldo Calculado"
-          valor={conferencia.saldoCalculado}
-          prefixo=""
-          classe="text-white"
-          destaque
-        />
-      </div>
-
-      <div
-        className={`mb-8 rounded-[24px] border p-5 ${
-          status === 'ok'
-            ? 'bg-emerald-500/5 border-emerald-500/30'
-            : status === 'erro'
-            ? 'bg-red-500/5 border-red-500/30'
-            : 'bg-orange-500/5 border-orange-500/30'
-        }`}
-      >
-        <div className="flex flex-col xl:flex-row gap-5">
-          <div className="flex-1">
-            <h2 className="text-sm font-black uppercase tracking-widest text-white">
-              {status === 'ok'
-                ? '✅ Conferência correta'
-                : status === 'erro'
-                ? '🔴 Divergência encontrada'
-                : '⚠️ Correção em andamento'}
-            </h2>
-
-            <p className="text-xs text-zinc-400 mt-2">
-              O cálculo considera abertura + TODAS as entradas − TODAS as saídas,
-              incluindo pagamentos, estafetas, sangrias, depósitos e retiradas.
-            </p>
-
-            {conferencia.fechamentoHistorico !== null && (
-              <div className="mt-4 text-xs">
-                <span className="text-zinc-500">
-                  Fechamento existente:
-                </span>{' '}
-                <strong className="text-white">
-                  {conferencia.fechamentoHistorico.toFixed(2)}€
-                </strong>
-
-                <span className="text-zinc-600 mx-2">•</span>
-
-                <span className="text-zinc-500">Diferença:</span>{' '}
-                <strong
-                  className={
-                    temDiferencaHistorica
-                      ? 'text-red-400'
-                      : 'text-emerald-400'
+      {!erroCaixa && (
+        <div className="bg-zinc-900 border-b border-zinc-800 p-5 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-9 gap-4 shadow-xl relative">
+          
+          <div className="relative col-span-2">
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Cliente / Nome</label>
+            <div className="relative">
+              <input 
+                type="text" 
+                value={cliente} 
+                onChange={(e) => { setCliente(e.target.value); setMostrarSugestoes(true); }} 
+                onFocus={() => setMostrarSugestoes(true)}
+                onBlur={() => setTimeout(() => setMostrarSugestoes(false), 200)}
+                placeholder="Nome ou Telemóvel..." 
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-3 pr-10 py-2 text-sm focus:border-orange-500 outline-none text-white font-bold transition-all"
+                autoComplete="off" 
+              />
+              <button
+                type="button"
+                onMouseDown={async (e) => {
+                  e.preventDefault(); 
+                  try {
+                    const textoColado = await navigator.clipboard.readText();
+                    if (textoColado) {
+                      setCliente(textoColado);
+                      setMostrarSugestoes(true);
+                    }
+                  } catch (err) {
+                    alert("Por favor, permita o acesso à área de transferência no seu navegador para usar este botão.");
                   }
-                >
-                  {conferencia.diferencaFechamento?.toFixed(2)}€
-                </strong>
+                }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center bg-zinc-900 rounded-lg border border-zinc-700 hover:bg-orange-600 hover:text-white transition-all text-xs text-zinc-400 cursor-pointer"
+                title="Colar (Sem precisar de Ctrl+V)"
+              >
+                📋
+              </button>
+            </div>
+
+            {mostrarSugestoes && cliente.trim().length > 0 && (
+              <div className="absolute left-0 right-0 top-full mt-2 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-[100] max-h-60 overflow-y-auto custom-scrollbar">
+                {listaClientesCadastrados
+                  .filter(c => {
+                    const termoBusca = cliente.toLowerCase().trim();
+                    return Object.values(c).some(val => val && String(val).toLowerCase().includes(termoBusca));
+                  })
+                  .map(c => {
+                    const nomeExibicao = c.nome || c.Nome || c.nome_cliente || c.cliente || c.NOME || 'Sem Nome';
+                    const telExibicao = c.contacto || c.telefone || c.telemovel || c.Contacto || 'S/N';
+                    const moradaExibicao = c.morada || c.endereco || c.Morada || '';
+
+                    return (
+                      <div key={c.id} onMouseDown={(e) => { e.preventDefault(); selecionarClienteSugerido(c); }} className="p-3 hover:bg-orange-600/20 cursor-pointer border-b border-zinc-800/50 text-xs flex justify-between items-center transition-all">
+                        <span className="font-bold text-white">{nomeExibicao}</span>
+                        <span className="text-zinc-400 text-[10px] truncate max-w-[150px] text-right">📞 {telExibicao} {moradaExibicao ? `| 📍 ${moradaExibicao}` : ''}</span>
+                      </div>
+                    );
+                  })}
               </div>
             )}
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <MiniCard
-              titulo="Pedidos dinheiro"
-              valor={String(conferencia.pedidosDinheiro)}
-              detalhe={`${conferencia.valorPedidosDinheiro.toFixed(2)}€`}
-            />
+          <div>
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Contacto</label>
+            <input type="text" value={contactoCliente} onChange={(e) => setContactoCliente(e.target.value)} placeholder="Telemóvel" className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none" />
+          </div>
 
-            <MiniCard
-              titulo="Corrigidos"
-              valor={String(conferencia.pedidosCorrigidos)}
-              detalhe="automaticamente"
-              classe="text-emerald-400"
-            />
+          <div className="col-span-2">
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Morada de Entrega</label>
+            <input type="text" value={moradaCliente} onChange={(e) => setMoradaCliente(e.target.value)} placeholder="Rua, Número, Andar..." className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none text-zinc-200" />
+          </div>
 
-            <MiniCard
-              titulo="Divergências"
-              valor={String(conferencia.divergenciasPedidos)}
-              detalhe="pedidos"
-              classe={
-                conferencia.divergenciasPedidos
-                  ? 'text-red-400'
-                  : 'text-white'
-              }
-            />
+          <div>
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Data</label>
+            <input type="date" value={dataPedido} onChange={(e) => setDataPedido(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-300 outline-none cursor-pointer" />
+          </div>
 
-            <MiniCard
-              titulo="Pendentes"
-              valor={String(conferencia.pedidosPendentes)}
-              detalhe="não pagos"
-              classe="text-orange-400"
-            />
+          <div>
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Canal</label>
+            <select value={canal} onChange={(e) => { const nc = e.target.value as any; setCanal(nc); setFormaPagamento(regrasPagamento[nc as keyof typeof regrasPagamento][0].value); }} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-300 outline-none">
+              <option value="Balcão">Balcão</option>
+              <option value="WhatsApp">WhatsApp</option>
+              <option value="Glovo">Glovo</option>
+              <option value="Palmbites">Palmbites</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Pagamento</label>
+            <select value={formaPagamento} onChange={(e) => setFormaPagamento(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-300 outline-none">
+              {regrasPagamento[canal as keyof typeof regrasPagamento]?.map(opcao => (
+                <option key={opcao.value} value={opcao.value}>{opcao.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Estafeta</label>
+            <select value={entregador} onChange={(e) => setEntregador(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-300 outline-none">
+              <option value="">-- Nenhum --</option>
+              {listaEstafetas.map(est => (<option key={est.nome} value={est.nome}>{est.nome}</option>))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Taxa Entr. (€)</label>
+            <input type="number" step="0.10" min="0" value={taxaEntrega} onChange={(e) => setTaxaEntrega(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm font-bold text-orange-400 outline-none" />
+          </div>
+
+          <div>
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Desconto (€)</label>
+            <input type="number" step="0.50" min="0" value={descontoManual} onChange={(e) => setDescontoManual(e.target.value)} className="w-full bg-zinc-950 border border-red-900/50 rounded-xl px-3 py-2 text-sm font-bold text-red-400 outline-none" />
+          </div>
+
+        </div>
+      )}
+
+      {!erroCaixa && (
+        <div className="flex-1 flex overflow-hidden">
+          
+          <main className="flex-1 p-6 overflow-y-auto flex flex-col gap-6">
+            <div className="flex flex-wrap gap-2 bg-zinc-900/60 p-2 rounded-2xl border border-zinc-800/80">
+              {[
+                { id: 'todos', label: 'Todos' }, 
+                { id: 'batatas', label: '🥔 Batatas' }, 
+                { id: 'adicionais', label: '🥓 Adicionais' }, 
+                { id: 'sobremesas', label: '🍫 Sobremesas' }, 
+                { id: 'bebidas', label: '🥤 Bebidas' }, 
+                { id: 'combos', label: '🎁 Combos' }
+              ].map((cat) => (
+                <button key={cat.id} onClick={() => setCategoriaAtiva(cat.id as CategoriaFiltro)} className={`px-5 py-2.5 rounded-xl text-sm font-medium transition-all ${categoriaAtiva === cat.id ? 'bg-orange-600 text-white shadow-lg' : 'text-zinc-400 hover:text-zinc-200'}`}>{cat.label}</button>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 content-start flex-1">
+              {loading ? (
+                <div className="col-span-full text-center text-zinc-500 py-12">A sincronizar com a base de dados...</div>
+              ) : categoriaAtiva === 'combos' ? (
+                combos.map(renderBotaoCombo)
+              ) : (
+                <>
+                  {produtos.filter((prod) => {
+                    if (categoriaAtiva === 'todos') return true;
+                    if (categoriaAtiva === 'batatas') return prod.categoria === 'batata';
+                    if (categoriaAtiva === 'adicionais') return prod.categoria === 'adicional' || prod.categoria === 'extra';
+                    if (categoriaAtiva === 'sobremesas') return prod.categoria === 'brownie' || prod.categoria === 'sobremesa';
+                    if (categoriaAtiva === 'bebidas') return prod.categoria === 'bebida';
+                    return false;
+                  }).map((prod) => (
+                    <button key={prod.id} onClick={() => adicionarAoCarrinho(prod)} className="bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 p-4 rounded-xl text-left flex flex-col justify-between h-32 transition-all">
+                      <div><span className="text-[9px] font-bold uppercase text-orange-400 bg-orange-500/10 px-2 py-0.5 rounded">{prod.categoria}</span><h3 className="font-semibold mt-2 text-zinc-200 text-sm">{prod.nome}</h3></div>
+                      <span className="text-base font-bold text-white mt-1">{getPrecoPorCanal(prod).toFixed(2)}€</span>
+                    </button>
+                  ))}
+                  {categoriaAtiva === 'todos' && combos.map(renderBotaoCombo)}
+                </>
+              )}
+            </div>
+          </main>
+
+          <aside className="w-96 bg-zinc-900 border-l border-zinc-800 flex flex-col shadow-2xl z-10">
+            <div className="p-4 border-b border-zinc-800 font-semibold text-zinc-300 flex justify-between items-center">
+              <div className="flex flex-col">
+                <span className="text-xs text-zinc-500">Pedido de:</span>
+                <span className="text-white font-bold">{cliente || '---'}</span>
+              </div>
+              <span className="text-xs text-zinc-400 bg-zinc-950 px-2 py-1 rounded border border-zinc-800">{canal}</span>
+            </div>
+
+            <div className="flex-1 p-4 overflow-y-auto space-y-3 custom-scrollbar">
+              {carrinho.map((item, idx) => (
+                <div key={idx} className="bg-zinc-950 p-3 rounded-xl border border-zinc-800 flex flex-col gap-1">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1 min-w-0 pr-2">
+                      {item.isCombo && <span className="inline-block text-[9px] font-bold text-orange-400 bg-orange-500/10 px-1.5 py-0.5 rounded mb-1.5 uppercase">COMBO</span>}
+                      <h4 className="text-xs font-bold text-zinc-200">{item.produto.nome}</h4>
+                      {item.isCombo && item.detalhesCombo && (
+                        <ul className="mt-1 space-y-0.5">
+                          {item.detalhesCombo.map((d, i) => (<li key={i} className="text-[10px] text-zinc-400">↳ {d}</li>))}
+                        </ul>
+                      )}
+                      <div className="text-xs text-zinc-400 mt-1">{item.precoAplicado.toFixed(2)}€ × {item.quantidade}</div>
+                    </div>
+                    <button onClick={() => removerDoCarrinho(idx)} className="text-zinc-500 text-lg hover:text-red-400 px-2">✕</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="p-4 bg-zinc-950 border-t border-zinc-800 space-y-3">
+              <label className="flex items-center gap-2 text-xs font-bold text-zinc-300 cursor-pointer bg-zinc-900/60 p-2 rounded-lg border border-zinc-800">
+                <input 
+                  type="checkbox" 
+                  checked={imprimirAtivado} 
+                  onChange={(e) => setImprimirAtivado(e.target.checked)} 
+                  className="accent-orange-600 w-4 h-4 cursor-pointer" 
+                />
+                Imprimir talão automaticamente
+              </label>
+
+              <div className="flex justify-between items-center text-zinc-400 text-xs"><span>Subtotal:</span><span className="text-white font-medium">{subtotalProdutos.toFixed(2)}€</span></div>
+              {parseFloat(descontoManual) > 0 && <div className="flex justify-between items-center text-red-400 text-xs"><span>Desconto:</span><span>-{parseFloat(descontoManual).toFixed(2)}€</span></div>}
+              <div className="flex justify-between items-center text-zinc-400 text-xs"><span>Taxa de Entrega:</span><span className="text-white font-medium">{parseFloat(taxaEntrega).toFixed(2)}€</span></div>
+              
+              {formaPagamento === 'Stripe' && (
+                <div className="flex justify-between items-center text-amber-500/80 text-[10px] border-t border-zinc-800/50 pt-2">
+                  <span>Custo Stripe (Auto):</span>
+                  <span>- {((totalGeral * 0.015) + 0.25).toFixed(2)}€</span>
+                </div>
+              )}
+
+              <div className="flex justify-between items-center border-t border-zinc-800 pt-2 text-zinc-300 text-sm"><span>Total a Cobrar:</span><span className="text-orange-500 font-black text-xl">{totalGeral.toFixed(2)}€</span></div>
+              
+              <button 
+                onClick={finalizarVenda} 
+                disabled={isProcessando}
+                className="w-full font-bold py-3.5 rounded-xl text-center text-sm shadow-lg bg-orange-600 hover:bg-orange-700 text-white transition-all disabled:opacity-50 uppercase tracking-widest mt-2"
+              >
+                {isProcessando ? 'A Processar...' : 'Confirmar e Imprimir'}
+              </button>
+            </div>
+          </aside>
+
+        </div>
+      )}
+
+      {/* 🎯 MODAL DE SUCESSO - ECRÃ BLOQUEADO */}
+      {modalSucesso.visivel && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex justify-center items-center z-[200] p-4 animate-in fade-in duration-200">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-3xl p-8 flex flex-col items-center text-center shadow-[0_0_50px_rgba(249,115,22,0.2)] animate-in zoom-in-95 duration-300">
+            <div className="w-20 h-20 bg-green-500/20 text-green-500 rounded-full flex items-center justify-center text-4xl mb-6 shadow-inner border border-green-500/50">
+              ✓
+            </div>
+            <h2 className="text-2xl font-black text-white mb-2">Pedido Registado!</h2>
+            <p className="text-zinc-400 text-sm mb-6">
+              O pedido foi guardado com sucesso e o stock atualizado.
+            </p>
+            <div className="bg-zinc-950 border border-zinc-800 rounded-2xl w-full py-4 mb-8">
+              <span className="block text-[10px] uppercase font-bold text-zinc-500 mb-1">Senha do Pedido</span>
+              <span className="text-4xl font-black text-orange-500 font-mono">#{modalSucesso.numeroPedido}</span>
+            </div>
+            <button 
+              onClick={() => setModalSucesso({ visivel: false, numeroPedido: '' })}
+              className="w-full bg-orange-600 hover:bg-orange-500 text-white font-black py-4 rounded-xl uppercase tracking-widest shadow-lg transition-transform active:scale-95"
+            >
+              OK, Próximo Cliente
+            </button>
           </div>
         </div>
-      </div>
+      )}
 
-      <div className="flex flex-wrap items-center gap-4 mb-8">
-        <div className="bg-emerald-500/10 border border-emerald-500/30 px-4 py-3 rounded-xl">
-          <span className="text-xs font-bold text-emerald-400 uppercase">
-            ● Auditoria automática ativa · Anti-duplicidade V5
-          </span>
-        </div>
-
-        <button
-          onClick={() => setModalAberto(true)}
-          disabled={caixaFechadoManual}
-          className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-white text-sm font-bold px-6 py-3 rounded-xl border border-zinc-700"
-        >
-          ➕ Adicionar Movimento
-        </button>
-
-        <div className="flex-1" />
-
-        <button
-          onClick={fecharCaixaManual}
-          disabled={
-            caixaFechadoManual ||
-            processando ||
-            auditandoHistorico
-          }
-          className="bg-red-950 border border-red-900 hover:bg-red-900 disabled:opacity-40 text-red-400 hover:text-white text-sm font-black px-8 py-3 rounded-xl uppercase tracking-widest"
-        >
-          🔒 Fechar Caixa Manualmente
-        </button>
-      </div>
-
-      <div className="bg-zinc-900/90 border border-zinc-800 rounded-[24px] overflow-hidden">
-        <div className="p-5 border-b border-zinc-800">
-          <h3 className="text-xs font-black text-zinc-400 uppercase tracking-widest">
-            Movimentos de {dataBR(dataFiltro)}
-          </h3>
-        </div>
-
-        <div className="p-4">
-          {loading ? (
-            <div className="text-center text-zinc-500 py-12">
-              A carregar e conferir todos os movimentos...
-            </div>
-          ) : movimentos.length === 0 ? (
-            <div className="text-center text-zinc-600 py-12">
-              Sem movimentos em {dataBR(dataFiltro)}.
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {movimentos.map((mov) => {
-                const tipo = normalizar(mov.tipo);
-                const entrada = tipo === 'entrada';
-                const saida = tipo === 'saida';
-                const abertura = tipo === 'abertura';
-                const fechamento = tipo === 'fechamento';
-                const automatico = ehFechoAutomaticoLegado(mov);
-
+      {mostrarModalCombo && comboSelecionado && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-2xl p-6 flex flex-col max-h-[90vh] relative shadow-2xl">
+            <button onClick={() => setMostrarModalCombo(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-white bg-zinc-800 w-8 h-8 rounded-full flex items-center justify-center">✕</button>
+            <h2 className="text-xl font-bold text-orange-500">{comboSelecionado.nome}</h2>
+            <p className="text-xs text-zinc-400 mt-1">Selecione os sabores clicando nas caixas abaixo.</p>
+            
+            <div className="flex-1 overflow-y-auto space-y-6 mt-6 pr-1 custom-scrollbar">
+              {comboSelecionado.combo_grupos.map((grupo) => {
+                const selecoesDesteGrupo = selecoesCombo[grupo.id] || [];
                 return (
-                  <div
-                    key={mov.id}
-                    className="flex items-center justify-between p-4 bg-[#121214] border border-zinc-800 rounded-2xl gap-4"
-                  >
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-bold text-zinc-200">
-                        {mov.descricao}
-                      </p>
-
-                      <div className="flex flex-wrap gap-2 mt-2">
-                        <span
-                          className={`text-[9px] px-2.5 py-0.5 rounded border uppercase font-bold ${
-                            entrada
-                              ? 'border-emerald-500/30 text-emerald-400'
-                              : saida
-                              ? 'border-red-500/30 text-red-400'
-                              : abertura
-                              ? 'border-blue-500/30 text-blue-400'
-                              : 'border-orange-500/30 text-orange-400'
-                          }`}
-                        >
-                          {mov.tipo}
-                        </span>
-
-                        <span className="text-[9px] px-2.5 py-0.5 rounded border border-zinc-800 text-zinc-500">
-                          {dataBR(mov.data_dia)}
-                        </span>
-
-                        {automatico && (
-                          <span className="text-[9px] px-2.5 py-0.5 rounded border border-yellow-600/30 text-yellow-500">
-                            AUTOMÁTICO LEGADO
-                          </span>
-                        )}
-                      </div>
+                  <div key={grupo.id}>
+                    <h3 className="text-xs font-bold text-zinc-300 uppercase mb-3 flex items-center justify-between border-b border-zinc-800 pb-2">
+                      <span>{grupo.nome}</span>
+                      <span className={`px-2 py-0.5 rounded text-[10px] ${selecoesDesteGrupo.length >= grupo.quantidade_maxima ? 'bg-green-500/20 text-green-400' : 'bg-orange-500/20 text-orange-400'}`}>
+                        ({selecoesDesteGrupo.length}/{grupo.quantidade_maxima})
+                      </span>
+                    </h3>
+                    <div className="grid grid-cols-2 gap-3">
+                      {grupo.combo_grupo_produtos.filter(i => i.ativo).map((item) => {
+                        const qtdSelecionadaDesteItem = selecoesDesteGrupo.filter(s => s.produto_id === item.produto_id).length;
+                        const estaSelecionado = qtdSelecionadaDesteItem > 0;
+                        
+                        return (
+                          <button 
+                            key={item.produto_id} type="button" onClick={() => toggleSelecaoCombo(grupo, item)} 
+                            className={`p-4 text-left rounded-xl text-xs border transition-all ${estaSelecionado ? 'bg-orange-600/20 border-orange-500 text-white shadow-[0_0_15px_rgba(249,115,22,0.15)]' : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
+                          >
+                            <div className="flex justify-between items-center gap-2">
+                              <span className="block font-medium">{item.produto.nome}</span>
+                              {qtdSelecionadaDesteItem > 1 && (
+                                <span className="bg-orange-500 text-white px-2 py-0.5 rounded text-[10px] font-black shadow-md">
+                                  x{qtdSelecionadaDesteItem}
+                                </span>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
                     </div>
-
-                    <div
-                      className={`text-xl font-black font-mono ${
-                        entrada
-                          ? 'text-emerald-400'
-                          : saida
-                          ? 'text-red-400'
-                          : abertura
-                          ? 'text-blue-400'
-                          : 'text-orange-400'
-                      }`}
-                    >
-                      {entrada ? '+' : saida ? '-' : ''}
-                      {num(mov.valor).toFixed(2)}€
-                    </div>
-
-                    {!caixaFechadoManual &&
-                      !abertura &&
-                      !fechamento && (
-                        <button
-                          onClick={() =>
-                            apagarMovimentoManual(mov)
-                          }
-                          className="w-9 h-9 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-red-950"
-                          title="Eliminar movimento manual"
-                        >
-                          🗑️
-                        </button>
-                      )}
                   </div>
                 );
               })}
             </div>
-          )}
-        </div>
-      </div>
 
-      {modalAberto && (
-        <div className="fixed inset-0 bg-black/80 z-[100] flex justify-center items-center p-4">
-          <div className="bg-zinc-900 w-full max-w-lg rounded-[30px] border border-zinc-800 overflow-hidden">
-            <div className="p-6 border-b border-zinc-800 flex justify-between items-center">
-              <div>
-                <h2 className="text-xl font-black text-white">
-                  Registar Movimento
-                </h2>
-                <p className="text-xs text-zinc-500 mt-1">
-                  {dataBR(dataFiltro)}
-                </p>
-              </div>
-
-              <button
-                onClick={() => setModalAberto(false)}
-                className="text-zinc-400 hover:text-white"
-              >
-                ✕
-              </button>
+            <div className="pt-4 border-t border-zinc-800 mt-6">
+              <button type="button" onClick={confirmarMontagemCombo} className="w-full bg-orange-600 hover:bg-orange-700 py-3.5 rounded-xl text-sm font-bold text-white uppercase tracking-widest shadow-lg">Adicionar Combo ao Carrinho</button>
             </div>
-
-            <form
-              onSubmit={salvarMovimentoManual}
-              className="p-6 space-y-5"
-            >
-              <div>
-                <label className="block text-[10px] uppercase text-zinc-500 font-black mb-2">
-                  Tipo
-                </label>
-
-                <select
-                  value={form.tipo}
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      tipo: e.target.value,
-                    })
-                  }
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-white"
-                >
-                  <option value="Saida">Saída</option>
-                  <option value="Entrada">Entrada Manual</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-[10px] uppercase text-zinc-500 font-black mb-2">
-                  Motivo
-                </label>
-
-                <select
-                  required
-                  value={form.motivo}
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      motivo: e.target.value,
-                    })
-                  }
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-white"
-                >
-                  <option value="">Selecione o motivo...</option>
-                  {motivosMovimento.map((motivo) => (
-                    <option key={motivo} value={motivo}>
-                      {motivo}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-[10px] uppercase text-zinc-500 font-black mb-2">
-                  {form.motivo === 'Outros'
-                    ? 'Descrição / Motivo'
-                    : 'Observação / Detalhe'}
-                </label>
-
-                <input
-                  required={form.motivo === 'Outros'}
-                  value={form.descricao}
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      descricao: e.target.value,
-                    })
-                  }
-                  placeholder={
-                    form.motivo === 'Outros'
-                      ? 'Descreva o motivo...'
-                      : 'Opcional. Ex: Acerto João, Recheio, Makro...'
-                  }
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-white"
-                />
-
-                <p className="text-[10px] text-zinc-600 mt-2">
-                  O motivo será gravado junto da descrição sem criar novas colunas no banco.
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-[10px] uppercase text-zinc-500 font-black mb-2">
-                  Valor (€)
-                </label>
-
-                <input
-                  required
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={form.valor}
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      valor: parseFloat(e.target.value) || 0,
-                    })
-                  }
-                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-3xl font-black text-orange-400"
-                />
-              </div>
-
-              <button
-                type="submit"
-                disabled={processando}
-                className="w-full bg-orange-600 hover:bg-orange-500 disabled:opacity-50 py-4 rounded-xl text-white font-black uppercase"
-              >
-                {processando
-                  ? 'A gravar...'
-                  : 'Confirmar movimento'}
-              </button>
-            </form>
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function Card({
-  titulo,
-  valor,
-  prefixo,
-  classe,
-  destaque = false,
-}: {
-  titulo: string;
-  valor: number;
-  prefixo: string;
-  classe: string;
-  destaque?: boolean;
-}) {
-  return (
-    <div
-      className={`border p-5 rounded-[22px] ${
-        destaque
-          ? 'bg-zinc-900 border-orange-500/30'
-          : 'bg-[#121214] border-zinc-800'
-      }`}
-    >
-      <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
-        {titulo}
-      </span>
-
-      <div
-        className={`text-2xl font-black font-mono mt-2 ${classe}`}
-      >
-        {prefixo}
-        {valor.toFixed(2)}€
-      </div>
-    </div>
-  );
-}
-
-function MiniCard({
-  titulo,
-  valor,
-  detalhe,
-  classe = 'text-white',
-}: {
-  titulo: string;
-  valor: string;
-  detalhe: string;
-  classe?: string;
-}) {
-  return (
-    <div className="bg-zinc-950/60 border border-zinc-800 rounded-xl px-4 py-3 min-w-[120px]">
-      <span className="text-[9px] text-zinc-500 uppercase font-bold">
-        {titulo}
-      </span>
-
-      <p className={`text-lg font-black ${classe}`}>{valor}</p>
-
-      <p className="text-[10px] text-zinc-600">{detalhe}</p>
     </div>
   );
 }
