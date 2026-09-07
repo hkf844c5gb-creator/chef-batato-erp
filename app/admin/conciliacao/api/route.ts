@@ -1,7 +1,33 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { createServerClient } from '@supabase/ssr';
+import { cookies } from 'next/headers';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { createServerSupabaseClient } from '@/app/lib/supabase/server';
+
+async function createServerSupabaseClient() {
+  const cookieStore = await cookies();
+
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll();
+        },
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) => {
+              cookieStore.set(name, value, options);
+            });
+          } catch {
+            // Em alguns contextos server-side os cookies podem ser apenas de leitura.
+          }
+        },
+      },
+    }
+  );
+}
 
 export const maxDuration = 60;
 export const dynamic = 'force-dynamic';
