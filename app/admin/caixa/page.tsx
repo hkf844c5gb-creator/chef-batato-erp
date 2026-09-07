@@ -12,6 +12,7 @@ interface MovimentoCaixa {
   tipo: TipoCaixa;
   descricao: string;
   valor: number;
+  pedido_numero?: number | null;
 }
 
 interface PedidoLinha {
@@ -25,10 +26,21 @@ interface PedidoLinha {
   total_geral?: number | null;
   pago?: boolean | null;
   criado_em?: string | null;
+  data_recebimento?: string | null;
   itens?: Array<{
     quantidade?: number | null;
     preco_unitario?: number | null;
   }>;
+}
+
+interface PagamentoEstafetaLinha {
+  id: string;
+  entregador: string;
+  valor_pago: number;
+  data_pagamento: string;
+  inicio_periodo?: string | null;
+  fim_periodo?: string | null;
+  forma_pagamento?: string | null;
 }
 
 interface PedidoAuditado {
@@ -38,6 +50,7 @@ interface PedidoAuditado {
   forma_pagamento: string;
   total_geral: number;
   pago: boolean;
+  data_recebimento: string | null;
 }
 
 interface ConferenciaDia {
@@ -116,6 +129,9 @@ const descricaoEntradaPedido = (p: PedidoAuditado) =>
     p.cliente || 'Cliente Anónimo'
   }`;
 
+const dataCaixaPedido = (p: PedidoAuditado) =>
+  soData(p.data_recebimento) || p.data_pedido;
+
 export default function CaixaPage() {
   const supabase = useMemo(
     () =>
@@ -134,6 +150,20 @@ export default function CaixaPage() {
   const [caixaFechadoManual, setCaixaFechadoManual] = useState(false);
   const [mensagemAuditoria, setMensagemAuditoria] = useState('');
   const [modalAberto, setModalAberto] = useState(false);
+  const [movimentoEditando, setMovimentoEditando] = useState<MovimentoCaixa | null>(null);
+  const [modalAberturaAberto, setModalAberturaAberto] = useState(false);
+  const [valorAberturaManual, setValorAberturaManual] = useState(0);
+
+  const [modalFechamentoAberto, setModalFechamentoAberto] = useState(false);
+  const [valorFechamentoManual, setValorFechamentoManual] = useState(0);
+  const [resumoFechamento, setResumoFechamento] = useState({
+    abertura: 0,
+    entradas: 0,
+    saidas: 0,
+    saldoEsperado: 0,
+    pedidosDinheiro: 0,
+    valorPedidosDinheiro: 0,
+  });
 
   const [conferencia, setConferencia] = useState<ConferenciaDia>({
     pedidosDinheiro: 0,
@@ -186,7 +216,7 @@ export default function CaixaPage() {
     while (true) {
       const { data, error } = await supabase
         .from('caixa')
-        .select('id,created_at,data_dia,tipo,descricao,valor')
+        .select('id,created_at,data_dia,tipo,descricao,valor,pedido_numero')
         .order('data_dia', { ascending: true })
         .order('created_at', { ascending: true })
         .range(inicio, inicio + 999);
@@ -221,6 +251,7 @@ export default function CaixaPage() {
           total_geral,
           pago,
           criado_em,
+          data_recebimento,
           itens:itens_pedido (
             quantidade,
             preco_unitario
@@ -240,6 +271,34 @@ export default function CaixaPage() {
 
     return todos;
   }, [supabase]);
+
+  const buscarTodosPagamentosEstafetas = useCallback(
+    async (): Promise<PagamentoEstafetaLinha[]> => {
+      const todos: PagamentoEstafetaLinha[] = [];
+      let inicio = 0;
+
+      while (true) {
+        const { data, error } = await supabase
+          .from('estafetas_pagamentos')
+          .select(
+            'id,entregador,valor_pago,data_pagamento,inicio_periodo,fim_periodo,forma_pagamento'
+          )
+          .order('data_pagamento', { ascending: true })
+          .range(inicio, inicio + 999);
+
+        if (error) throw error;
+
+        const lote = (data || []) as PagamentoEstafetaLinha[];
+        todos.push(...lote);
+
+        if (lote.length < 1000) break;
+        inicio += 1000;
+      }
+
+      return todos;
+    },
+    [supabase]
+  );
 
   // ============================================================
   // AGRUPAMENTO DE PEDIDOS
@@ -264,6 +323,7 @@ export default function CaixaPage() {
           cliente: linha.cliente || 'Cliente Anónimo',
           forma_pagamento: linha.forma_pagamento || '',
           pago: linha.pago === true,
+          data_recebimento: linha.data_recebimento || null,
           itens: [...(linha.itens || [])],
           taxa_entrega: num(linha.taxa_entrega),
           desconto: num(linha.desconto),
@@ -290,6 +350,7 @@ export default function CaixaPage() {
         if (linha.forma_pagamento)
           p.forma_pagamento = linha.forma_pagamento;
         if (linha.pago === true) p.pago = true;
+        if (linha.data_recebimento) p.data_recebimento = linha.data_recebimento;
       }
     }
 
@@ -300,6 +361,16 @@ export default function CaixaPage() {
         0
       );
 
+      // IMPORTANTE:
+      // A página Pedidos calcula o total exibido como:
+      // subtotal dos itens + taxa de entrega - desconto.
+      //
+      // Alguns pedidos históricos possuem total_geral antigo/desatualizado
+      // na tabela pedidos. Se o Caixa confiar apenas nesse campo, pode mostrar
+      // um valor diferente da página Pedidos.
+      //
+      // Por isso o Caixa usa o MESMO cálculo da página Pedidos sempre que
+      // existirem itens. O total_geral do banco fica apenas como fallback.
       const total =
         subtotalItens > 0
           ? subtotalItens + p.taxa_entrega - p.desconto
@@ -312,6 +383,7 @@ export default function CaixaPage() {
         forma_pagamento: p.forma_pagamento,
         total_geral: Number(Math.max(0, total).toFixed(2)),
         pago: p.pago,
+        data_recebimento: p.data_recebimento || null,
       };
     });
   }, []);
@@ -352,8 +424,8 @@ export default function CaixaPage() {
       // o mesmo pedido quase ao mesmo tempo.
       const { data: entradasAtuais, error: erroConsulta } = await supabase
         .from('caixa')
-        .select('id,created_at,data_dia,tipo,descricao,valor')
-        .eq('data_dia', pedido.data_pedido)
+        .select('id,created_at,data_dia,tipo,descricao,valor,pedido_numero')
+        .eq('data_dia', dataCaixaPedido(pedido))
         .eq('tipo', 'Entrada');
 
       if (erroConsulta) throw erroConsulta;
@@ -375,10 +447,11 @@ export default function CaixaPage() {
       // A auditoria futura sempre localizará esta entrada por Pedido #N.
       const { error } = await supabase.from('caixa').insert([
         {
-          data_dia: pedido.data_pedido,
+          data_dia: dataCaixaPedido(pedido),
           tipo: 'Entrada',
           descricao: descricaoEntradaPedido(pedido),
           valor: pedido.total_geral,
+          pedido_numero: pedido.numero_pedido,
         },
       ]);
 
@@ -425,7 +498,7 @@ export default function CaixaPage() {
         : await buscarTodosCaixa();
 
       const pedidosDia = pedidos.filter(
-        (p) => p.data_pedido === data && dinheiro(p.forma_pagamento)
+        (p) => dataCaixaPedido(p) === data && dinheiro(p.forma_pagamento)
       );
 
       const pendentes = pedidosDia.filter((p) => !p.pago);
@@ -452,10 +525,11 @@ export default function CaixaPage() {
               caixa.push({
                 id: `novo-${pedido.numero_pedido}`,
                 created_at: new Date().toISOString(),
-                data_dia: pedido.data_pedido,
+                data_dia: dataCaixaPedido(pedido),
                 tipo: 'Entrada',
                 descricao: descricaoEntradaPedido(pedido),
                 valor: pedido.total_geral,
+                pedido_numero: pedido.numero_pedido,
               });
             } else {
               // Outro processo já inseriu entre a leitura e a gravação.
@@ -593,10 +667,11 @@ export default function CaixaPage() {
             caixa.push({
               id: `auditoria-${pedido.numero_pedido}`,
               created_at: new Date().toISOString(),
-              data_dia: pedido.data_pedido,
+              data_dia: dataCaixaPedido(pedido),
               tipo: 'Entrada',
               descricao: descricaoEntradaPedido(pedido),
               valor: pedido.total_geral,
+              pedido_numero: pedido.numero_pedido,
             });
           }
         } else {
@@ -620,7 +695,7 @@ export default function CaixaPage() {
       const dias = Array.from(
         new Set([
           ...caixa.map((m) => soData(m.data_dia)),
-          ...pedidos.map((p) => p.data_pedido),
+          ...pedidos.map((p) => dataCaixaPedido(p)),
         ])
       )
         .filter(Boolean)
@@ -690,9 +765,8 @@ export default function CaixaPage() {
   //
   // Somente HOJE.
   // Se já houver abertura, não duplica.
-  // Preferência para o último Fechamento MANUAL.
-  // Durante a transição, se ainda não existir fechamento manual,
-  // usa o fechamento anterior disponível.
+  // A abertura assume SEMPRE o fechamento do DIA ANTERIOR.
+  // Se o dia anterior não tiver fechamento, não cria abertura automática.
   // ============================================================
 
   const garantirAberturaHoje = useCallback(
@@ -707,22 +781,25 @@ export default function CaixaPage() {
 
       if (existeAberturaHoje) return false;
 
-      const fechamentosAnteriores = caixa
+      const dataHoje = new Date(`${hoje}T12:00:00`);
+      dataHoje.setDate(dataHoje.getDate() - 1);
+
+      const diaAnterior = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'Europe/Lisbon',
+      }).format(dataHoje);
+
+      const fechamentosDiaAnterior = caixa
         .filter(
           (m) =>
             normalizar(m.tipo) === 'fechamento' &&
-            soData(m.data_dia) < hoje
+            soData(m.data_dia) === diaAnterior
         )
         .sort((a, b) => {
           const manualA = ehFechoManual(a) ? 1 : 0;
           const manualB = ehFechoManual(b) ? 1 : 0;
 
-          // Primeiro ordena por data; dentro da mesma data, manual ganha.
-          const dataCmp = soData(b.data_dia).localeCompare(
-            soData(a.data_dia)
-          );
-          if (dataCmp !== 0) return dataCmp;
-
+          // Se houver mais de um fechamento no dia anterior,
+          // o manual tem prioridade. Dentro do mesmo tipo, usa o mais recente.
           if (manualA !== manualB) return manualB - manualA;
 
           return (
@@ -731,16 +808,19 @@ export default function CaixaPage() {
           );
         });
 
-      const ultimo = fechamentosAnteriores[0];
+      const fechamentoAnterior = fechamentosDiaAnterior[0];
 
-      if (!ultimo) return false;
+      if (!fechamentoAnterior) {
+        return false;
+      }
 
       const { error } = await supabase.from('caixa').insert([
         {
           data_dia: hoje,
           tipo: 'Abertura',
-          descricao: 'Fundo de Maneio (Abertura Automática)',
-          valor: num(ultimo.valor),
+          descricao: `Fundo de Maneio (Abertura Automática - Fecho ${dataBR(diaAnterior)})`,
+          valor: num(fechamentoAnterior.valor),
+          pedido_numero: null,
         },
       ]);
 
@@ -752,6 +832,254 @@ export default function CaixaPage() {
   );
 
   // ============================================================
+  // SINCRONIZAÇÃO CAIXA <-> PEDIDOS
+  //
+  // Mantém as entradas automáticas de pedidos sempre iguais à tabela pedidos:
+  // - cria entrada quando um pedido em dinheiro é pago;
+  // - atualiza valor/data/descrição se o pedido for alterado;
+  // - remove a entrada automática se o pedido for excluído/cancelado,
+  //   deixar de ser pago ou deixar de ser em dinheiro.
+  //
+  // Entradas manuais continuam intocadas.
+  // ============================================================
+
+  const sincronizarCaixaComPedidos = useCallback(async () => {
+    const pedidos = agruparPedidos(await buscarTodosPedidos());
+    const caixa = await buscarTodosCaixa();
+
+    const pedidosValidos = new Map<number, PedidoAuditado>();
+
+    for (const pedido of pedidos) {
+      if (!pedido.pago || !dinheiro(pedido.forma_pagamento)) continue;
+      pedidosValidos.set(Number(pedido.numero_pedido), pedido);
+    }
+
+    // 1) Remove entradas automáticas órfãs/canceladas.
+    for (const mov of caixa) {
+      if (normalizar(mov.tipo) !== 'entrada') continue;
+
+      const match = (mov.descricao || '').match(
+        /^\[Pedido\s*#?\s*(\d+)\]/i
+      );
+
+      const numeroPedido =
+        mov.pedido_numero || (match ? Number(match[1]) : null);
+
+      // Só mexe em entradas claramente automáticas de pedido.
+      if (!numeroPedido) continue;
+
+      const pedidoAtual = pedidosValidos.get(Number(numeroPedido));
+
+      if (!pedidoAtual) {
+        const { error } = await supabase
+          .from('caixa')
+          .delete()
+          .eq('id', mov.id);
+
+        if (error) throw error;
+      }
+    }
+
+    // Recarrega depois das remoções para evitar trabalhar com lixo antigo.
+    let caixaAtual = await buscarTodosCaixa();
+
+    // 2) Cria ou corrige cada pedido válido.
+    for (const pedido of pedidosValidos.values()) {
+      const regex = new RegExp(
+        `\\bpedido\\s*#?\\s*${pedido.numero_pedido}\\b`,
+        'i'
+      );
+
+      const entradas = caixaAtual.filter(
+        (mov) =>
+          normalizar(mov.tipo) === 'entrada' &&
+          (
+            Number(mov.pedido_numero) === Number(pedido.numero_pedido) ||
+            regex.test(mov.descricao || '')
+          )
+      );
+
+      if (entradas.length === 0) {
+        const { error } = await supabase.from('caixa').insert([
+          {
+            data_dia: dataCaixaPedido(pedido),
+            tipo: 'Entrada',
+            descricao: descricaoEntradaPedido(pedido),
+            valor: pedido.total_geral,
+            pedido_numero: pedido.numero_pedido,
+          },
+        ]);
+
+        if (error) throw error;
+
+        caixaAtual = await buscarTodosCaixa();
+        continue;
+      }
+
+      // Se houver exatamente uma entrada, ela pode ser corrigida automaticamente.
+      // Duplicidades continuam sinalizadas para correção manual.
+      if (entradas.length === 1) {
+        const entrada = entradas[0];
+
+        const precisaAtualizar =
+          !valorIgual(num(entrada.valor), pedido.total_geral) ||
+          soData(entrada.data_dia) !== dataCaixaPedido(pedido) ||
+          entrada.descricao !== descricaoEntradaPedido(pedido) ||
+          Number(entrada.pedido_numero || 0) !== Number(pedido.numero_pedido);
+
+        if (precisaAtualizar) {
+          const { error } = await supabase
+            .from('caixa')
+            .update({
+              data_dia: dataCaixaPedido(pedido),
+              descricao: descricaoEntradaPedido(pedido),
+              valor: Number(pedido.total_geral.toFixed(2)),
+              pedido_numero: pedido.numero_pedido,
+            })
+            .eq('id', entrada.id);
+
+          if (error) throw error;
+
+          caixaAtual = caixaAtual.map((m) =>
+            m.id === entrada.id
+              ? {
+                  ...m,
+                  data_dia: dataCaixaPedido(pedido),
+                  descricao: descricaoEntradaPedido(pedido),
+                  valor: Number(pedido.total_geral.toFixed(2)),
+                  pedido_numero: pedido.numero_pedido,
+                }
+              : m
+          );
+        }
+      }
+    }
+  }, [
+    agruparPedidos,
+    buscarTodosCaixa,
+    buscarTodosPedidos,
+    supabase,
+  ]);
+
+  // ============================================================
+  // SINCRONIZAÇÃO CAIXA <-> PAGAMENTOS DE ESTAFETAS
+  //
+  // Cada pagamento registado em estafetas_pagamentos vira uma SAÍDA
+  // automática no Caixa, na mesma data do pagamento.
+  //
+  // Se o pagamento for editado, o movimento do Caixa é atualizado.
+  // Se o pagamento for apagado, o movimento do Caixa também é removido.
+  // ============================================================
+
+  const sincronizarPagamentosEstafetas = useCallback(async () => {
+    const pagamentos = await buscarTodosPagamentosEstafetas();
+    const caixa = await buscarTodosCaixa();
+
+    const mapaPagamentos = new Map<string, PagamentoEstafetaLinha>();
+
+    for (const pag of pagamentos) {
+      mapaPagamentos.set(String(pag.id), pag);
+    }
+
+    // 1) Remove saídas órfãs quando o pagamento foi apagado.
+    for (const mov of caixa) {
+      if (normalizar(mov.tipo) !== 'saida') continue;
+
+      const match = (mov.descricao || '').match(
+        /^\[Pagamento Estafeta #([^\]]+)\]/i
+      );
+
+      if (!match) continue;
+
+      const pagamentoId = String(match[1]);
+
+      const pagamentoAtual = mapaPagamentos.get(pagamentoId);
+      const formaAtual = normalizar(pagamentoAtual?.forma_pagamento || 'Dinheiro');
+
+      // Remove se o pagamento foi apagado OU se passou a ser MB Way,
+      // porque MB Way não movimenta dinheiro físico.
+      if (!pagamentoAtual || formaAtual === 'mb way' || formaAtual === 'mbway') {
+        const { error } = await supabase
+          .from('caixa')
+          .delete()
+          .eq('id', mov.id);
+
+        if (error) throw error;
+      }
+    }
+
+    let caixaAtual = await buscarTodosCaixa();
+
+    // 2) Cria ou atualiza a saída correspondente a cada pagamento.
+    for (const pag of pagamentos) {
+      const formaPagamento = normalizar(pag.forma_pagamento || 'Dinheiro');
+
+      // MB Way reduz a dívida do estafeta, mas NÃO sai do caixa físico.
+      if (formaPagamento === 'mb way' || formaPagamento === 'mbway') {
+        continue;
+      }
+
+      const idPagamento = String(pag.id);
+      const descricao = `[Pagamento Estafeta #${idPagamento}] ${pag.entregador || 'Estafeta'}`;
+      const dataPagamento = soData(pag.data_pagamento);
+      const valorPagamento = Number(num(pag.valor_pago).toFixed(2));
+
+      const movimentosPagamento = caixaAtual.filter(
+        (mov) =>
+          normalizar(mov.tipo) === 'saida' &&
+          (mov.descricao || '').startsWith(
+            `[Pagamento Estafeta #${idPagamento}]`
+          )
+      );
+
+      if (movimentosPagamento.length === 0) {
+        const { error } = await supabase.from('caixa').insert([
+          {
+            data_dia: dataPagamento,
+            tipo: 'Saida',
+            descricao,
+            valor: valorPagamento,
+            pedido_numero: null,
+          },
+        ]);
+
+        if (error) throw error;
+
+        caixaAtual = await buscarTodosCaixa();
+        continue;
+      }
+
+      // Se houver exatamente um, mantém espelhado em tempo real.
+      if (movimentosPagamento.length === 1) {
+        const mov = movimentosPagamento[0];
+
+        const precisaAtualizar =
+          soData(mov.data_dia) !== dataPagamento ||
+          !valorIgual(num(mov.valor), valorPagamento) ||
+          mov.descricao !== descricao;
+
+        if (precisaAtualizar) {
+          const { error } = await supabase
+            .from('caixa')
+            .update({
+              data_dia: dataPagamento,
+              descricao,
+              valor: valorPagamento,
+              pedido_numero: null,
+            })
+            .eq('id', mov.id);
+
+          if (error) throw error;
+        }
+      }
+    }
+  }, [
+    buscarTodosCaixa,
+    buscarTodosPagamentosEstafetas,
+    supabase,
+  ]);
+
+  // ============================================================
   // CARREGAMENTO DA TELA
   // ============================================================
 
@@ -759,6 +1087,11 @@ export default function CaixaPage() {
     setLoading(true);
 
     try {
+      // Antes de desenhar a tela, garante que o Caixa é um espelho atualizado
+      // dos pedidos em dinheiro pagos.
+      await sincronizarCaixaComPedidos();
+      await sincronizarPagamentosEstafetas();
+
       let caixa = await buscarTodosCaixa();
 
       if (dataFiltro === hojeLisboa()) {
@@ -814,6 +1147,8 @@ export default function CaixaPage() {
     dataFiltro,
     garantirAberturaHoje,
     movimentosDoDia,
+    sincronizarCaixaComPedidos,
+    sincronizarPagamentosEstafetas,
   ]);
 
   useEffect(() => {
@@ -857,22 +1192,46 @@ export default function CaixaPage() {
     carregarCaixa();
   }, [dataFiltro, carregarCaixa]);
 
-  // Sincronização futura automática.
+  // Sincronização automática em tempo real.
   useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const atualizar = () => {
+      if (timer) clearTimeout(timer);
+
+      // Pequeno debounce para pedidos que geram várias alterações seguidas
+      // (pedido + itens + caixa) não dispararem várias cargas simultâneas.
+      timer = setTimeout(() => {
+        carregarCaixa();
+      }, 250);
+    };
+
     const canal = supabase
-      .channel('caixa-pedidos-auditoria-v5')
+      .channel('caixa-tempo-real-v7')
       .on(
         'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'pedidos',
-        },
-        () => carregarCaixa()
+        { event: '*', schema: 'public', table: 'pedidos' },
+        atualizar
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'itens_pedido' },
+        atualizar
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'caixa' },
+        atualizar
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'estafetas_pagamentos' },
+        atualizar
       )
       .subscribe();
 
     return () => {
+      if (timer) clearTimeout(timer);
       supabase.removeChannel(canal);
     };
   }, [carregarCaixa, supabase]);
@@ -932,39 +1291,82 @@ export default function CaixaPage() {
         .filter((m) => normalizar(m.tipo) === 'saida')
         .reduce((acc, m) => acc + num(m.valor), 0);
 
-      const saldo = abertura + entradas - saidas;
+      const saldoEsperado = Number((abertura + entradas - saidas).toFixed(2));
 
-      const confirmar = confirm(
-        `FECHAMENTO MANUAL - ${dataBR(dataFiltro)}\n\n` +
-          `Abertura: ${abertura.toFixed(2)}€\n` +
-          `Entradas totais: ${entradas.toFixed(2)}€\n` +
-          `Saídas totais: ${saidas.toFixed(2)}€\n` +
-          `-----------------------------\n` +
-          `SALDO ESPERADO: ${saldo.toFixed(2)}€\n\n` +
-          `Pedidos Dinheiro/Dinheiro Glovo: ${final.pedidosDinheiro}\n` +
-          `Valor desses pedidos: ${final.valorPedidosDinheiro.toFixed(
-            2
-          )}€\n\n` +
-          `Confirma que conferiu o dinheiro físico?`
+      setResumoFechamento({
+        abertura,
+        entradas,
+        saidas,
+        saldoEsperado,
+        pedidosDinheiro: final.pedidosDinheiro,
+        valorPedidosDinheiro: final.valorPedidosDinheiro,
+      });
+
+      // Preenche com o esperado para facilitar, mas o utilizador pode alterar
+      // para o valor REAL contado no caixa.
+      setValorFechamentoManual(saldoEsperado);
+      setModalFechamentoAberto(true);
+    } catch (error: any) {
+      alert(
+        `Erro ao preparar fechamento: ${
+          error?.message || 'erro desconhecido'
+        }`
       );
+    } finally {
+      setProcessando(false);
+    }
+  };
 
-      if (!confirmar) return;
+  const confirmarFechamentoManual = async (e: React.FormEvent) => {
+    e.preventDefault();
 
+    if (caixaFechadoManual) {
+      alert('Este caixa já foi fechado manualmente.');
+      return;
+    }
+
+    if (valorFechamentoManual < 0) {
+      alert('Informe um valor de fechamento válido.');
+      return;
+    }
+
+    const valorReal = Number(valorFechamentoManual.toFixed(2));
+    const diferenca = Number(
+      (valorReal - resumoFechamento.saldoEsperado).toFixed(2)
+    );
+
+    const confirmar = confirm(
+      `CONFIRMAR FECHAMENTO - ${dataBR(dataFiltro)}\n\n` +
+        `Saldo esperado: ${resumoFechamento.saldoEsperado.toFixed(2)}€\n` +
+        `Valor contado: ${valorReal.toFixed(2)}€\n` +
+        `Diferença: ${diferenca >= 0 ? '+' : ''}${diferenca.toFixed(2)}€\n\n` +
+        `Deseja fechar o caixa com o valor contado?`
+    );
+
+    if (!confirmar) return;
+
+    setProcessando(true);
+
+    try {
       const { error } = await supabase.from('caixa').insert([
         {
           data_dia: dataFiltro,
           tipo: 'Fechamento',
           descricao: 'Fecho do Dia (Manual)',
-          valor: Number(saldo.toFixed(2)),
+          valor: valorReal,
+          pedido_numero: null,
         },
       ]);
 
       if (error) throw error;
 
+      setModalFechamentoAberto(false);
+
       alert(
-        `🔒 Caixa de ${dataBR(
-          dataFiltro
-        )} fechado manualmente com sucesso!`
+        `🔒 Caixa de ${dataBR(dataFiltro)} fechado manualmente.\n\n` +
+          `Esperado: ${resumoFechamento.saldoEsperado.toFixed(2)}€\n` +
+          `Contado: ${valorReal.toFixed(2)}€\n` +
+          `Diferença: ${diferenca >= 0 ? '+' : ''}${diferenca.toFixed(2)}€`
       );
 
       await carregarCaixa();
@@ -980,13 +1382,169 @@ export default function CaixaPage() {
   };
 
   // ============================================================
+  // ABERTURA MANUAL / AJUSTE DE ABERTURA
+  // ============================================================
+
+  const salvarAberturaManual = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (caixaFechadoManual) {
+      alert('Não pode ajustar a abertura de um caixa fechado manualmente.');
+      return;
+    }
+
+    if (valorAberturaManual < 0) {
+      alert('Informe um valor de abertura válido.');
+      return;
+    }
+
+    const confirmar = confirm(
+      `AJUSTAR ABERTURA - ${dataBR(dataFiltro)}\n\n` +
+        `Abertura atual: ${conferencia.abertura.toFixed(2)}€\n` +
+        `Nova abertura: ${valorAberturaManual.toFixed(2)}€\n\n` +
+        `A abertura existente deste dia será substituída. Deseja continuar?`
+    );
+
+    if (!confirmar) return;
+
+    setProcessando(true);
+
+    try {
+      const { error: erroApagar } = await supabase
+        .from('caixa')
+        .delete()
+        .eq('data_dia', dataFiltro)
+        .eq('tipo', 'Abertura');
+
+      if (erroApagar) throw erroApagar;
+
+      const { error: erroInserir } = await supabase.from('caixa').insert([
+        {
+          data_dia: dataFiltro,
+          tipo: 'Abertura',
+          descricao: 'Fundo de Maneio (Abertura Manual / Ajuste)',
+          valor: Number(valorAberturaManual.toFixed(2)),
+          pedido_numero: null,
+        },
+      ]);
+
+      if (erroInserir) throw erroInserir;
+
+      setModalAberturaAberto(false);
+      const valorConfirmado = Number(valorAberturaManual.toFixed(2));
+      setValorAberturaManual(0);
+
+      alert(
+        `✅ Abertura de ${dataBR(dataFiltro)} ajustada para ${valorConfirmado.toFixed(2)}€.`
+      );
+
+      await carregarCaixa();
+    } catch (error: any) {
+      alert(
+        `Erro ao ajustar abertura: ${
+          error?.message || 'erro desconhecido'
+        }`
+      );
+    } finally {
+      setProcessando(false);
+    }
+  };
+
+  // ============================================================
+  // CORREÇÃO DE MOVIMENTO / REABERTURA DO DIA
+  // ============================================================
+
+  const reabrirCaixaParaCorrecao = async (): Promise<boolean> => {
+    if (!caixaFechadoManual) return true;
+
+    const confirmar = confirm(
+      `⚠️ CAIXA FECHADO - ${dataBR(dataFiltro)}\n\n` +
+        `Para editar ou excluir um movimento deste dia, o fechamento manual atual precisa ser removido.\n\n` +
+        `O caixa será REABERTO para correção e depois deverá ser fechado novamente.\n\n` +
+        `Deseja continuar?`
+    );
+
+    if (!confirmar) return false;
+
+    const { error } = await supabase
+      .from('caixa')
+      .delete()
+      .eq('data_dia', dataFiltro)
+      .eq('tipo', 'Fechamento');
+
+    if (error) {
+      alert(`Erro ao reabrir caixa: ${error.message}`);
+      return false;
+    }
+
+    setCaixaFechadoManual(false);
+    return true;
+  };
+
+  const abrirEdicaoMovimento = async (mov: MovimentoCaixa) => {
+    const tipo = normalizar(mov.tipo);
+
+    if (tipo !== 'entrada' && tipo !== 'saida') {
+      alert('Somente entradas e saídas manuais podem ser editadas por aqui.');
+      return;
+    }
+
+    if (
+      tipo === 'saida' &&
+      /^\[Pagamento Estafeta #[^\]]+\]/i.test(mov.descricao || '')
+    ) {
+      alert(
+        'Este movimento vem automaticamente de Pagamentos de Estafetas. Edite o pagamento na página Estafetas.'
+      );
+      return;
+    }
+
+    // Entradas vinculadas a pedido continuam protegidas.
+    if (
+      tipo === 'entrada' &&
+      (
+        mov.pedido_numero ||
+        /\bpedido\s*#?\s*\d+\b/i.test(mov.descricao || '')
+      )
+    ) {
+      alert('Entradas automáticas de pedidos não podem ser editadas manualmente.');
+      return;
+    }
+
+    const podeContinuar = await reabrirCaixaParaCorrecao();
+    if (!podeContinuar) return;
+
+    const descricao = mov.descricao || '';
+    const matchMotivo = descricao.match(/^\[([^\]]+)\]\s*(.*)$/);
+
+    const motivoAtual = matchMotivo?.[1] || 'Outros';
+    const detalheAtual = matchMotivo?.[2] || descricao;
+
+    setMovimentoEditando(mov);
+    setForm({
+      tipo: mov.tipo,
+      motivo: motivosMovimento.includes(motivoAtual)
+        ? motivoAtual
+        : 'Outros',
+      descricao:
+        motivosMovimento.includes(motivoAtual)
+          ? detalheAtual
+          : descricao,
+      valor: num(mov.valor),
+    });
+    setModalAberto(true);
+  };
+
+  // ============================================================
   // MOVIMENTO MANUAL
   // ============================================================
 
   const salvarMovimentoManual = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (caixaFechadoManual) {
+    // Se estiver criando um movimento novo, caixa fechado continua bloqueado.
+    // Para edição, a função abrirEdicaoMovimento já reabre o caixa antes.
+    if (caixaFechadoManual && !movimentoEditando) {
       alert('Este caixa já foi fechado manualmente.');
       return;
     }
@@ -1014,16 +1572,32 @@ export default function CaixaPage() {
     setProcessando(true);
 
     try {
-      const { error } = await supabase.from('caixa').insert([
-        {
-          data_dia: dataFiltro,
-          tipo: form.tipo,
-          descricao: descricaoFinal,
-          valor: Number(form.valor.toFixed(2)),
-        },
-      ]);
+      if (movimentoEditando) {
+        const { error } = await supabase
+          .from('caixa')
+          .update({
+            tipo: form.tipo,
+            descricao: descricaoFinal,
+            valor: Number(form.valor.toFixed(2)),
+          })
+          .eq('id', movimentoEditando.id);
 
-      if (error) throw error;
+        if (error) throw error;
+
+        alert('✅ Movimento atualizado. Confira o saldo e feche o caixa novamente.');
+      } else {
+        const { error } = await supabase.from('caixa').insert([
+          {
+            data_dia: dataFiltro,
+            tipo: form.tipo,
+            descricao: descricaoFinal,
+            valor: Number(form.valor.toFixed(2)),
+            pedido_numero: null,
+          },
+        ]);
+
+        if (error) throw error;
+      }
 
       setForm({
         tipo: 'Saida',
@@ -1032,6 +1606,7 @@ export default function CaixaPage() {
         valor: 0,
       });
 
+      setMovimentoEditando(null);
       setModalAberto(false);
       await carregarCaixa();
     } catch (error: any) {
@@ -1042,44 +1617,56 @@ export default function CaixaPage() {
   };
 
   const apagarMovimentoManual = async (mov: MovimentoCaixa) => {
-    if (caixaFechadoManual) {
-      alert('Não pode alterar um caixa fechado manualmente.');
-      return;
-    }
-
     if (normalizar(mov.tipo) === 'abertura') {
-      alert('A abertura não pode ser apagada por aqui.');
+      alert('A abertura não pode ser apagada por aqui. Use "Ajustar Abertura".');
       return;
     }
 
     if (normalizar(mov.tipo) === 'fechamento') {
-      alert('Fechamentos históricos não são apagados por aqui.');
+      alert('O fechamento não é apagado por este botão.');
+      return;
+    }
+
+    if (
+      normalizar(mov.tipo) === 'saida' &&
+      /^\[Pagamento Estafeta #[^\]]+\]/i.test(mov.descricao || '')
+    ) {
+      alert(
+        'Este movimento vem automaticamente de Pagamentos de Estafetas. Apague o pagamento na página Estafetas.'
+      );
       return;
     }
 
     if (
       normalizar(mov.tipo) === 'entrada' &&
-      /\bpedido\s*#?\s*\d+\b/i.test(mov.descricao || '')
+      (
+        mov.pedido_numero ||
+        /\bpedido\s*#?\s*\d+\b/i.test(mov.descricao || '')
+      )
     ) {
       const match = (mov.descricao || '').match(
         /\bpedido\s*#?\s*(\d+)\b/i
       );
 
-      const numeroPedido = match ? Number(match[1]) : null;
+      const numeroPedido =
+        mov.pedido_numero || (match ? Number(match[1]) : null);
 
       const duplicadosDoMesmoPedido = numeroPedido
         ? movimentos.filter((item) => {
             if (normalizar(item.tipo) !== 'entrada') return false;
 
-            const itemMatch = (item.descricao || '').match(
-              /\bpedido\s*#?\s*(\d+)\b/i
-            );
+            const numeroItem =
+              item.pedido_numero ||
+              Number(
+                (item.descricao || '').match(
+                  /\bpedido\s*#?\s*(\d+)\b/i
+                )?.[1] || 0
+              );
 
-            return itemMatch && Number(itemMatch[1]) === numeroPedido;
+            return Number(numeroItem) === Number(numeroPedido);
           })
         : [];
 
-      // Uma entrada válida de pedido continua protegida.
       if (duplicadosDoMesmoPedido.length <= 1) {
         alert(
           'Esta é a única entrada deste pedido e está protegida pela auditoria.'
@@ -1087,8 +1674,6 @@ export default function CaixaPage() {
         return;
       }
 
-      // Se existem 2 ou mais entradas do MESMO pedido, permite excluir
-      // uma delas para corrigir a duplicidade.
       if (
         !confirm(
           `Foram encontradas ${duplicadosDoMesmoPedido.length} entradas do Pedido #${numeroPedido}.\n\n` +
@@ -1100,8 +1685,19 @@ export default function CaixaPage() {
         return;
       }
     } else {
-      if (!confirm('Eliminar este movimento manual?')) return;
+      if (
+        !confirm(
+          `Eliminar este movimento manual?\n\n` +
+            `${mov.descricao}\n` +
+            `${num(mov.valor).toFixed(2)}€`
+        )
+      ) {
+        return;
+      }
     }
+
+    const podeContinuar = await reabrirCaixaParaCorrecao();
+    if (!podeContinuar) return;
 
     const { error } = await supabase
       .from('caixa')
@@ -1113,6 +1709,7 @@ export default function CaixaPage() {
       return;
     }
 
+    alert('✅ Movimento eliminado. Confira o saldo e feche o caixa novamente.');
     await carregarCaixa();
   };
 
@@ -1302,7 +1899,27 @@ export default function CaixaPage() {
         </div>
 
         <button
-          onClick={() => setModalAberto(true)}
+          onClick={() => {
+            setValorAberturaManual(conferencia.abertura);
+            setModalAberturaAberto(true);
+          }}
+          disabled={caixaFechadoManual || processando || auditandoHistorico}
+          className="bg-blue-950 border border-blue-900 hover:bg-blue-900 disabled:opacity-40 text-blue-300 hover:text-white text-sm font-bold px-6 py-3 rounded-xl"
+        >
+          🟦 Ajustar Abertura
+        </button>
+
+        <button
+          onClick={() => {
+            setMovimentoEditando(null);
+            setForm({
+              tipo: 'Saida',
+              motivo: '',
+              descricao: '',
+              valor: 0,
+            });
+            setModalAberto(true);
+          }}
           disabled={caixaFechadoManual}
           className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-white text-sm font-bold px-6 py-3 rounded-xl border border-zinc-700"
         >
@@ -1357,7 +1974,12 @@ export default function CaixaPage() {
                   >
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-bold text-zinc-200">
-                        {mov.descricao}
+                        {/^\[Pagamento Estafeta #[^\]]+\]\s*/i.test(mov.descricao || '')
+                          ? `Pagamento Estafeta ${(mov.descricao || '').replace(
+                              /^\[Pagamento Estafeta #[^\]]+\]\s*/i,
+                              ''
+                            )}`
+                          : mov.descricao}
                       </p>
 
                       <div className="flex flex-wrap gap-2 mt-2">
@@ -1402,18 +2024,36 @@ export default function CaixaPage() {
                       {num(mov.valor).toFixed(2)}€
                     </div>
 
-                    {!caixaFechadoManual &&
-                      !abertura &&
-                      !fechamento && (
-                        <button
-                          onClick={() =>
-                            apagarMovimentoManual(mov)
-                          }
-                          className="w-9 h-9 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-red-950"
-                          title="Eliminar movimento manual"
-                        >
-                          🗑️
-                        </button>
+                    {!abertura &&
+                      !fechamento &&
+                      !(
+                        entrada &&
+                        (
+                          mov.pedido_numero ||
+                          /\bpedido\s*#?\s*\d+\b/i.test(mov.descricao || '')
+                        )
+                      ) &&
+                      !(
+                        saida &&
+                        /^\[Pagamento Estafeta #[^\]]+\]/i.test(mov.descricao || '')
+                      ) && (
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => abrirEdicaoMovimento(mov)}
+                            className="w-9 h-9 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-blue-950"
+                            title="Editar movimento manual"
+                          >
+                            ✏️
+                          </button>
+
+                          <button
+                            onClick={() => apagarMovimentoManual(mov)}
+                            className="w-9 h-9 rounded-xl bg-zinc-900 border border-zinc-800 hover:bg-red-950"
+                            title="Eliminar movimento manual"
+                          >
+                            🗑️
+                          </button>
+                        </div>
                       )}
                   </div>
                 );
@@ -1423,13 +2063,13 @@ export default function CaixaPage() {
         </div>
       </div>
 
-      {modalAberto && (
-        <div className="fixed inset-0 bg-black/80 z-[100] flex justify-center items-center p-4">
+      {modalFechamentoAberto && (
+        <div className="fixed inset-0 bg-black/80 z-[110] flex justify-center items-center p-4">
           <div className="bg-zinc-900 w-full max-w-lg rounded-[30px] border border-zinc-800 overflow-hidden">
             <div className="p-6 border-b border-zinc-800 flex justify-between items-center">
               <div>
                 <h2 className="text-xl font-black text-white">
-                  Registar Movimento
+                  Fechamento Manual do Caixa
                 </h2>
                 <p className="text-xs text-zinc-500 mt-1">
                   {dataBR(dataFiltro)}
@@ -1437,7 +2077,211 @@ export default function CaixaPage() {
               </div>
 
               <button
-                onClick={() => setModalAberto(false)}
+                onClick={() => setModalFechamentoAberto(false)}
+                className="text-zinc-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form
+              onSubmit={confirmarFechamentoManual}
+              className="p-6 space-y-5"
+            >
+              <div className="grid grid-cols-2 gap-3">
+                <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4">
+                  <p className="text-[9px] uppercase text-zinc-500 font-black">
+                    Abertura
+                  </p>
+                  <p className="text-lg font-black text-blue-400 mt-1">
+                    {resumoFechamento.abertura.toFixed(2)}€
+                  </p>
+                </div>
+
+                <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4">
+                  <p className="text-[9px] uppercase text-zinc-500 font-black">
+                    Saldo esperado
+                  </p>
+                  <p className="text-lg font-black text-white mt-1">
+                    {resumoFechamento.saldoEsperado.toFixed(2)}€
+                  </p>
+                </div>
+
+                <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4">
+                  <p className="text-[9px] uppercase text-zinc-500 font-black">
+                    Entradas
+                  </p>
+                  <p className="text-lg font-black text-emerald-400 mt-1">
+                    +{resumoFechamento.entradas.toFixed(2)}€
+                  </p>
+                </div>
+
+                <div className="bg-zinc-950 border border-zinc-800 rounded-xl p-4">
+                  <p className="text-[9px] uppercase text-zinc-500 font-black">
+                    Saídas
+                  </p>
+                  <p className="text-lg font-black text-red-400 mt-1">
+                    -{resumoFechamento.saidas.toFixed(2)}€
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] uppercase text-zinc-500 font-black mb-2">
+                  Valor real contado no caixa (€)
+                </label>
+
+                <input
+                  autoFocus
+                  required
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={valorFechamentoManual}
+                  onChange={(e) =>
+                    setValorFechamentoManual(parseFloat(e.target.value) || 0)
+                  }
+                  className="w-full bg-zinc-950 border border-zinc-700 rounded-xl p-4 text-3xl font-black text-orange-400"
+                />
+
+                <div className="mt-3 flex items-center justify-between text-xs">
+                  <span className="text-zinc-500">
+                    Diferença para o esperado:
+                  </span>
+
+                  <strong
+                    className={
+                      Math.abs(
+                        valorFechamentoManual -
+                          resumoFechamento.saldoEsperado
+                      ) < 0.01
+                        ? 'text-emerald-400'
+                        : 'text-orange-400'
+                    }
+                  >
+                    {valorFechamentoManual -
+                      resumoFechamento.saldoEsperado >=
+                    0
+                      ? '+'
+                      : ''}
+                    {(
+                      valorFechamentoManual -
+                      resumoFechamento.saldoEsperado
+                    ).toFixed(2)}
+                    €
+                  </strong>
+                </div>
+              </div>
+
+              <div className="bg-orange-500/5 border border-orange-500/20 rounded-xl p-4">
+                <p className="text-xs text-zinc-400">
+                  Digite aqui o valor que foi realmente contado no dinheiro físico.
+                  O sistema guardará este valor como fechamento e mostrará qualquer
+                  diferença em relação ao saldo esperado.
+                </p>
+              </div>
+
+              <button
+                type="submit"
+                disabled={processando}
+                className="w-full bg-red-950 border border-red-900 hover:bg-red-900 disabled:opacity-50 py-4 rounded-xl text-red-300 hover:text-white font-black uppercase"
+              >
+                {processando
+                  ? 'A fechar...'
+                  : 'Confirmar fechamento manual'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {modalAberturaAberto && (
+        <div className="fixed inset-0 bg-black/80 z-[100] flex justify-center items-center p-4">
+          <div className="bg-zinc-900 w-full max-w-lg rounded-[30px] border border-zinc-800 overflow-hidden">
+            <div className="p-6 border-b border-zinc-800 flex justify-between items-center">
+              <div>
+                <h2 className="text-xl font-black text-white">
+                  Ajustar Abertura do Caixa
+                </h2>
+                <p className="text-xs text-zinc-500 mt-1">
+                  {dataBR(dataFiltro)}
+                </p>
+              </div>
+
+              <button
+                onClick={() => setModalAberturaAberto(false)}
+                className="text-zinc-400 hover:text-white"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form
+              onSubmit={salvarAberturaManual}
+              className="p-6 space-y-5"
+            >
+              <div className="bg-blue-500/5 border border-blue-500/20 rounded-xl p-4">
+                <p className="text-xs text-zinc-400">
+                  Abertura atual:
+                  <strong className="text-blue-300 ml-2">
+                    {conferencia.abertura.toFixed(2)}€
+                  </strong>
+                </p>
+                <p className="text-[10px] text-zinc-600 mt-2">
+                  O ajuste substitui a abertura existente do dia. Não cria uma segunda abertura somada ao caixa.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-[10px] uppercase text-zinc-500 font-black mb-2">
+                  Novo valor de abertura (€)
+                </label>
+
+                <input
+                  required
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={valorAberturaManual}
+                  onChange={(e) =>
+                    setValorAberturaManual(parseFloat(e.target.value) || 0)
+                  }
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-3xl font-black text-blue-400"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={processando}
+                className="w-full bg-blue-700 hover:bg-blue-600 disabled:opacity-50 py-4 rounded-xl text-white font-black uppercase"
+              >
+                {processando
+                  ? 'A ajustar...'
+                  : 'Confirmar nova abertura'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {modalAberto && (
+        <div className="fixed inset-0 bg-black/80 z-[100] flex justify-center items-center p-4">
+          <div className="bg-zinc-900 w-full max-w-lg rounded-[30px] border border-zinc-800 overflow-hidden">
+            <div className="p-6 border-b border-zinc-800 flex justify-between items-center">
+              <div>
+                <h2 className="text-xl font-black text-white">
+                  {movimentoEditando ? 'Editar Movimento' : 'Registar Movimento'}
+                </h2>
+                <p className="text-xs text-zinc-500 mt-1">
+                  {dataBR(dataFiltro)}
+                </p>
+              </div>
+
+              <button
+                onClick={() => {
+                  setModalAberto(false);
+                  setMovimentoEditando(null);
+                }}
                 className="text-zinc-400 hover:text-white"
               >
                 ✕
@@ -1550,6 +2394,8 @@ export default function CaixaPage() {
               >
                 {processando
                   ? 'A gravar...'
+                  : movimentoEditando
+                  ? 'Guardar alterações'
                   : 'Confirmar movimento'}
               </button>
             </form>

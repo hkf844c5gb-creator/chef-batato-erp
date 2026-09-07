@@ -137,7 +137,7 @@ export default function ConciliacaoPage() {
       }
 
       await supabase.from('despesas').insert([{
-        descricao: descFinal, categoria: catItem, valor: valorReal, data_despesa: dataDespesaGravar, metodo_pagamento: 'Conciliação Automática', status: 'Validado' 
+        descricao: descFinal, categoria: catItem, valor: valorReal, data_despesa: dataDespesaGravar, metodo_pagamento: 'Conciliação Automática', status: 'Pago' 
       }]);
       totalInseridos++;
     }

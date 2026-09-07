@@ -1,10 +1,39 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import Image from 'next/image';
+import { createBrowserClient } from '@supabase/ssr';
+import { useMemo, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname(); 
+  const pathname = usePathname();
+  const router = useRouter();
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  const supabase = useMemo(
+    () =>
+      createBrowserClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      ),
+    []
+  );
+
+  async function handleLogout() {
+    setIsLoggingOut(true);
+
+    const { error } = await supabase.auth.signOut({ scope: 'local' });
+
+    if (error) {
+      alert('Não foi possível terminar a sessão. Tenta novamente.');
+      setIsLoggingOut(false);
+      return;
+    }
+
+    router.replace('/login');
+    router.refresh();
+  }
 
   const menuItems = [
     { href: '/admin/dashboard', icon: '📊', label: 'Dashboard' },
@@ -35,9 +64,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         {/* Cabeçalho do Menu (Logo Personalizada Maior e Centrada) */}
         <div className="p-6 flex flex-col items-center justify-center border-b border-zinc-800/50 mb-2 shrink-0">
           <div className="w-36 h-36 flex items-center justify-center transition-transform hover:scale-105 duration-300">
-            <img 
+            <Image
               src="/logo.jpg" 
               alt="Logo Chef Batatô" 
+              width={144}
+              height={144}
+              priority
               className="max-w-full max-h-full object-contain drop-shadow-[0_0_15px_rgba(249,115,22,0.3)]"
             />
           </div>
@@ -73,13 +105,17 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
         {/* Rodapé do Menu (Botão de Sair) */}
         <div className="p-4 border-t border-zinc-800 shrink-0">
-          <Link 
-            href="/" 
-            className="flex items-center gap-3 px-3 py-3 text-zinc-500 hover:text-red-400 hover:bg-red-950/30 rounded-xl transition-all whitespace-nowrap"
+          <button
+            type="button"
+            onClick={handleLogout}
+            disabled={isLoggingOut}
+            className="w-full flex items-center gap-3 px-3 py-3 text-zinc-500 hover:text-red-400 hover:bg-red-950/30 rounded-xl transition-all whitespace-nowrap disabled:cursor-wait disabled:opacity-60"
           >
             <span className="text-xl min-w-[24px] flex justify-center">🚪</span>
-            <span className="text-sm font-medium">Sair do Sistema</span>
-          </Link>
+            <span className="text-sm font-medium">
+              {isLoggingOut ? 'A terminar sessão...' : 'Sair do Sistema'}
+            </span>
+          </button>
         </div>
       </aside>
 

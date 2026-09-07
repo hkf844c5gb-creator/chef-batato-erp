@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
 interface EstafetaCalculado {
@@ -15,10 +15,10 @@ interface EstafetaCalculado {
 }
 
 export default function GestaoEstafetas() {
-  const supabase = createBrowserClient(
+  const supabase = useMemo(() => createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-  );
+  ), []);
 
   const [estafetasDB, setEstafetasDB] = useState<any[]>([]);
   const [pedidosDB, setPedidosDB] = useState<any[]>([]);
@@ -32,6 +32,7 @@ export default function GestaoEstafetas() {
   // Modais
   const [modalPagamentoAberto, setModalPagamentoAberto] = useState(false);
   const [modalEstafetaAberto, setModalEstafetaAberto] = useState(false);
+  const [modalEntregaExtraAberto, setModalEntregaExtraAberto] = useState(false);
   const [processando, setProcessando] = useState(false);
   
   // Filtros
@@ -40,10 +41,25 @@ export default function GestaoEstafetas() {
 
   // Formulários
   const [novoPagamento, setNovoPagamento] = useState({ 
-    id: '', entregador: '', valor: 0, data: new Date().toISOString().split('T')[0], inicio: '', fim: '' 
+    id: '',
+    entregador: '',
+    valor: 0,
+    data: new Date().toISOString().split('T')[0],
+    inicio: '',
+    fim: '',
+    formaPagamento: 'Dinheiro' as 'Dinheiro' | 'MB Way'
   });
   
   const [formEstafeta, setFormEstafeta] = useState({ id: '', nome: '', contacto: '', divida_inicial: 0 });
+
+  const [formEntregaExtra, setFormEntregaExtra] = useState({
+    pedidoId: '',
+    pedidoNumero: '',
+    estafeta: '',
+    taxaCliente: 0,
+    valorExtra: 0,
+    observacao: ''
+  });
 
   const limparNomePedido = (nome: string) => {
     if (!nome) return 'N/D';
@@ -62,7 +78,7 @@ export default function GestaoEstafetas() {
       const { data: ests } = await supabase.from('estafetas').select('*').order('nome');
       
       const { data: peds } = await supabase.from('pedidos')
-        .select('id, cliente, entregador, taxa_entrega, criado_em')
+        .select('id, numero_pedido, cliente, entregador, taxa_entrega, valor_entrega_extra_estafeta, observacao_entrega_extra, criado_em')
         .not('entregador', 'is', null)
         .neq('entregador', '')
         .order('criado_em', { ascending: false });
@@ -80,7 +96,18 @@ export default function GestaoEstafetas() {
     }
   }
 
-  useEffect(() => { carregarDados(); }, []);
+  useEffect(() => {
+    carregarDados();
+
+    const canal = supabase
+      .channel('estafetas-tempo-real')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pedidos' }, carregarDados)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'estafetas' }, carregarDados)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'estafetas_pagamentos' }, carregarDados)
+      .subscribe();
+
+    return () => { void supabase.removeChannel(canal); };
+  }, [supabase]);
 
   // --- MOTOR DE CÁLCULO GERAL (CORRIGIDO PARA IGNORAR MAIÚSCULAS E ESPAÇOS) ---
   
@@ -105,7 +132,13 @@ export default function GestaoEstafetas() {
     const entregasNovas = pedsAtuais.length;
     
     // Soma cravada, garantindo que valores nulos ou strings inválidas da BD viram 0
-    const taxasNovas = pedsAtuais.reduce((sum, p) => sum + (parseFloat(p.taxa_entrega) || 0), 0);
+    // Total devido ao estafeta = entrega cobrada ao cliente + extra pago pela empresa.
+    const taxasNovas = pedsAtuais.reduce(
+      (sum, p) => sum
+        + (parseFloat(p.taxa_entrega) || 0)
+        + (parseFloat(p.valor_entrega_extra_estafeta) || 0),
+      0
+    );
     const pagamentosNovos = pagsAtuais.reduce((sum, p) => sum + (parseFloat(p.valor_pago) || 0), 0);
 
     // MATEMÁTICA CORRETA: (Taxas Passadas + Taxas Novas) - Todos os Pagamentos
@@ -185,7 +218,8 @@ export default function GestaoEstafetas() {
       valor: Number(pag.valor_pago),
       data: pag.data_pagamento,
       inicio: pag.inicio_periodo || '',
-      fim: pag.fim_periodo || ''
+      fim: pag.fim_periodo || '',
+      formaPagamento: pag.forma_pagamento === 'MB Way' ? 'MB Way' : 'Dinheiro'
     });
     setModalPagamentoAberto(true);
   };
@@ -202,7 +236,8 @@ export default function GestaoEstafetas() {
         valor_pago: novoPagamento.valor,
         data_pagamento: novoPagamento.data,
         inicio_periodo: novoPagamento.inicio || null,
-        fim_periodo: novoPagamento.fim || null
+        fim_periodo: novoPagamento.fim || null,
+        forma_pagamento: novoPagamento.formaPagamento
       };
 
       if (novoPagamento.id) {
@@ -218,7 +253,7 @@ export default function GestaoEstafetas() {
       }
 
       setModalPagamentoAberto(false);
-      setNovoPagamento({ id: '', entregador: '', valor: 0, data: new Date().toISOString().split('T')[0], inicio: '', fim: '' });
+      setNovoPagamento({ id: '', entregador: '', valor: 0, data: new Date().toISOString().split('T')[0], inicio: '', fim: '', formaPagamento: 'Dinheiro' });
       carregarDados();
     } catch (error: unknown) {
       const erroMsg = error instanceof Error ? error.message : JSON.stringify(error);
@@ -234,6 +269,80 @@ export default function GestaoEstafetas() {
       await supabase.from('estafetas_pagamentos').delete().eq('id', id);
       carregarDados();
     } catch (err) { alert("Erro ao apagar."); }
+  };
+
+  // --- AÇÕES: ENTREGA EXTRA PAGA PELA EMPRESA ---
+  const abrirEntregaExtra = (pedido: any) => {
+    setFormEntregaExtra({
+      pedidoId: pedido.id,
+      pedidoNumero: String(pedido.numero_pedido || limparNomePedido(pedido.cliente)),
+      estafeta: pedido.entregador || '',
+      taxaCliente: Number(pedido.taxa_entrega) || 0,
+      valorExtra: Number(pedido.valor_entrega_extra_estafeta) || 0,
+      observacao: pedido.observacao_entrega_extra || ''
+    });
+    setModalEntregaExtraAberto(true);
+  };
+
+  const abrirNovaEntregaExtra = () => {
+    setFormEntregaExtra({
+      pedidoId: '',
+      pedidoNumero: '',
+      estafeta: '',
+      taxaCliente: 0,
+      valorExtra: 0,
+      observacao: ''
+    });
+    setModalEntregaExtraAberto(true);
+  };
+
+  const guardarEntregaExtra = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (!formEntregaExtra.estafeta.trim()) return alert('Selecione o estafeta.');
+    if (!formEntregaExtra.pedidoNumero.trim()) return alert('Indique o número do pedido.');
+    if (formEntregaExtra.valorExtra <= 0) return alert('Indique um valor extra superior a zero.');
+
+    setProcessando(true);
+    try {
+      // Se o modal foi aberto pela linha, já conhecemos o ID. Quando o número
+      // foi escrito manualmente, procuramos o pedido na base de dados.
+      let pedidoId = formEntregaExtra.pedidoId;
+
+      if (!pedidoId) {
+        const { data: pedidosEncontrados, error: erroPesquisa } = await supabase
+          .from('pedidos')
+          .select('id, numero_pedido, taxa_entrega, entregador')
+          .eq('numero_pedido', formEntregaExtra.pedidoNumero.trim())
+          .limit(1);
+
+        if (erroPesquisa) throw erroPesquisa;
+        if (!pedidosEncontrados || pedidosEncontrados.length === 0) {
+          return alert(`O pedido #${formEntregaExtra.pedidoNumero.trim()} não foi encontrado.`);
+        }
+
+        pedidoId = String(pedidosEncontrados[0].id);
+      }
+
+      const { error } = await supabase
+        .from('pedidos')
+        .update({
+          entregador: formEntregaExtra.estafeta.trim(),
+          valor_entrega_extra_estafeta: Number(formEntregaExtra.valorExtra.toFixed(2)),
+          observacao_entrega_extra: formEntregaExtra.observacao.trim() || null
+        })
+        .eq('id', pedidoId);
+
+      if (error) throw error;
+
+      setModalEntregaExtraAberto(false);
+      await carregarDados();
+    } catch (error: unknown) {
+      const mensagem = error instanceof Error ? error.message : JSON.stringify(error);
+      alert('Erro ao guardar o valor extra da entrega:\n' + mensagem);
+    } finally {
+      setProcessando(false);
+    }
   };
 
   const alternarCard = (nome: string) => {
@@ -260,9 +369,14 @@ export default function GestaoEstafetas() {
             <p className="text-[11px] text-zinc-400 font-bold uppercase tracking-widest mt-0.5">Gestão de Pagamentos</p>
           </div>
         </div>
-        <button onClick={() => { setNovoPagamento({ id: '', entregador: '', valor: 0, data: new Date().toISOString().split('T')[0], inicio: '', fim: '' }); setModalPagamentoAberto(true); }} className="bg-white hover:bg-zinc-200 text-zinc-950 px-5 py-2.5 rounded-xl text-sm font-black shadow-lg transition-transform active:scale-95 flex items-center gap-2">
-          <span>+</span> Novo Acerto
-        </button>
+        <div className="flex flex-wrap justify-end gap-2">
+          <button onClick={abrirNovaEntregaExtra} className="bg-amber-500 hover:bg-amber-400 text-zinc-950 px-5 py-2.5 rounded-xl text-sm font-black shadow-lg transition-transform active:scale-95 flex items-center gap-2">
+            <span>+</span> Entrega Extra
+          </button>
+          <button onClick={() => { setNovoPagamento({ id: '', entregador: '', valor: 0, data: new Date().toISOString().split('T')[0], inicio: '', fim: '', formaPagamento: 'Dinheiro' }); setModalPagamentoAberto(true); }} className="bg-white hover:bg-zinc-200 text-zinc-950 px-5 py-2.5 rounded-xl text-sm font-black shadow-lg transition-transform active:scale-95 flex items-center gap-2">
+            <span>+</span> Novo Acerto
+          </button>
+        </div>
       </header>
 
       <main className="flex-1 w-full max-w-[1200px] mx-auto p-5 md:p-8 space-y-8">
@@ -308,7 +422,12 @@ export default function GestaoEstafetas() {
               if (filtroFim) entregasDesteEstafeta = entregasDesteEstafeta.filter(p => p.criado_em.split('T')[0] <= filtroFim);
 
               // Cálculo do total filtrado de taxas
-              const totalTaxasFiltradas = entregasDesteEstafeta.reduce((sum, ped) => sum + (parseFloat(ped.taxa_entrega) || 0), 0);
+              const totalTaxasFiltradas = entregasDesteEstafeta.reduce(
+                (sum, ped) => sum
+                  + (parseFloat(ped.taxa_entrega) || 0)
+                  + (parseFloat(ped.valor_entrega_extra_estafeta) || 0),
+                0
+              );
 
               return (
                 <div key={estafeta.nome} className="bg-zinc-900/60 border border-zinc-800/60 rounded-[24px] overflow-hidden transition-all hover:border-zinc-700">
@@ -410,28 +529,51 @@ export default function GestaoEstafetas() {
                                   <tr>
                                     <th className="p-4">Data e Hora</th>
                                     <th className="p-4">Nº Pedido</th>
-                                    <th className="p-4 text-right">Taxa Gerada</th>
+                                    <th className="p-4 text-right">Cliente</th>
+                                    <th className="p-4 text-right">Extra Empresa</th>
+                                    <th className="p-4 text-right">Total Estafeta</th>
+                                    <th className="p-4 text-center">Ação</th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-zinc-800/50 font-medium pb-12">
                                   {entregasDesteEstafeta.length === 0 ? (
-                                    <tr><td colSpan={3} className="p-6 text-center text-zinc-600 italic">Nenhuma entrega encontrada neste período.</td></tr>
+                                    <tr><td colSpan={6} className="p-6 text-center text-zinc-600 italic">Nenhuma entrega encontrada neste período.</td></tr>
                                   ) : (
-                                    entregasDesteEstafeta.map(ped => (
-                                      <tr key={ped.id} className="hover:bg-zinc-800/30 transition-colors">
-                                        <td className="p-4 text-zinc-300">
-                                          {new Date(ped.criado_em).toLocaleDateString('pt-PT')} <span className="text-[10px] text-zinc-500 ml-1">{new Date(ped.criado_em).toLocaleTimeString('pt-PT', {hour:'2-digit', minute:'2-digit'})}</span>
-                                        </td>
-                                        <td className="p-4 font-bold text-white">#{limparNomePedido(ped.cliente)}</td>
-                                        <td className="p-4 text-right font-black font-mono text-indigo-400">{Number(ped.taxa_entrega).toFixed(2)}€</td>
-                                      </tr>
-                                    ))
+                                    entregasDesteEstafeta.map(ped => {
+                                      const taxaCliente = Number(ped.taxa_entrega) || 0;
+                                      const valorExtra = Number(ped.valor_entrega_extra_estafeta) || 0;
+                                      const totalEstafeta = taxaCliente + valorExtra;
+
+                                      return (
+                                        <tr key={ped.id} className="hover:bg-zinc-800/30 transition-colors">
+                                          <td className="p-4 text-zinc-300">
+                                            {new Date(ped.criado_em).toLocaleDateString('pt-PT')} <span className="text-[10px] text-zinc-500 ml-1">{new Date(ped.criado_em).toLocaleTimeString('pt-PT', {hour:'2-digit', minute:'2-digit'})}</span>
+                                          </td>
+                                          <td className="p-4 font-bold text-white">#{ped.numero_pedido || limparNomePedido(ped.cliente)}</td>
+                                          <td className="p-4 text-right font-mono text-zinc-400">{taxaCliente.toFixed(2)}€</td>
+                                          <td className={`p-4 text-right font-black font-mono ${valorExtra > 0 ? 'text-amber-400' : 'text-zinc-600'}`} title={ped.observacao_entrega_extra || ''}>
+                                            {valorExtra.toFixed(2)}€
+                                          </td>
+                                          <td className="p-4 text-right font-black font-mono text-indigo-400">{totalEstafeta.toFixed(2)}€</td>
+                                          <td className="p-4 text-center">
+                                            <button
+                                              type="button"
+                                              onClick={() => abrirEntregaExtra(ped)}
+                                              className="rounded-lg border border-amber-700/50 bg-amber-950/30 px-2.5 py-1.5 text-[10px] font-black uppercase text-amber-400 hover:bg-amber-900/40"
+                                              title="Adicionar ou editar valor extra pago pela empresa"
+                                            >
+                                              {valorExtra > 0 ? '✏️ Extra' : '+ Extra'}
+                                            </button>
+                                          </td>
+                                        </tr>
+                                      );
+                                    })
                                   )}
                                 </tbody>
                                 {entregasDesteEstafeta.length > 0 && (
                                   <tfoot className="bg-indigo-950/20 border-t border-indigo-900/30 sticky bottom-0 backdrop-blur-md">
                                     <tr>
-                                      <td colSpan={2} className="p-4 text-right text-[10px] font-black text-indigo-500 uppercase tracking-widest">
+                                      <td colSpan={5} className="p-4 text-right text-[10px] font-black text-indigo-500 uppercase tracking-widest">
                                         Total no Período Filtrado:
                                       </td>
                                       <td className="p-4 text-right font-black font-mono text-indigo-400 text-sm">
@@ -449,7 +591,7 @@ export default function GestaoEstafetas() {
                         {abaAtiva === 'pagamentos' && (
                           <div className="space-y-4 animate-in fade-in duration-300">
                             <div className="flex justify-end">
-                              <button onClick={() => { setNovoPagamento({ id: '', entregador: estafeta.nome, valor: 0, data: new Date().toISOString().split('T')[0], inicio: '', fim: '' }); setModalPagamentoAberto(true); }} className="text-[10px] bg-green-900/30 hover:bg-green-800/50 text-green-400 border border-green-800/50 px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition-colors">
+                              <button onClick={() => { setNovoPagamento({ id: '', entregador: estafeta.nome, valor: 0, data: new Date().toISOString().split('T')[0], inicio: '', fim: '', formaPagamento: 'Dinheiro' }); setModalPagamentoAberto(true); }} className="text-[10px] bg-green-900/30 hover:bg-green-800/50 text-green-400 border border-green-800/50 px-3 py-1.5 rounded-lg font-bold uppercase tracking-wider transition-colors">
                                 + Lançar Pagamento
                               </button>
                             </div>
@@ -460,13 +602,14 @@ export default function GestaoEstafetas() {
                                   <tr>
                                     <th className="p-4">Data Acerto</th>
                                     <th className="p-4 hidden sm:table-cell">Período Ref.</th>
+                                    <th className="p-4">Forma</th>
                                     <th className="p-4 text-right">Valor Pago</th>
                                     <th className="p-4 text-center">Ações</th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-zinc-800/50 font-medium">
                                   {pagamentosDesteEstafeta.length === 0 ? (
-                                    <tr><td colSpan={4} className="p-6 text-center text-zinc-600 italic">Nenhum pagamento registado.</td></tr>
+                                    <tr><td colSpan={5} className="p-6 text-center text-zinc-600 italic">Nenhum pagamento registado.</td></tr>
                                   ) : (
                                     pagamentosDesteEstafeta.map(pag => (
                                       <tr key={pag.id} className="hover:bg-zinc-800/30 transition-colors">
@@ -475,6 +618,15 @@ export default function GestaoEstafetas() {
                                         </td>
                                         <td className="p-4 text-zinc-400 font-mono text-[10px] hidden sm:table-cell">
                                           {pag.inicio_periodo ? new Date(pag.inicio_periodo).toLocaleDateString('pt-PT') : 'N/A'} a {pag.fim_periodo ? new Date(pag.fim_periodo).toLocaleDateString('pt-PT') : 'N/A'}
+                                        </td>
+                                        <td className="p-4">
+                                          <span className={`text-[10px] font-black uppercase px-2 py-1 rounded-lg border ${
+                                            pag.forma_pagamento === 'MB Way'
+                                              ? 'bg-blue-500/10 text-blue-400 border-blue-500/20'
+                                              : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                                          }`}>
+                                            {pag.forma_pagamento || 'Dinheiro'}
+                                          </span>
                                         </td>
                                         <td className="p-4 text-right font-black font-mono text-green-400">{Number(pag.valor_pago).toFixed(2)}€</td>
                                         <td className="p-4 text-center flex items-center justify-center gap-3">
@@ -499,6 +651,103 @@ export default function GestaoEstafetas() {
           </div>
         </div>
       </main>
+
+      {/* MODAL: VALOR EXTRA DE ENTREGA PAGO PELA EMPRESA */}
+      {modalEntregaExtraAberto && (
+        <div className="fixed inset-0 bg-zinc-950/80 backdrop-blur-md z-[70] flex flex-col justify-end md:justify-center items-center p-0 md:p-4 animate-in fade-in duration-200">
+          <div className="bg-zinc-900 w-full md:max-w-md rounded-t-[32px] md:rounded-[32px] overflow-hidden shadow-[0_-20px_50px_rgba(0,0,0,0.5)] border border-zinc-800">
+            <div className="p-6 pb-4 flex justify-between items-center border-b border-zinc-800/80">
+              <div>
+                <h2 className="text-xl font-black text-white">🛵 Entrega extra</h2>
+                <p className="mt-1 text-xs text-zinc-500">
+                  {formEntregaExtra.pedidoId
+                    ? `Pedido #${formEntregaExtra.pedidoNumero} · ${formEntregaExtra.estafeta}`
+                    : 'Selecione o estafeta e escreva o número do pedido'}
+                </p>
+              </div>
+              <button type="button" onClick={() => setModalEntregaExtraAberto(false)} className="w-8 h-8 bg-zinc-800 rounded-full flex items-center justify-center text-zinc-400 font-bold hover:text-white">✕</button>
+            </div>
+
+            <form onSubmit={guardarEntregaExtra} className="p-6 space-y-5">
+              <div>
+                <label className="block text-[10px] text-zinc-400 font-black uppercase tracking-widest mb-2">Estafeta</label>
+                <select
+                  required
+                  value={formEntregaExtra.estafeta}
+                  onChange={e => setFormEntregaExtra({ ...formEntregaExtra, estafeta: e.target.value })}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3.5 text-sm text-white outline-none focus:border-amber-500 font-bold appearance-none cursor-pointer"
+                >
+                  <option value="">Selecione o estafeta...</option>
+                  {estafetasCalculados.map(estafeta => (
+                    <option key={estafeta.nome} value={estafeta.nome}>{estafeta.nome}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-[10px] text-zinc-400 font-black uppercase tracking-widest mb-2">Número do pedido</label>
+                <input
+                  required
+                  type="text"
+                  inputMode="numeric"
+                  value={formEntregaExtra.pedidoNumero}
+                  onChange={e => setFormEntregaExtra({
+                    ...formEntregaExtra,
+                    pedidoId: '',
+                    pedidoNumero: e.target.value.replace(/[^0-9]/g, ''),
+                    taxaCliente: 0
+                  })}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3.5 text-xl text-white outline-none focus:border-amber-500 font-black font-mono text-center"
+                  placeholder="Ex.: 482"
+                />
+                <p className="mt-2 text-[10px] text-zinc-500">O sistema confirmará se este pedido existe antes de guardar.</p>
+              </div>
+
+              {formEntregaExtra.pedidoId && (
+              <div className="rounded-2xl border border-zinc-800 bg-zinc-950 p-4 flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase tracking-widest text-zinc-500">Entrega cobrada ao cliente</span>
+                <span className="font-mono font-black text-zinc-300">{formEntregaExtra.taxaCliente.toFixed(2)}€</span>
+              </div>
+              )}
+
+              <div>
+                <label className="block text-[10px] text-amber-400 font-black uppercase tracking-widest mb-2">Valor extra pago pela empresa (€)</label>
+                <input
+                  autoFocus
+                  min="0"
+                  step="0.01"
+                  type="number"
+                  value={formEntregaExtra.valorExtra || ''}
+                  onChange={e => setFormEntregaExtra({ ...formEntregaExtra, valorExtra: Number(e.target.value) || 0 })}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3.5 text-2xl font-black text-amber-400 font-mono text-center outline-none focus:border-amber-500"
+                  placeholder="0.00"
+                />
+                <p className="mt-2 text-[10px] leading-relaxed text-zinc-500">Este valor aumenta apenas o total a pagar ao estafeta. Não altera o total cobrado ao cliente.</p>
+              </div>
+
+              <div>
+                <label className="block text-[10px] text-zinc-400 font-black uppercase tracking-widest mb-2">Motivo / observação (opcional)</label>
+                <input
+                  type="text"
+                  value={formEntregaExtra.observacao}
+                  onChange={e => setFormEntregaExtra({ ...formEntregaExtra, observacao: e.target.value })}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3.5 text-sm text-white outline-none focus:border-amber-500"
+                  placeholder="Ex.: entrega oferecida ao cliente"
+                />
+              </div>
+
+              <div className="rounded-2xl border border-indigo-900/40 bg-indigo-950/20 p-4 flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase tracking-widest text-indigo-400">Total desta entrega para o estafeta</span>
+                <span className="font-mono text-xl font-black text-indigo-300">{(formEntregaExtra.taxaCliente + formEntregaExtra.valorExtra).toFixed(2)}€</span>
+              </div>
+
+              <button type="submit" disabled={processando} className="w-full bg-amber-500 hover:bg-amber-400 text-zinc-950 py-4 rounded-2xl text-sm font-black shadow-lg transition-transform active:scale-95 uppercase tracking-wider disabled:opacity-50">
+                {processando ? 'A guardar...' : 'Guardar entrega extra'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* MODAL DE NOVO ACERTO/PAGAMENTO */}
       {modalPagamentoAberto && (
@@ -526,6 +775,48 @@ export default function GestaoEstafetas() {
               <div>
                 <label className="block text-[10px] text-zinc-400 font-black uppercase tracking-widest mb-2">Valor Entregue ao Estafeta (€)</label>
                 <input required type="number" step="0.01" value={novoPagamento.valor || ''} onChange={e => setNovoPagamento({...novoPagamento, valor: parseFloat(e.target.value) || 0})} className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl px-4 py-3.5 text-2xl font-black text-green-400 font-mono text-center outline-none focus:border-indigo-500" placeholder="0.00" />
+              </div>
+
+              <div>
+                <label className="block text-[10px] text-zinc-400 font-black uppercase tracking-widest mb-2">
+                  Forma de Pagamento
+                </label>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setNovoPagamento({
+                      ...novoPagamento,
+                      formaPagamento: 'Dinheiro'
+                    })}
+                    className={`rounded-2xl border px-4 py-3.5 text-sm font-black transition-all ${
+                      novoPagamento.formaPagamento === 'Dinheiro'
+                        ? 'bg-emerald-600 border-emerald-500 text-white'
+                        : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                    }`}
+                  >
+                    💶 Dinheiro
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setNovoPagamento({
+                      ...novoPagamento,
+                      formaPagamento: 'MB Way'
+                    })}
+                    className={`rounded-2xl border px-4 py-3.5 text-sm font-black transition-all ${
+                      novoPagamento.formaPagamento === 'MB Way'
+                        ? 'bg-blue-600 border-blue-500 text-white'
+                        : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                    }`}
+                  >
+                    📱 MB Way
+                  </button>
+                </div>
+
+                <p className="mt-2 text-[10px] text-zinc-500">
+                  Dinheiro sai do caixa físico. MB Way reduz a dívida do estafeta, mas não altera o caixa em dinheiro.
+                </p>
               </div>
               
               <div className="grid grid-cols-2 gap-4">

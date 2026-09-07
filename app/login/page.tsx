@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 import { useRouter } from 'next/navigation';
 
@@ -11,25 +11,37 @@ export default function LoginPage() {
   const [errorMsg, setErrorMsg] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  const supabase = useMemo(
+    () =>
+      createBrowserClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      ),
+    []
   );
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    // ... (o seu código que faz o login no supabase) ...
+    setLoading(true);
+    setErrorMsg('');
 
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
 
-    if (error) {
-      alert("Erro ao fazer login: " + error.message);
-    } else {
-      // ✅ LOGIN COM SUCESSO! ADICIONE ESTA LINHA ABAIXO:
-      router.push('/admin/dashboard');
+      if (error) {
+        setErrorMsg('E-mail ou palavra-passe inválidos.');
+        return;
+      }
+
+      router.replace('/admin/dashboard');
+      router.refresh();
+    } catch {
+      setErrorMsg('Não foi possível ligar ao servidor. Tenta novamente.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -57,6 +69,7 @@ export default function LoginPage() {
               onChange={(e) => setEmail(e.target.value)}
               className="w-full bg-zinc-950 border border-zinc-800 text-white rounded-xl px-4 py-3.5 focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500 transition-all text-sm"
               placeholder="seu-email@chefbatato.pt"
+              autoComplete="email"
               required
               disabled={loading}
             />
@@ -70,6 +83,7 @@ export default function LoginPage() {
               onChange={(e) => setPassword(e.target.value)}
               className="w-full bg-zinc-950 border border-zinc-800 text-white rounded-xl px-4 py-3.5 focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500 transition-all text-sm"
               placeholder="••••••••"
+              autoComplete="current-password"
               required
               disabled={loading}
             />

@@ -4,14 +4,161 @@ import { useState, useEffect } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
 // ============================================================================
-// 🖨️ MOTOR DE IMPRESSÃO TÉRMICA (MODO ESC/POS DIRETO - MODO PALMBITES)
+// 🖨️ MOTOR DE IMPRESSÃO TÉRMICA 80MM
+// - Mantém compatibilidade com o motor ESC/POS instalado no Windows.
+// - Se o motor não estiver disponível, usa a impressão normal do Windows/navegador.
 // ============================================================================
-export const imprimirReciboTermico = (pedido: any) => {
-  if (typeof window !== 'undefined' && (window as any).imprimirSilencioso) {
-    (window as any).imprimirSilencioso(JSON.stringify(pedido));
-  } else {
-    alert("ERRO: O Motor ESC/POS profissional só funciona dentro do sistema instalado no Windows.");
+
+const escaparHtml = (valor: any) =>
+  String(valor ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+
+const moedaTalao = (valor: any) => `${Number(valor || 0).toFixed(2)}€`;
+
+const imprimirPeloWindows = (pedido: any) => {
+  if (typeof window === 'undefined') return;
+
+  const itens = Array.isArray(pedido?.itens_pedido) ? pedido.itens_pedido : [];
+
+  const linhasItens = itens.map((item: any) => {
+    const qtd = Number(item.quantidade || 0);
+    const preco = Number(item.preco_unitario || 0);
+    const total = qtd * preco;
+
+    return `
+      <div class="item">
+        <div class="item-nome">${qtd}x ${escaparHtml(item.nome_produto)}</div>
+        <div class="item-valores">
+          <span>${moedaTalao(preco)} cada</span>
+          <strong>${moedaTalao(total)}</strong>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  const taxaEntrega = Number(pedido?.taxa_entrega || 0);
+  const desconto = Number(pedido?.desconto || 0);
+  const total = Number(pedido?.total_geral || 0);
+
+  const iframe = document.createElement('iframe');
+  iframe.setAttribute('aria-hidden', 'true');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  iframe.style.visibility = 'hidden';
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentWindow?.document;
+  if (!doc) {
+    iframe.remove();
+    alert('Não foi possível abrir o sistema de impressão do Windows.');
+    return;
   }
+
+  doc.open();
+  doc.write(`
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>Pedido #${escaparHtml(pedido?.numero_pedido)}</title>
+        <style>
+          @page { size: 80mm auto; margin: 2mm; }
+          * { box-sizing: border-box; }
+          html, body { margin: 0; padding: 0; background: #fff; color: #000; }
+          body {
+            width: 76mm;
+            font-family: "Courier New", Courier, monospace;
+            font-size: 11px;
+            line-height: 1.25;
+            padding: 1mm;
+          }
+          .centro { text-align: center; }
+          .titulo { font-size: 18px; font-weight: 900; margin-bottom: 2px; }
+          .pedido { font-size: 17px; font-weight: 900; margin: 4px 0; }
+          .linha { border-top: 1px dashed #000; margin: 6px 0; }
+          .dados { margin: 2px 0; word-break: break-word; }
+          .item { margin: 5px 0; page-break-inside: avoid; }
+          .item-nome { font-weight: 700; word-break: break-word; }
+          .item-valores, .total-linha { display: flex; justify-content: space-between; gap: 5px; }
+          .total-geral { font-size: 15px; font-weight: 900; margin-top: 4px; }
+          .rodape { margin-top: 8px; text-align: center; font-size: 10px; }
+          @media print { body { width: 76mm; } }
+        </style>
+      </head>
+      <body>
+        <div class="centro">
+          <div class="titulo">CHEF BATATÔ</div>
+          <div>Talão do Pedido</div>
+          <div class="pedido">#${escaparHtml(pedido?.numero_pedido)}</div>
+        </div>
+
+        <div class="linha"></div>
+
+        <div class="dados"><strong>Canal:</strong> ${escaparHtml(pedido?.canal)}</div>
+        <div class="dados"><strong>Cliente:</strong> ${escaparHtml(pedido?.cliente)}</div>
+        ${pedido?.contacto_cliente ? `<div class="dados"><strong>Contacto:</strong> ${escaparHtml(pedido.contacto_cliente)}</div>` : ''}
+        ${pedido?.endereco ? `<div class="dados"><strong>Morada:</strong> ${escaparHtml(pedido.endereco)}</div>` : ''}
+        <div class="dados"><strong>Pagamento:</strong> ${escaparHtml(pedido?.forma_pagamento)}</div>
+
+        <div class="linha"></div>
+
+        ${linhasItens || '<div>Nenhum item encontrado.</div>'}
+
+        <div class="linha"></div>
+
+        ${desconto > 0 ? `<div class="total-linha"><span>Desconto</span><span>-${moedaTalao(desconto)}</span></div>` : ''}
+        ${taxaEntrega > 0 ? `<div class="total-linha"><span>Entrega</span><span>${moedaTalao(taxaEntrega)}</span></div>` : ''}
+        <div class="total-linha total-geral">
+          <span>TOTAL</span>
+          <span>${moedaTalao(total)}</span>
+        </div>
+
+        <div class="linha"></div>
+        <div class="rodape">Obrigado pelo pedido!<br/>Chef Batatô</div>
+      </body>
+    </html>
+  `);
+  doc.close();
+
+  window.setTimeout(() => {
+    try {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+    } finally {
+      window.setTimeout(() => iframe.remove(), 1500);
+    }
+  }, 250);
+};
+
+export const imprimirReciboTermico = async (pedido: any) => {
+  if (typeof window === 'undefined') return;
+
+  const motorEscPos = (window as any).imprimirSilencioso;
+
+  if (typeof motorEscPos === 'function') {
+    try {
+      const resultado = motorEscPos(JSON.stringify(pedido));
+      if (resultado && typeof resultado.then === 'function') {
+        await resultado;
+      }
+      return;
+    } catch (erro) {
+      console.warn(
+        'Motor ESC/POS não conseguiu imprimir. A abrir impressão do Windows...',
+        erro
+      );
+    }
+  }
+
+  imprimirPeloWindows(pedido);
 };
 // ============================================================================
 
@@ -395,7 +542,10 @@ export default function CaixaPDV() {
         
         if (prodData && !errSelect) {
           const stockAtual = Number(prodData.estoque_atual) || 0;
-          const novoStockProduto = Math.max(0, stockAtual - qtdGasta);
+
+          // Permite stock negativo.
+          // Ex.: 0 - 1 = -1, -1 - 1 = -2, etc.
+          const novoStockProduto = stockAtual - qtdGasta;
           
           await supabase.from('produtos').update({ estoque_atual: novoStockProduto }).eq('id', produtoId);
 
@@ -419,7 +569,10 @@ export default function CaixaPDV() {
             const nomeEmb = emb.nome.toLowerCase();
             if (nomeEmb.includes('saco') || nomeEmb.includes('garfo') || nomeEmb.includes('pote') || nomeEmb.includes('embalagem')) {
               const stockAtualEmb = Number(emb.estoque_atual) || 0;
-              const novoStockEmb = Math.max(0, stockAtualEmb - quantidadePratos);
+
+              // Embalagens e materiais também podem ficar negativos,
+              // para o sistema continuar a contabilizar o consumo real.
+              const novoStockEmb = stockAtualEmb - quantidadePratos;
 
               await supabase.from('produtos').update({ estoque_atual: novoStockEmb }).eq('id', emb.id);
               await supabase.from('movimentos_estoque').insert([{
@@ -543,7 +696,7 @@ export default function CaixaPDV() {
             pago: estaPago
           };
 
-          imprimirReciboTermico(dadosRecibo);
+          void imprimirReciboTermico(dadosRecibo);
         }
         
         // 🎯 Lança a Janela de Sucesso e bloqueia o ecrã com o número da Senha!

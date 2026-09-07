@@ -36,6 +36,7 @@ interface MovimentoCaixa {
   tipo: 'Abertura' | 'Entrada' | 'Saida' | 'Fechamento';
   descricao: string;
   valor: number;
+  pedido_numero?: number | null;
 }
 
 interface ResumoDia {
@@ -51,9 +52,12 @@ interface ResumoDia {
 
 // --- COMPONENTE PRINCIPAL ---
 export default function CentralRelatorios() {
-  const supabase = createBrowserClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  const supabase = useMemo(
+    () => createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    ),
+    []
   );
 
   // ESTADOS - DADOS BRUTOS
@@ -95,6 +99,7 @@ export default function CentralRelatorios() {
 
   const [relatorioDias, setRelatorioDias] = useState<ResumoDia[]>([]);
   const [diaSelecionado, setDiaSelecionado] = useState<ResumoDia | null>(null);
+  const [visaoAuditoriaCaixa, setVisaoAuditoriaCaixa] = useState<'saldos' | 'entradas' | 'saidas'>('saldos');
 
   // --- UTILITÁRIOS ---
   const limparNomePedido = (nome: string | null | undefined) => {
@@ -190,7 +195,7 @@ export default function CentralRelatorios() {
       while (true) {
         const { data: loteCaixa, error: errCaixa } = await supabase
           .from('caixa')
-          .select('id,created_at,data_dia,tipo,descricao,valor')
+          .select('id,created_at,data_dia,tipo,descricao,valor,pedido_numero')
           .order('data_dia', { ascending: true })
           .order('created_at', { ascending: true })
           .range(inicioCaixa, inicioCaixa + 999);
@@ -217,6 +222,19 @@ export default function CentralRelatorios() {
   }
 
   useEffect(() => { carregarRelatorios(); }, []);
+
+  useEffect(() => {
+    const atualizar = () => carregarRelatorios();
+    const canal = supabase
+      .channel('relatorios-tempo-real')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pedidos' }, atualizar)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'itens_pedido' }, atualizar)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'caixa' }, atualizar)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'produtos' }, atualizar)
+      .subscribe();
+
+    return () => { supabase.removeChannel(canal); };
+  }, [supabase]);
 
   // --- PROCESSAMENTO: FATURAÇÃO ---
   useEffect(() => {
@@ -505,11 +523,9 @@ export default function CentralRelatorios() {
         diferenca,
       };
 
-      // Só um fechamento REAL alimenta a abertura do próximo data_dia.
-      // Se o dia está em aberto, não inventamos fechamento.
-      if (fechamento !== null) {
-        fechamentoAnterior = fechamento;
-      }
+      // Um fechamento real prevalece. Se o dia ainda estiver aberto,
+      // transporta o saldo calculado para manter a continuidade diária.
+      fechamentoAnterior = fechamento !== null ? fechamento : esperado;
 
       return resultado;
     });
@@ -547,6 +563,35 @@ export default function CentralRelatorios() {
   const totalEntradasCaixa = relatorioDias.reduce((acc, dia) => acc + dia.entradas, 0);
   const totalDespesasCaixa = relatorioDias.reduce((acc, dia) => acc + dia.saidas, 0);
   const balancoDiferencasCaixa = relatorioDias.reduce((acc, dia) => acc + (dia.diferenca || 0), 0);
+  const relatorioDiasCronologico = useMemo(
+    () => [...relatorioDias].sort((a, b) => a.data.localeCompare(b.data)),
+    [relatorioDias]
+  );
+  const saldoInicialPeriodo = relatorioDiasCronologico[0]?.abertura || 0;
+  const saldoFinalPeriodo = relatorioDiasCronologico.length
+    ? relatorioDiasCronologico[relatorioDiasCronologico.length - 1].esperado
+    : 0;
+  const movimentosAuditoria = useMemo(
+    () =>
+      relatorioDiasCronologico
+        .flatMap((dia) => dia.movimentos)
+        .filter((mov) => {
+          const tipo = normalizarTipoCaixa(mov.tipo);
+          return visaoAuditoriaCaixa === 'entradas' ? tipo === 'entrada' : tipo === 'saida';
+        })
+        .sort((a, b) => {
+          const dataCmp = normalizarDataDia(a.data_dia).localeCompare(normalizarDataDia(b.data_dia));
+          if (dataCmp !== 0) return dataCmp;
+          return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+        }),
+    [relatorioDiasCronologico, visaoAuditoriaCaixa]
+  );
+
+  const numeroPedidoDoMovimento = (descricao: string | null | undefined, pedidoNumero?: number | null) => {
+    if (pedidoNumero) return `#${pedidoNumero}`;
+    const match = String(descricao || '').match(/\bpedido\s*#?\s*(\d+)\b/i);
+    return match ? `#${match[1]}` : '-';
+  };
 
   // --- ACÇÕES E EVENTOS ---
   const abrirModalEdicao = (pedido: Pedido) => {
@@ -1271,7 +1316,11 @@ export default function CentralRelatorios() {
           {/* ---------------- ABA 2: AUDITORIA DE CAIXA ---------------- */}
           {abaAtiva === 'caixa' && (
             <div className="space-y-6 animate-in fade-in duration-300">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+                <div className="bg-gradient-to-br from-zinc-900 to-zinc-950 border border-blue-900/40 p-6 rounded-[32px] shadow-xl flex flex-col justify-center">
+                  <span className="text-[10px] font-bold text-blue-400/80 uppercase tracking-widest">Saldo Inicial (Período)</span>
+                  <div className="text-3xl font-black text-blue-400 font-mono mt-2 tracking-tighter">{saldoInicialPeriodo.toFixed(2)}€</div>
+                </div>
                 <div className="bg-gradient-to-br from-zinc-900 to-zinc-950 border border-zinc-800/80 p-6 rounded-[32px] shadow-xl flex flex-col justify-center">
                   <span className="text-[10px] font-bold text-green-500/80 uppercase tracking-widest">Total Entradas (Período)</span>
                   <div className="text-3xl font-black text-green-400 font-mono mt-2 tracking-tighter">+ {totalEntradasCaixa.toFixed(2)}€</div>
@@ -1280,24 +1329,64 @@ export default function CentralRelatorios() {
                   <span className="text-[10px] font-bold text-red-500/80 uppercase tracking-widest">Total Saídas / Despesas</span>
                   <div className="text-3xl font-black text-red-400 font-mono mt-2 tracking-tighter">- {totalDespesasCaixa.toFixed(2)}€</div>
                 </div>
-                <div className={`border p-6 rounded-[32px] shadow-xl flex flex-col justify-center ${balancoDiferencasCaixa < 0 ? 'bg-red-950/20 border-red-900/50' : balancoDiferencasCaixa > 0 ? 'bg-emerald-950/20 border-emerald-900/50' : 'bg-zinc-900 border-zinc-800/80'}`}>
-                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-widest flex justify-between"><span>Balanço de Quebras/Sobras</span></span>
-                  <div className={`text-3xl font-black font-mono mt-2 tracking-tighter ${balancoDiferencasCaixa < 0 ? 'text-red-400' : balancoDiferencasCaixa > 0 ? 'text-emerald-400' : 'text-white'}`}>
-                    {balancoDiferencasCaixa > 0 ? '+' : ''}{balancoDiferencasCaixa.toFixed(2)}€
-                  </div>
-                  <p className="text-[9px] text-zinc-500 mt-2">Diferença acumulada entre o saldo esperado e o fechamento registado.</p>
+                <div className="bg-gradient-to-br from-zinc-900 to-zinc-950 border border-orange-900/40 p-6 rounded-[32px] shadow-xl flex flex-col justify-center">
+                  <span className="text-[10px] font-bold text-orange-400/80 uppercase tracking-widest">Saldo Final Calculado</span>
+                  <div className="text-3xl font-black text-white font-mono mt-2 tracking-tighter">{saldoFinalPeriodo.toFixed(2)}€</div>
+                  <p className="text-[9px] text-zinc-500 mt-2">Saldo inicial + entradas − saídas.</p>
                 </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2 bg-zinc-900 border border-zinc-800 p-2 rounded-2xl w-fit">
+                <button onClick={() => setVisaoAuditoriaCaixa('saldos')} className={`px-5 py-2.5 rounded-xl text-xs font-black transition-all ${visaoAuditoriaCaixa === 'saldos' ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
+                  📅 Saldo por dia
+                </button>
+                <button onClick={() => setVisaoAuditoriaCaixa('entradas')} className={`px-5 py-2.5 rounded-xl text-xs font-black transition-all ${visaoAuditoriaCaixa === 'entradas' ? 'bg-emerald-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
+                  ➕ Somente entradas
+                </button>
+                <button onClick={() => setVisaoAuditoriaCaixa('saidas')} className={`px-5 py-2.5 rounded-xl text-xs font-black transition-all ${visaoAuditoriaCaixa === 'saidas' ? 'bg-red-600 text-white' : 'text-zinc-400 hover:text-white'}`}>
+                  ➖ Somente saídas
+                </button>
               </div>
 
               <div className="bg-zinc-900 border border-zinc-800 rounded-3xl overflow-hidden shadow-2xl">
                 <div className="p-5 border-b border-zinc-800/80 bg-zinc-950/50 flex flex-col md:flex-row md:items-center justify-between gap-2">
-                  <h3 className="text-xs font-black uppercase text-zinc-400 tracking-widest">Extrato Diário do Caixa</h3>
+                  <h3 className="text-xs font-black uppercase text-zinc-400 tracking-widest">
+                    {visaoAuditoriaCaixa === 'saldos' ? 'Saldo e Auditoria por Dia' : visaoAuditoriaCaixa === 'entradas' ? 'Relatório de Entradas' : 'Relatório de Saídas'}
+                  </h3>
                   <span className="text-[10px] font-bold text-zinc-600 uppercase tracking-wider">
                     Fonte: caixa.data_dia · {totalMovimentosCaixaCarregados} movimento(s) carregado(s)
                   </span>
                 </div>
                 <div className="overflow-x-auto">
-                  {loading ? <div className="p-12 text-center text-zinc-500 font-bold uppercase text-xs animate-pulse">A calcular dados...</div> : relatorioDias.length === 0 ? <div className="p-12 text-center text-zinc-600 italic">Nenhum movimento da tabela caixa encontrado neste período. Confira o contador "Fonte: caixa.data_dia" acima.</div> : (
+                  {loading ? <div className="p-12 text-center text-zinc-500 font-bold uppercase text-xs animate-pulse">A calcular dados...</div> : relatorioDias.length === 0 ? <div className="p-12 text-center text-zinc-600 italic">Nenhum movimento da tabela caixa encontrado neste período. Confira o contador "Fonte: caixa.data_dia" acima.</div> : visaoAuditoriaCaixa !== 'saldos' ? (
+                    <table className="w-full text-left text-xs whitespace-nowrap">
+                      <thead className="bg-zinc-950/80 text-[10px] font-bold text-zinc-500 uppercase tracking-widest border-b border-zinc-800">
+                        <tr>
+                          <th className="p-4">Data</th>
+                          <th className="p-4">Pedido</th>
+                          <th className="p-4">Motivo / observação</th>
+                          <th className="p-4">Tipo</th>
+                          <th className="p-4 text-right">Valor</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-800/50 font-medium">
+                        {movimentosAuditoria.length === 0 ? (
+                          <tr><td colSpan={5} className="p-12 text-center text-zinc-600 italic">Nenhum movimento deste tipo no período selecionado.</td></tr>
+                        ) : movimentosAuditoria.map((mov) => {
+                          const entrada = normalizarTipoCaixa(mov.tipo) === 'entrada';
+                          return (
+                            <tr key={mov.id} className="hover:bg-zinc-800/30 transition-colors">
+                              <td className="p-4 font-bold text-white">{formatarDataDDMMYYYY(mov.data_dia)}</td>
+                              <td className="p-4 font-black text-orange-400">{numeroPedidoDoMovimento(mov.descricao, mov.pedido_numero)}</td>
+                              <td className="p-4 text-zinc-300 max-w-[520px] truncate" title={mov.descricao}>{mov.descricao || '-'}</td>
+                              <td className={`p-4 font-black ${entrada ? 'text-emerald-400' : 'text-red-400'}`}>{entrada ? 'Entrada' : 'Saída'}</td>
+                              <td className={`p-4 text-right font-mono font-black ${entrada ? 'text-emerald-400' : 'text-red-400'}`}>{entrada ? '+' : '-'}{Number(mov.valor || 0).toFixed(2)}€</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  ) : (
                     <table className="w-full text-left text-xs whitespace-nowrap">
                       <thead className="bg-zinc-950/80 text-[10px] font-bold text-zinc-500 uppercase tracking-widest border-b border-zinc-800">
                         <tr>
