@@ -1,7 +1,13 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
+
+// ============================================================================
+// 🖨️ MOTOR DE IMPRESSÃO TÉRMICA 80MM
+// - Mantém compatibilidade com o motor ESC/POS instalado no Windows.
+// - Se o motor não estiver disponível, usa a impressão normal do Windows/navegador.
+// ============================================================================
 
 const escaparHtml = (valor: any) =>
   String(valor ?? '')
@@ -16,11 +22,7 @@ const moedaTalao = (valor: any) => `${Number(valor || 0).toFixed(2)}€`;
 const imprimirPeloWindows = (pedido: any) => {
   if (typeof window === 'undefined') return;
 
-  const itens = Array.isArray(pedido?.itens)
-    ? pedido.itens
-    : Array.isArray(pedido?.itens_pedido)
-      ? pedido.itens_pedido
-      : [];
+  const itens = Array.isArray(pedido?.itens_pedido) ? pedido.itens_pedido : [];
 
   const linhasItens = itens.map((item: any) => {
     const qtd = Number(item.quantidade || 0);
@@ -43,6 +45,7 @@ const imprimirPeloWindows = (pedido: any) => {
   const total = Number(pedido?.total_geral || 0);
 
   const iframe = document.createElement('iframe');
+  iframe.setAttribute('aria-hidden', 'true');
   iframe.style.position = 'fixed';
   iframe.style.right = '0';
   iframe.style.bottom = '0';
@@ -55,7 +58,7 @@ const imprimirPeloWindows = (pedido: any) => {
   const doc = iframe.contentWindow?.document;
   if (!doc) {
     iframe.remove();
-    alert('Não foi possível abrir a impressão do Windows.');
+    alert('Não foi possível abrir o sistema de impressão do Windows.');
     return;
   }
 
@@ -78,7 +81,7 @@ const imprimirPeloWindows = (pedido: any) => {
             padding: 1mm;
           }
           .centro { text-align: center; }
-          .titulo { font-size: 18px; font-weight: 900; }
+          .titulo { font-size: 18px; font-weight: 900; margin-bottom: 2px; }
           .pedido { font-size: 17px; font-weight: 900; margin: 4px 0; }
           .linha { border-top: 1px dashed #000; margin: 6px 0; }
           .dados { margin: 2px 0; word-break: break-word; }
@@ -87,6 +90,7 @@ const imprimirPeloWindows = (pedido: any) => {
           .item-valores, .total-linha { display: flex; justify-content: space-between; gap: 5px; }
           .total-geral { font-size: 15px; font-weight: 900; margin-top: 4px; }
           .rodape { margin-top: 8px; text-align: center; font-size: 10px; }
+          @media print { body { width: 76mm; } }
         </style>
       </head>
       <body>
@@ -112,7 +116,6 @@ const imprimirPeloWindows = (pedido: any) => {
 
         ${desconto > 0 ? `<div class="total-linha"><span>Desconto</span><span>-${moedaTalao(desconto)}</span></div>` : ''}
         ${taxaEntrega > 0 ? `<div class="total-linha"><span>Entrega</span><span>${moedaTalao(taxaEntrega)}</span></div>` : ''}
-
         <div class="total-linha total-geral">
           <span>TOTAL</span>
           <span>${moedaTalao(total)}</span>
@@ -148,734 +151,905 @@ export const imprimirReciboTermico = async (pedido: any) => {
       }
       return;
     } catch (erro) {
-      console.warn('Falha no motor ESC/POS. A usar impressão do Windows...', erro);
+      console.warn(
+        'Motor ESC/POS não conseguiu imprimir. A abrir impressão do Windows...',
+        erro
+      );
     }
   }
 
   imprimirPeloWindows(pedido);
 };
+// ============================================================================
 
-interface ItemPedido { id?: string; produto_id?: string; codigo_produto: string; nome_produto: string; quantidade: number; preco_unitario: number; }
-interface Pedido { id: string; numero_pedido: number; data_pedido: string; cliente: string; canal: string; forma_pagamento: string; entregador: string; taxa_entrega: number; desconto: number; total_geral: number; pago: boolean; data_recebimento?: string | null; itens?: ItemPedido[]; ids_fragmentados?: string[]; criado_em?: string; }
-interface Combo { id: string; codigo: string; nome: string; descricao: string; tipo_preco: 'fixo' | 'desconto' | 'desconto_fixo' | 'item_gratis'; preco_fixo: number | null; preco_glovo?: number | null; preco_whatsapp?: number | null; desconto_percentual: number; desconto_absoluto: number; item_gratis_categoria: string; combo_grupos: any[]; }
+interface Produto {
+  id: string; codigo: string; nome: string; 
+  precoCardapio: number; precoWhatsapp: number; precoGlovo: number; 
+  custoUnitario: number; categoria: string; ativo: boolean;
+}
 
-const getHojeLisboa = () => {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Lisbon' }).format(new Date());
-};
+interface ProdutoVinculado {
+  produto_id: string;
+  acrescimo_preco: number;
+  ativo: boolean;
+  produto: {
+    id: string; codigo: string; nome: string; categoria: string;
+    preco_cardapio: number; preco_whatsapp: number; preco_glovo: number;
+  };
+}
 
-const extrairDataEstatica = (dataIso: string) => {
-  if (!dataIso) return '';
-  return dataIso.substring(0, 10);
-};
+interface GrupoCombo {
+  id: string; nome: string; quantidade_minima: number; quantidade_maxima: number;
+  obrigatorio: boolean; ordem: number;
+  combo_grupo_produtos: ProdutoVinculado[];
+}
 
-export default function GestaoPedidos() {
-  const [pedidos, setPedidos] = useState<Pedido[]>([]);
-  const [produtosDB, setProdutosDB] = useState<any[]>([]);
-  const [combosDB, setCombosDB] = useState<Combo[]>([]);
+interface Combo {
+  id: string; codigo: string; nome: string; descricao: string;
+  tipo_preco: 'fixo' | 'desconto' | 'desconto_fixo' | 'item_gratis';
+  preco_fixo: number | null;
+  desconto_percentual: number;
+  desconto_absoluto: number;
+  item_gratis_categoria: string;
+  combo_grupos: GrupoCombo[];
+}
+
+interface ItemCarrinho {
+  produto: Produto;
+  quantidade: number;
+  isCombo?: boolean;
+  comboNome?: string;
+  detalhesCombo?: string[];
+  precoOriginal?: number;
+  precoAplicado: number;
+  itensBaseId?: string[]; 
+}
+
+type CategoriaFiltro = 'todos' | 'batatas' | 'adicionais' | 'sobremesas' | 'bebidas' | 'combos';
+
+export default function CaixaPDV() {
+  const [produtos, setProdutos] = useState<Produto[]>([]);
+  const [combos, setCombos] = useState<Combo[]>([]);
+  const [carrinho, setCarrinho] = useState<ItemCarrinho[]>([]);
   const [listaEstafetas, setListaEstafetas] = useState<{ nome: string }[]>([]);
+  const [listaClientesCadastrados, setListaClientesCadastrados] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [erroCaixa, setErroCaixa] = useState<string | null>(null);
+  const [categoriaAtiva, setCategoriaAtiva] = useState<CategoriaFiltro>('todos');
+
+  const [cliente, setCliente] = useState('');
+  const [contactoCliente, setContactoCliente] = useState('');
+  const [moradaCliente, setMoradaCliente] = useState('');
+  const [mostrarSugestoes, setMostrarSugestoes] = useState(false);
+
+  const [dataPedido, setDataPedido] = useState(() => new Date().toISOString().split('T')[0]);
+  const [canal, setCanal] = useState<'Balcão' | 'WhatsApp' | 'Glovo' | 'Palmbites'>('Balcão');
+  const [formaPagamento, setFormaPagamento] = useState('Dinheiro');
+  const [entregador, setEntregador] = useState('');
+  const [taxaEntrega, setTaxaEntrega] = useState('0.00');
+  const [descontoManual, setDescontoManual] = useState('0.00');
   
-  const [dataInicio, setDataInicio] = useState(getHojeLisboa());
-  const [dataFim, setDataFim] = useState(getHojeLisboa());
-  
-  const [termoPesquisa, setTermoPesquisa] = useState('');
-  const [ordemDirecao, setOrdemDirecao] = useState<'desc' | 'asc'>('desc');
-  const [modalEditar, setModalEditar] = useState(false);
-  const [pedidoEditando, setPedidoEditando] = useState<Pedido | null>(null);
-  const [dataRecebimentoEdicao, setDataRecebimentoEdicao] = useState(getHojeLisboa());
-  const [salvando, setSalvando] = useState(false);
-  const [modalComboEdicao, setModalComboEdicao] = useState(false);
-  const [comboSelecionadoParaMontar, setComboSelecionadoParaMontar] = useState<Combo | null>(null);
-  const [selecoesComboEdicao, setSelecoesComboEdicao] = useState<{ [grupoId: string]: any[] }>({});
+  const [imprimirAtivado, setImprimirAtivado] = useState(false);
+  const [isProcessando, setIsProcessando] = useState(false);
 
-  const supabase = createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+  const [mostrarModalCombo, setMostrarModalCombo] = useState(false);
+  const [comboSelecionado, setComboSelecionado] = useState<Combo | null>(null);
+  const [selecoesCombo, setSelecoesCombo] = useState<{ [grupoId: string]: ProdutoVinculado[] }>({});
 
-  useEffect(() => {
-    const carregarConfiguracoes = async () => {
-      try {
-        const { data: dataProds } = await supabase.from('produtos').select('*').eq('ativo', true);
-        if (dataProds) setProdutosDB(dataProds);
+  // 🎯 NOVO ESTADO: Controlo da janela de sucesso
+  const [modalSucesso, setModalSucesso] = useState<{ visivel: boolean; numeroPedido: string }>({ visivel: false, numeroPedido: '' });
 
-        const { data: dataEsts } = await supabase.from('estafetas').select('nome').eq('ativo', true).order('nome', { ascending: true });
-        if (dataEsts) setListaEstafetas(dataEsts);
+  const supabase = createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
 
-        const { data: dataCombos } = await supabase.from('combos').select(`*, combo_grupos (*, combo_grupo_produtos (*, produto:produtos (*)))`).eq('ativo', true).eq('esgotado', false);
-        if (dataCombos) {
-          const combosOrdenados = dataCombos.map(cb => ({
-            ...cb, combo_grupos: (cb.combo_grupos || []).sort((a: any, b: any) => a.ordem - b.ordem)
-          }));
-          setCombosDB(combosOrdenados);
-        }
-      } catch (err) {
-        console.error('Erro ao carregar configurações:', err);
-      }
-    };
-    carregarConfiguracoes();
-  }, []);
+  const regrasPagamento = {
+    'Glovo': [
+      { value: 'Dinheiro Glovo', label: '💰 Dinheiro Glovo (Pago na recolha)' },
+      { value: 'Glovo', label: 'Faturamento Glovo' }
+    ],
+    'WhatsApp': [
+      { value: 'Dinheiro', label: 'Dinheiro' },
+      { value: 'MBWay', label: 'MBWay' },
+      { value: 'Multibanco', label: 'Multibanco' },
+      { value: 'Stripe', label: '💳 Stripe (Cartão/Online)' },
+      { value: 'Caderninho', label: '📓 Caderninho (Pagar depois)' }
+    ],
+    'Palmbites': [
+      { value: 'Dinheiro', label: 'Dinheiro' },
+      { value: 'MBWay', label: 'MBWay' },
+      { value: 'Multibanco', label: 'Multibanco' },
+      { value: 'Stripe', label: '💳 Stripe (Cartão/Online)' }
+    ],
+    'Balcão': [
+      { value: 'Dinheiro', label: 'Dinheiro' },
+      { value: 'MBWay', label: 'MBWay' },
+      { value: 'Multibanco', label: 'Multibanco' },
+      { value: 'Stripe', label: '💳 Stripe (Cartão/Online)' },
+      { value: 'Caderninho', label: '📓 Caderninho (Pagar depois)' }
+    ]
+  };
 
-  const buscarPedidosDaBase = useCallback(async () => {
+  async function carregarMenuCompleto() {
     setLoading(true);
+    setErroCaixa(null);
     try {
-      let query = supabase.from('pedidos').select(`*, itens:itens_pedido (*)`).order('numero_pedido', { ascending: false });
+      const { data: dataProds, error: errorProds } = await supabase
+        .from('produtos')
+        .select('*')
+        .eq('ativo', true)
+        .eq('esgotado', false);
+      
+      if (errorProds) throw errorProds;
 
-      if (dataInicio) {
-        query = query.gte('data_pedido', dataInicio);
-      }
-      if (dataFim) {
-        query = query.lte('data_pedido', dataFim);
-      }
+      const produtosFormatados = (dataProds || []).map((p: any) => ({
+        id: p.id, codigo: p.codigo || '', nome: p.nome || '',
+        precoCardapio: Number(p.preco_cardapio || 0),
+        precoWhatsapp: Number(p.preco_whatsapp || p.preco_cardapio || 0),
+        precoGlovo: Number(p.preco_glovo || p.preco_cardapio || 0),
+        custoUnitario: Number(p.custo_unitario || 0),
+        categoria: (p.categoria || p.tipo || '').toLowerCase().trim(),
+        ativo: true
+      })).filter((p: any) => 
+        p.codigo !== 'ADI001' && p.categoria !== 'embalagem' && p.categoria !== 'material' && p.categoria !== 'uso interno'
+      );
 
-      const { data, error } = await query;
-      if (error) throw error;
+      setProdutos(produtosFormatados);
 
-      if (data && data.length > 0) {
-        const agrupados = new Map<string, Pedido>();
-        data.forEach((linha: any) => {
-          const chaveNum = String(linha.numero_pedido);
-          const taxa = Number(linha.taxa_entrega || 0);
-          const descontoLinha = Number(linha.desconto || 0);
-          const dataApenasDia = linha.data_pedido ? extrairDataEstatica(linha.data_pedido) : extrairDataEstatica(linha.criado_em);
-
-          const itensDestaLinha = (linha.itens || []).map((item: any) => {
-            let precoUnitarioCorreto = Number(item.preco_unitario || 0);
-            if (linha.canal === 'Revendedores') {
-              const nomeProduto = (item.nome_produto || '').toLowerCase();
-              if (nomeProduto.includes('fudge') || nomeProduto.includes('new york')) { precoUnitarioCorreto = 1.70; } 
-              else { precoUnitarioCorreto = 2.70; }
-            }
-            return {
-              id: item.id, produto_id: item.produto_id, codigo_produto: item.codigo_produto || '',
-              nome_produto: item.nome_produto || '', quantidade: Number(item.quantidade || 1), preco_unitario: precoUnitarioCorreto
-            };
-          });
-
-          if (!agrupados.has(chaveNum)) {
-            agrupados.set(chaveNum, {
-              ...linha, numero_pedido: Number(linha.numero_pedido), 
-              data_pedido: dataApenasDia, 
-              taxa_entrega: taxa, desconto: descontoLinha, pago: linha.pago === true, itens: [...itensDestaLinha], ids_fragmentados: [linha.id], criado_em: linha.criado_em
-            });
-          } else {
-            const existente = agrupados.get(chaveNum)!;
-            existente.itens?.push(...itensDestaLinha);
-            existente.ids_fragmentados?.push(linha.id);
-            if (!existente.entregador && linha.entregador) existente.entregador = linha.entregador;
-            if (!existente.cliente && linha.cliente) existente.cliente = linha.cliente;
-            if (linha.pago === true) existente.pago = true;
-            if (linha.data_recebimento) existente.data_recebimento = linha.data_recebimento;
-            existente.taxa_entrega = Math.max(existente.taxa_entrega, taxa);
-            existente.desconto = Math.max(existente.desconto, descontoLinha);
+      const clientesMap = new Map();
+      const { data: dataClientesTable } = await supabase.from('clientes').select('*');
+      if (dataClientesTable) {
+        dataClientesTable.forEach((c: any) => {
+          const nome = c.nome || c.cliente || '';
+          if (nome) {
+            clientesMap.set(nome.trim().toLowerCase(), { id: c.id, nome: nome.trim(), contacto: c.contacto || c.telefone || c.telemovel || '', morada: c.morada || c.endereco || '' });
           }
         });
-
-        const pedidosFormatados = Array.from(agrupados.values()).map(ped => {
-          const subtotalItens = (ped.itens || []).reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
-          ped.total_geral = subtotalItens + ped.taxa_entrega - ped.desconto;
-          return ped;
-        });
-        setPedidos(pedidosFormatados);
-      } else {
-        setPedidos([]);
       }
-    } catch (err) {
-      console.error('Erro ao buscar pedidos:', err);
+
+      const { data: dataPedidosRecentes } = await supabase
+        .from('pedidos')
+        .select('cliente, contacto_cliente, endereco')
+        .order('criado_em', { ascending: false })
+        .limit(1000);
+
+      if (dataPedidosRecentes) {
+        dataPedidosRecentes.forEach((p: any) => {
+          const nome = p.cliente ? p.cliente.trim() : '';
+          if (nome && !clientesMap.has(nome.toLowerCase())) {
+            clientesMap.set(nome.toLowerCase(), { id: `hist_${nome}`, nome: nome, contacto: p.contacto_cliente || '', morada: p.endereco || '' });
+          }
+        });
+      }
+
+      setListaClientesCadastrados(Array.from(clientesMap.values()));
+
+      const { data: dataCombos, error: errCombos } = await supabase
+        .from('combos')
+        .select(`
+          id, codigo, nome, descricao, tipo_preco, preco_fixo, desconto_percentual, desconto_absolute:desconto_absoluto, item_gratis_categoria,
+          combo_grupos (
+            id, nome, quantidade_minima, quantidade_maxima, obrigatorio, ordem,
+            combo_grupo_produtos (produto_id, acrescimo_preco, ativo, produto:produtos (id, codigo, nome, categoria, preco_cardapio, preco_whatsapp, preco_glovo))
+          )
+        `)
+        .eq('ativo', true)
+        .eq('esgotado', false);
+
+      if (errCombos) throw errCombos;
+
+      const combosCarregados = (dataCombos || []).map((cb: any) => ({
+        ...cb, desconto_absoluto: cb.desconto_absolute || 0,
+        combo_grupos: (cb.combo_grupos || []).sort((a: any, b: any) => a.ordem - b.ordem)
+      }));
+
+      setCombos(combosCarregados);
+
+      const { data: dataEsts } = await supabase.from('estafetas').select('nome').order('nome', { ascending: true });
+      setListaEstafetas(dataEsts || []);
+
+    } catch (err: any) {
+      setErroCaixa(`Falha crítica de carregamento: ${err.message || err}`);
     } finally {
       setLoading(false);
     }
-  }, [dataInicio, dataFim]);
+  }
 
-  useEffect(() => {
-    buscarPedidosDaBase();
-    
-    const canalAtualizacao = supabase
-      .channel('pedidos-tempo-real')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'pedidos' }, buscarPedidosDaBase)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'itens_pedido' }, buscarPedidosDaBase)
-      .subscribe();
-    
-    return () => { supabase.removeChannel(canalAtualizacao); };
-  }, [buscarPedidosDaBase]);
+  useEffect(() => { carregarMenuCompleto(); }, [canal]);
 
-  const liquidarCaderninho = async (
-    pedido: Pedido,
-    formaRecebimento: 'Dinheiro' | 'MB Way'
-  ) => {
-    const dataRecebimento = getHojeLisboa();
-    const valorRecebido = Number(pedido.total_geral || 0);
-    const entraNoCaixaFisico = formaRecebimento === 'Dinheiro';
+  const getPrecoPorCanal = (prod: any) => {
+    const precoGlovo = prod.precoGlovo !== undefined ? prod.precoGlovo : prod.preco_glovo;
+    const precoWhatsapp = prod.precoWhatsapp !== undefined ? prod.precoWhatsapp : prod.preco_whatsapp;
+    const precoCardapio = prod.precoCardapio !== undefined ? prod.precoCardapio : prod.preco_cardapio;
 
-    if (valorRecebido <= 0) {
-      alert('Não foi possível liquidar: o pedido não possui um valor válido.');
-      return;
-    }
+    if (canal === 'Glovo') return Number(precoGlovo || precoCardapio || 0);
+    if (canal === 'WhatsApp') return Number(precoWhatsapp || precoCardapio || 0);
+    return Number(precoCardapio || 0);
+  };
 
-    const confirmou = confirm(
-      `Confirmar recebimento do pedido #${pedido.numero_pedido}?\n\n` +
-      `Valor: ${valorRecebido.toFixed(2)}€\n` +
-      `Forma: ${formaRecebimento}\n` +
-      (entraNoCaixaFisico
-        ? `Entrada no caixa físico: ${dataRecebimento}\n\n`
-        : `Recebimento por MB Way: não altera o dinheiro físico do caixa.\n\n`) +
-      'A venda continuará com a data original do pedido.'
-    );
+  const selecionarClienteSugerido = (c: any) => {
+    setCliente(c.nome || c.Nome || c.nome_cliente || c.cliente || c.NOME || '');
+    setContactoCliente(c.contacto || c.telefone || c.telemovel || c.Contacto || '');
+    setMoradaCliente(c.morada || c.endereco || c.Morada || '');
+    setMostrarSugestoes(false); 
+  };
 
-    if (!confirmou) return;
-
-    try {
-      // O trigger do Supabase cria, atualiza ou remove a entrada do caixa
-      // dentro da mesma operação. A página não duplica regras financeiras.
-      const { error: erroPedido } = await supabase
-        .from('pedidos')
-        .update({
-          pago: true,
-          forma_pagamento: formaRecebimento,
-          data_recebimento: dataRecebimento,
-        })
-        .eq('numero_pedido', pedido.numero_pedido);
-
-      if (erroPedido) throw erroPedido;
-
-      setPedidos(prev => prev.map(p =>
-        p.numero_pedido === pedido.numero_pedido
-          ? { ...p, pago: true, forma_pagamento: formaRecebimento, data_recebimento: dataRecebimento }
-          : p
-      ));
-
-      if (entraNoCaixaFisico) {
-        alert(
-          `Pedido #${pedido.numero_pedido} liquidado com sucesso.\n` +
-          `${valorRecebido.toFixed(2)}€ entraram no caixa de ${dataRecebimento}.`
-        );
-      } else {
-        alert(
-          `Pedido #${pedido.numero_pedido} liquidado por MB Way.\n` +
-          `${valorRecebido.toFixed(2)}€ foram recebidos em ${dataRecebimento}.\n` +
-          'O dinheiro físico do caixa não foi alterado.'
-        );
+  const adicionarAoCarrinho = (produto: Produto) => {
+    const precoAtual = getPrecoPorCanal(produto);
+    setCarrinho((prev) => {
+      const itemExistente = prev.find((item) => item.produto.id === produto.id && !item.isCombo);
+      if (itemExistente) {
+        return prev.map((item) => item.produto.id === produto.id && !item.isCombo ? { ...item, quantidade: item.quantidade + 1 } : item);
       }
-    } catch (err) {
-      console.error('Erro ao liquidar pagamento do caderninho:', err);
-      alert('Erro ao liquidar pagamento. Nenhuma entrada duplicada foi criada.');
-    }
-  };
-
-  // =========================================================================================
-  // 🔄 NOVA LÓGICA DE EXCLUSÃO DE PEDIDO COM ESTORNO AUTOMÁTICO DE ESTOQUE
-  // =========================================================================================
-  const excluirPedido = async (pedidoNum: number, ids: string[]) => {
-    if (!confirm(`⚠️ Tem a certeza que deseja excluir o pedido #${pedidoNum}?\n\n🔄 Todo o stock gasto neste pedido (produtos, combos e embalagens) será devolvido automaticamente ao sistema.`)) return;
-    
-    try {
-      // 1. PRIMEIRO PASSO: Procurar e estornar o stock baseado no histórico de saídas!
-      const { data: movimentosAntigos, error: errBusca } = await supabase
-        .from('movimentos_estoque')
-        .select('*')
-        .eq('tipo_movimento', 'SAÍDA')
-        .ilike('observacoes', `%Pedido #${pedidoNum}%`); // Apanha tanto "Pedido #516" como "Acompanhamento Pedido #516"
-
-      if (errBusca) throw errBusca;
-
-      let totalItensDevolvidos = 0;
-
-      if (movimentosAntigos && movimentosAntigos.length > 0) {
-        // Agrupa devoluções do mesmo produto para não fazer dezenas de atualizações repetidas
-        const devolucoes = new Map<string, { nome: string, qtd: number }>();
-        for (const mov of movimentosAntigos) {
-          if (!mov.produto_id) continue;
-          const atual = devolucoes.get(mov.produto_id) || { nome: mov.nome_produto, qtd: 0 };
-          atual.qtd += Number(mov.quantidade);
-          devolucoes.set(mov.produto_id, atual);
-        }
-
-        // Devolve ao estoque real e regista a entrada
-        for (const [produtoId, dados] of devolucoes.entries()) {
-          const { data: prodData } = await supabase.from('produtos').select('estoque_atual').eq('id', produtoId).single();
-          if (prodData) {
-            const novoStock = Number(prodData.estoque_atual) + dados.qtd;
-            
-            // 1. Repõe o produto
-            await supabase.from('produtos').update({ estoque_atual: novoStock }).eq('id', produtoId);
-
-            // 2. Regista o estorno para aparecer certinho no Extrato do Estoque
-            await supabase.from('movimentos_estoque').insert([{
-              produto_id: produtoId,
-              nome_produto: dados.nome,
-              tipo_movimento: 'ENTRADA',
-              quantidade: dados.qtd,
-              saldo_atualizado: novoStock,
-              origem: 'ESTORNO DE PEDIDO',
-              observacoes: `Devolução automática por exclusão do Pedido #${pedidoNum}`,
-              data_movimento: new Date().toISOString()
-            }]);
-            
-            totalItensDevolvidos += dados.qtd;
-          }
-        }
-      }
-
-      // 2. SEGUNDO PASSO: Apagar o pedido da base de dados!
-      await supabase.from('itens_pedido').delete().in('pedido_id', ids);
-      const { error } = await supabase.from('pedidos').delete().in('id', ids);
-      if (error) throw error;
-      
-      // Limpar a linha no ecrã sem ter de recarregar a página
-      setPedidos(prev => prev.filter(p => p.numero_pedido !== pedidoNum));
-      
-      alert(`✅ Pedido #${pedidoNum} excluído com sucesso!\n🔄 ${totalItensDevolvidos} itens/embalagens foram devolvidos ao stock.`);
-    } catch (err: any) { 
-      alert(`Erro ao excluir pedido e estornar stock: ${err.message}`); 
-    }
-  };
-  // =========================================================================================
-
-  const calcularPrecoPorCanalEProduto = (canal: string, prod: any) => {
-    const nome = (prod.nome || '').toLowerCase();
-    if (canal === 'Revendedores') {
-      if (nome.includes('fudge') || nome.includes('new york')) return 1.70;
-      return 2.70;
-    }
-    if (canal === 'Glovo') return Number(prod.preco_glovo || prod.preco_cardapio || 0);
-    if (canal === 'WhatsApp' || canal === 'Palmbites' || canal === 'Balcão') return Number(prod.preco_cardapio || 0);
-    return Number(prod.preco_cardapio || 0);
-  };
-
-  const abrirEdicao = (pedido: Pedido) => {
-    setPedidoEditando(JSON.parse(JSON.stringify(pedido)));
-    setDataRecebimentoEdicao(
-      pedido.data_recebimento
-        ? extrairDataEstatica(pedido.data_recebimento)
-        : getHojeLisboa()
-    );
-    setModalEditar(true);
-  };
-
-  const alterarCanalEdicao = (novoCanal: string) => {
-    if (!pedidoEditando) return;
-    const itensAtualizados = (pedidoEditando.itens || []).map(item => {
-      if (item.codigo_produto === 'COMBO') {
-        const baseName = item.nome_produto.split(' (')[0];
-        const comboRef = combosDB.find(c => c.nome === baseName);
-        if (comboRef && comboRef.tipo_preco === 'fixo') {
-          let novoPreco = Number(comboRef.preco_fixo || 0);
-          if (novoCanal === 'Glovo') novoPreco = Number(comboRef.preco_glovo || comboRef.preco_fixo || 0);
-          if (novoCanal === 'WhatsApp' || novoCanal === 'Balcão' || novoCanal === 'Palmbites') novoPreco = Number(comboRef.preco_whatsapp || comboRef.preco_fixo || 0);
-          return { ...item, preco_unitario: novoPreco };
-        }
-        return item; 
-      }
-      const prod = produtosDB.find(p => p.id === item.produto_id || p.nome.toLowerCase() === item.nome_produto.toLowerCase());
-      if (prod) { return { ...item, preco_unitario: calcularPrecoPorCanalEProduto(novoCanal, prod) }; }
-      return item;
-    });
-
-    const subtotalLocal = itensAtualizados.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
-    const novoTotal = Math.max(0, subtotalLocal + pedidoEditando.taxa_entrega - (pedidoEditando.desconto || 0));
-    setPedidoEditando({ ...pedidoEditando, canal: novoCanal, itens: itensAtualizados, total_geral: novoTotal });
-  };
-
-  const alterarQtdItemEdicao = (index: number, novaQtd: number) => {
-    if (!pedidoEditando || !pedidoEditando.itens) return;
-    const qtd = Math.max(1, novaQtd);
-    const novosItens = [...pedidoEditando.itens];
-    novosItens[index].quantidade = qtd;
-    const subtotalLocal = novosItens.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
-    const novoTotal = Math.max(0, subtotalLocal + pedidoEditando.taxa_entrega - (pedidoEditando.desconto || 0));
-    setPedidoEditando({ ...pedidoEditando, itens: novosItens, total_geral: novoTotal });
-  };
-
-  const removerItemEdicao = (index: number) => {
-    if (!pedidoEditando || !pedidoEditando.itens) return;
-    const novosItens = pedidoEditando.itens.filter((_, i) => i !== index);
-    const subtotalLocal = novosItens.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
-    const novoTotal = Math.max(0, subtotalLocal + pedidoEditando.taxa_entrega - (pedidoEditando.desconto || 0));
-    setPedidoEditando({ ...pedidoEditando, itens: novosItens, total_geral: novoTotal });
-  };
-
-  const adicionarProdutoEdicao = (produtoId: string) => {
-    if (!pedidoEditando || !produtoId) return;
-    const prod = produtosDB.find(p => p.id === produtoId);
-    if (!prod) return;
-    const precoUnit = calcularPrecoPorCanalEProduto(pedidoEditando.canal, prod);
-    const itensAtuais = pedidoEditando.itens || [];
-    const existenteIndex = itensAtuais.findIndex(it => it.produto_id === prod.id && !it.nome_produto.includes('('));
-    let novosItens = [...itensAtuais];
-    if (existenteIndex >= 0) { novosItens[existenteIndex].quantidade += 1; } 
-    else { novosItens.push({ produto_id: prod.id, codigo_produto: prod.codigo || '', nome_produto: prod.nome, quantidade: 1, preco_unitario: precoUnit }); }
-    const subtotalLocal = novosItens.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
-    const novoTotal = Math.max(0, subtotalLocal + pedidoEditando.taxa_entrega - (pedidoEditando.desconto || 0));
-    setPedidoEditando({ ...pedidoEditando, itens: novosItens, total_geral: novoTotal });
-  };
-
-  const iniciarMontagemComboEdicao = (comboId: string) => {
-    if (!comboId) return;
-    const combo = combosDB.find(c => c.id === comboId);
-    if (!combo) return;
-    setComboSelecionadoParaMontar(combo);
-    setSelecoesComboEdicao({});
-    setModalComboEdicao(true);
-  };
-
-  const toggleSelecaoComboEdicao = (grupo: any, itemVinculado: any) => {
-    setSelecoesComboEdicao(prev => {
-      const selecoesGrupo = [...(prev[grupo.id] || [])];
-      const indexExistente = selecoesGrupo.findIndex(s => s.produto_id === itemVinculado.produto_id);
-      const totalSelecionadoNoGrupo = selecoesGrupo.reduce((acc, curr) => acc + (curr.quantidade || 1), 0);
-
-      if (indexExistente >= 0) {
-        if (totalSelecionadoNoGrupo < grupo.quantidade_maxima) { selecoesGrupo[indexExistente].quantidade += 1; } 
-        else {
-          if (selecoesGrupo[indexExistente].quantidade > 1) { selecoesGrupo[indexExistente].quantidade -= 1; } 
-          else { selecoesGrupo.splice(indexExistente, 1); }
-        }
-      } else {
-        if (totalSelecionadoNoGrupo < grupo.quantidade_maxima) { selecoesGrupo.push({ ...itemVinculado, quantidade: 1 }); } 
-        else if (grupo.quantidade_maxima === 1) { return { ...prev, [grupo.id]: [{ ...itemVinculado, quantidade: 1 }] }; }
-      }
-      return { ...prev, [grupo.id]: selecoesGrupo };
+      return [...prev, { produto, quantidade: 1, precoAplicado: precoAtual }];
     });
   };
 
-  const confirmarComboEdicao = () => {
-    if (!comboSelecionadoParaMontar || !pedidoEditando) return;
-    for (const grupo of comboSelecionadoParaMontar.combo_grupos) {
-      const selecoes = selecoesComboEdicao[grupo.id] || [];
-      const totalGrupo = selecoes.reduce((acc, s) => acc + (s.quantidade || 1), 0);
-      if (grupo.obrigatorio && totalGrupo < grupo.quantidade_minima) {
+  const removerDoCarrinho = (indexParaRemover: number) => {
+    setCarrinho((prev) => prev.map((item, idx) => (idx === indexParaRemover ? { ...item, quantidade: item.quantidade - 1 } : item)).filter((item) => item.quantidade > 0));
+  };
+
+  const iniciarMontagemCombo = (combo: Combo) => {
+    setComboSelecionado(combo);
+    setSelecoesCombo({});
+    setMostrarModalCombo(true);
+  };
+
+  const toggleSelecaoCombo = (grupo: GrupoCombo, item: ProdutoVinculado) => {
+    setSelecoesCombo(prev => {
+      const selecoesDoGrupo = prev[grupo.id] || [];
+      if (grupo.quantidade_maxima === 1) {
+        const jaSelecionado = selecoesDoGrupo.some(s => s.produto_id === item.produto_id);
+        if (jaSelecionado) return { ...prev, [grupo.id]: [] };
+        else return { ...prev, [grupo.id]: [item] };
+      }
+      const currentCount = selecoesDoGrupo.filter(s => s.produto_id === item.produto_id).length;
+      const remainingSpace = grupo.quantidade_maxima - selecoesDoGrupo.length;
+      const maxAllowedForThisItem = Math.min(grupo.quantidade_maxima, currentCount + remainingSpace);
+
+      let newCount = currentCount + 1;
+      if (newCount > maxAllowedForThisItem) newCount = 0; 
+      const otherItems = selecoesDoGrupo.filter(s => s.produto_id !== item.produto_id);
+      const newItemsToAdd = Array(newCount).fill(item);
+      return { ...prev, [grupo.id]: [...otherItems, ...newItemsToAdd] };
+    });
+  };
+
+  const confirmarMontagemCombo = () => {
+    if (!comboSelecionado) return;
+
+    for (const grupo of comboSelecionado.combo_grupos) {
+      const selecoes = selecoesCombo[grupo.id] || [];
+      if (grupo.obrigatorio && selecoes.length < grupo.quantidade_minima) {
         return alert(`O grupo "${grupo.nome}" exige no mínimo ${grupo.quantidade_minima} item(ns).`);
       }
     }
 
-    let somaPrecos = 0; let somaAcrescimos = 0; const detalhes: string[] = [];
-    Object.values(selecoesComboEdicao).forEach((selGrupo: any) => {
-      selGrupo.forEach((item: any) => {
-        const qtdItem = item.quantidade || 1;
-        for (let i = 0; i < qtdItem; i++) {
-          const precoItem = calcularPrecoPorCanalEProduto(pedidoEditando.canal, item.produto);
-          somaPrecos += precoItem;
-          somaAcrescimos += Number(item.acrescimo_preco || 0);
-          detalhes.push(`${item.produto.nome}`);
-        }
+    let somaPrecosOriginais = 0, somaAcrescimos = 0;
+    const itensComDetalhes: any[] = [], idsDosProdutosBase: string[] = [];
+
+    Object.values(selecoesCombo).forEach(selecoesGrupo => {
+      selecoesGrupo.forEach(item => {
+        const precoItem = getPrecoPorCanal(item.produto);
+        somaPrecosOriginais += precoItem;
+        somaAcrescimos += Number(item.acrescimo_preco);
+        idsDosProdutosBase.push(item.produto_id);
+        
+        itensComDetalhes.push({
+          id: item.produto_id, nome: item.produto.nome,
+          categoria: (item.produto.categoria || '').toLowerCase().trim(),
+          precoBase: precoItem, acrescimo: Number(item.acrescimo_preco), isGratis: false
+        });
       });
     });
 
-    let precoComboFinal = somaPrecos;
-    if (comboSelecionadoParaMontar.tipo_preco === 'fixo') {
-      if (pedidoEditando.canal === 'Glovo') { precoComboFinal = Number(comboSelecionadoParaMontar.preco_glovo || comboSelecionadoParaMontar.preco_fixo || 0); } 
-      else if (pedidoEditando.canal === 'WhatsApp' || pedidoEditando.canal === 'Balcão' || pedidoEditando.canal === 'Palmbites') { precoComboFinal = Number(comboSelecionadoParaMontar.preco_whatsapp || comboSelecionadoParaMontar.preco_fixo || 0); } 
-      else { precoComboFinal = Number(comboSelecionadoParaMontar.preco_fixo || 0); }
-    } else if (comboSelecionadoParaMontar.tipo_preco === 'desconto' || comboSelecionadoParaMontar.nome.toLowerCase().includes('batatô10') || comboSelecionadoParaMontar.nome.toLowerCase().includes('batato10')) {
-      const perc = Number(comboSelecionadoParaMontar.desconto_percentual || 10);
-      precoComboFinal = somaPrecos * (1 - perc / 100);
-    } else if (comboSelecionadoParaMontar.tipo_preco === 'desconto_fixo' || comboSelecionadoParaMontar.nome.toLowerCase().includes('para dois')) {
-      const desc = Number(comboSelecionadoParaMontar.desconto_absoluto || 1.70);
-      precoComboFinal = Math.max(0, somaPrecos - desc);
-    }
+    let precoBaseCombo = 0, detalheDesconto = '';
 
-    const precoFinalAplicado = precoComboFinal + somaAcrescimos;
-    const nomeComboFormatado = `${comboSelecionadoParaMontar.nome} (${detalhes.join(', ')})`;
-    const novosItens = [...(pedidoEditando.itens || []), { produto_id: undefined, codigo_produto: 'COMBO', nome_produto: nomeComboFormatado, quantidade: 1, preco_unitario: Number(precoFinalAplicado.toFixed(2)) }];
-    const subtotalLocal = novosItens.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
-    const novoTotal = Math.max(0, subtotalLocal + pedidoEditando.taxa_entrega - (pedidoEditando.desconto || 0));
+    if (comboSelecionado.nome.toLowerCase().includes('para dois')) {
+      const descontoComboForcado = canal === 'Glovo' ? 1.70 : 1.50;
+      precoBaseCombo = Math.max(0, somaPrecosOriginais - descontoComboForcado);
+      detalheDesconto = `🔻 Desconto Combo (-${descontoComboForcado.toFixed(2)}€)`;
+    } else if (comboSelecionado.tipo_preco === 'fixo') {
+      precoBaseCombo = Number(comboSelecionado.preco_fixo);
+      detalheDesconto = `🏷️ Preço Fixo Especial`;
+    } else if (comboSelecionado.tipo_preco === 'desconto') {
+      const percentual = Number(comboSelecionado.desconto_percentual) || 0;
+      precoBaseCombo = somaPrecosOriginais * (1 - percentual / 100);
+      detalheDesconto = `🔻 Desconto Combo (-${percentual}%)`;
+    } else if (comboSelecionado.tipo_preco === 'desconto_fixo') {
+      const descontoFx = Number(comboSelecionado.desconto_absoluto) || 0;
+      precoBaseCombo = Math.max(0, somaPrecosOriginais - descontoFx);
+      detalheDesconto = `🔻 Desconto Combo (-${descontoFx.toFixed(2)}€)`;
+    } else if (comboSelecionado.tipo_preco === 'item_gratis') {
+      const catGratis = (comboSelecionado.item_gratis_categoria || '').toLowerCase().trim();
+      let itemParaFicarGratis = null;
 
-    setPedidoEditando({ ...pedidoEditando, itens: novosItens, total_geral: novoTotal });
-    setModalComboEdicao(false);
-    setComboSelecionadoParaMontar(null);
-  };
-
-  const salvarEdicao = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!pedidoEditando) return;
-    setSalvando(true);
-    try {
-      const subtotalItens = pedidoEditando.itens?.reduce((acc, item) => acc + (item.quantidade * item.preco_unitario), 0) || 0;
-      const novoTotal = Math.max(0, subtotalItens + Number(pedidoEditando.taxa_entrega) - Number(pedidoEditando.desconto || 0));
-      const principalId = pedidoEditando.ids_fragmentados?.[0] || pedidoEditando.id;
-      const idsRelacionados = pedidoEditando.ids_fragmentados || [pedidoEditando.id];
-
-      const { error: erroPrincipal } = await supabase.from('pedidos').update({
-        cliente: pedidoEditando.cliente, canal: pedidoEditando.canal, forma_pagamento: pedidoEditando.forma_pagamento,
-        entregador: pedidoEditando.entregador || null, taxa_entrega: pedidoEditando.taxa_entrega,
-        desconto: pedidoEditando.desconto || 0, pago: pedidoEditando.pago, total_geral: novoTotal,
-        data_recebimento: pedidoEditando.pago ? dataRecebimentoEdicao : null
-      }).eq('id', principalId);
-      if (erroPrincipal) throw erroPrincipal;
-
-      // A forma de pagamento e o estado precisam ficar iguais em todos os
-      // fragmentos que pertencem ao mesmo número de pedido.
-      const { error: erroFragmentos } = await supabase
-        .from('pedidos')
-        .update({
-          forma_pagamento: pedidoEditando.forma_pagamento,
-          pago: pedidoEditando.pago,
-          data_recebimento: pedidoEditando.pago ? dataRecebimentoEdicao : null,
-        })
-        .in('id', idsRelacionados);
-
-      if (erroFragmentos) throw erroFragmentos;
-
-      // A sincronização Pedidos -> Caixa é feita pelo trigger no Supabase.
-      // Assim funciona mesmo quando a forma já estava como Dinheiro.
-
-      await supabase.from('itens_pedido').delete().in('pedido_id', idsRelacionados);
-
-      if (pedidoEditando.itens && pedidoEditando.itens.length > 0) {
-        const novosItensDB = pedidoEditando.itens.map(item => ({
-          pedido_id: principalId, produto_id: item.produto_id || null, codigo_produto: item.codigo_produto,
-          nome_produto: item.nome_produto, quantidade: item.quantidade, preco_unitario: item.preco_unitario
-        }));
-        const { error: erroItens } = await supabase.from('itens_pedido').insert(novosItensDB);
-        if (erroItens) throw erroItens;
+      if (catGratis === 'mais_barato') {
+        if (itensComDetalhes.length > 0) itemParaFicarGratis = itensComDetalhes.reduce((prev, curr) => prev.precoBase < curr.precoBase ? prev : curr);
+      } else {
+        const itensDaCat = itensComDetalhes.filter(it => it.categoria === catGratis || (catGratis === 'sobremesa' && it.categoria === 'brownie'));
+        if (itensDaCat.length > 0) itemParaFicarGratis = itensDaCat[0];
       }
 
-      setModalEditar(false);
-      buscarPedidosDaBase();
-    } catch (err: any) { alert(`Erro ao salvar edição: ${err.message}`); } finally { setSalvando(false); }
-  };
-
-  const pedidosExibidos = useMemo(() => {
-    let filtrados = [...pedidos];
-    if (termoPesquisa.trim() !== '') {
-      const termo = termoPesquisa.toLowerCase().trim();
-      filtrados = filtrados.filter(pedido => {
-        const nomeCliente = (pedido.cliente || '').toLowerCase();
-        const numPedidoStr = String(pedido.numero_pedido);
-        return nomeCliente.includes(termo) || numPedidoStr.includes(termo);
-      });
+      if (itemParaFicarGratis) {
+        itemParaFicarGratis.isGratis = true;
+        precoBaseCombo = Math.max(0, somaPrecosOriginais - itemParaFicarGratis.precoBase);
+      } else precoBaseCombo = somaPrecosOriginais;
     }
-    return filtrados.sort((a, b) => {
-      if (ordemDirecao === 'desc') return b.numero_pedido - a.numero_pedido;
-      return a.numero_pedido - b.numero_pedido;
+
+    const detalhesFormatados = itensComDetalhes.map(it => {
+      if (it.isGratis) {
+         const txtAcrescimo = it.acrescimo > 0 ? ` (+${it.acrescimo.toFixed(2)}€ tx)` : '';
+         return `${it.nome} (🎁 Grátis${txtAcrescimo})`;
+      } else {
+         return `${it.nome} (${(it.precoBase + it.acrescimo).toFixed(2)}€)`;
+      }
     });
-  }, [pedidos, termoPesquisa, ordemDirecao]);
 
-  const limparFiltros = () => { setDataInicio(''); setDataFim(''); setTermoPesquisa(''); };
-  const selecionarHoje = () => {
-    const hoje = getHojeLisboa();
-    setDataInicio(hoje); setDataFim(hoje);
+    if (detalheDesconto) detalhesFormatados.push(detalheDesconto);
+
+    const precoFinalAplicado = precoBaseCombo + somaAcrescimos;
+    const precoSemDesconto = somaPrecosOriginais + somaAcrescimos;
+
+    setCarrinho((prev) => [
+      ...prev,
+      {
+        produto: {
+          id: `${comboSelecionado.id}_${Date.now()}`, codigo: 'COMBO', nome: comboSelecionado.nome,
+          precoCardapio: precoFinalAplicado, precoWhatsapp: precoFinalAplicado, precoGlovo: precoFinalAplicado, 
+          custoUnitario: 0, categoria: 'combo', ativo: true
+        },
+        quantidade: 1, isCombo: true, comboNome: comboSelecionado.nome, 
+        detalhesCombo: detalhesFormatados, 
+        precoOriginal: Number(precoSemDesconto.toFixed(2)), 
+        precoAplicado: Number(precoFinalAplicado.toFixed(2)),
+        itensBaseId: idsDosProdutosBase 
+      }
+    ]);
+
+    setMostrarModalCombo(false);
   };
 
-  const faturamentoTotal = pedidosExibidos.reduce((acc, p) => acc + p.total_geral, 0);
-  const totalDescontos = pedidosExibidos.reduce((acc, p) => acc + p.desconto, 0);
-  const pendenteCaderninho = pedidosExibidos.filter(p => !p.pago).reduce((acc, p) => acc + p.total_geral, 0);
+  const descontarStockAutomaticamente = async (itensDoCarrinho: ItemCarrinho[], numeroDaFatura: string) => {
+    try {
+      const consumos = new Map<string, number>();
+      let quantidadePratos = 0; 
 
-  const getCorCanal = (canal: string) => {
-    if (canal === 'Glovo') return 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20';
-    if (canal === 'WhatsApp') return 'bg-green-500/10 text-green-500 border-green-500/20';
-    if (canal === 'Palmbites') return 'bg-teal-500/10 text-teal-500 border-teal-500/20';
-    if (canal === 'Revendedores') return 'bg-purple-500/10 text-purple-400 border-purple-500/20';
-    return 'bg-zinc-500/10 text-zinc-400 border-zinc-800';
+      for (const item of itensDoCarrinho) {
+        const cat = (item.produto.categoria || '').toLowerCase();
+        
+        let qtdPratosDesteItem = item.quantidade;
+        if (cat === 'combo' && (item.produto.nome.toLowerCase().includes('dois') || item.produto.nome.toLowerCase().includes('duplo'))) {
+          qtdPratosDesteItem = item.quantidade * 2;
+        }
+
+        if (cat === 'batata' || cat === 'combo') {
+          quantidadePratos += qtdPratosDesteItem;
+        }
+
+        const idsParaProcessar = item.isCombo && item.itensBaseId && item.itensBaseId.length > 0 ? item.itensBaseId : [item.produto.id];
+        
+        for (const produtoBaseId of idsParaProcessar) {
+          if (!produtoBaseId) continue;
+          const qtdAtual = consumos.get(produtoBaseId) || 0;
+          consumos.set(produtoBaseId, qtdAtual + item.quantidade);
+        }
+      }
+
+      for (const [produtoId, qtdGasta] of consumos.entries()) {
+        const { data: prodData, error: errSelect } = await supabase.from('produtos').select('id, nome, estoque_atual').eq('id', produtoId).single();
+        
+        if (prodData && !errSelect) {
+          const stockAtual = Number(prodData.estoque_atual) || 0;
+
+          // Permite stock negativo.
+          // Ex.: 0 - 1 = -1, -1 - 1 = -2, etc.
+          const novoStockProduto = stockAtual - qtdGasta;
+          
+          await supabase.from('produtos').update({ estoque_atual: novoStockProduto }).eq('id', produtoId);
+
+          await supabase.from('movimentos_estoque').insert([{
+            produto_id: produtoId, nome_produto: prodData.nome, tipo_movimento: 'SAÍDA', quantidade: qtdGasta,
+            saldo_atualizado: novoStockProduto, origem: 'VENDA PDV', observacoes: `Pedido #${numeroDaFatura}`
+          }]);
+        }
+      }
+
+      if (quantidadePratos > 0) {
+        const { data: todasEmbalagens } = await supabase.from('produtos').select('id, nome, estoque_atual, categoria');
+
+        if (todasEmbalagens) {
+          const embsParaDescontar = todasEmbalagens.filter(e => {
+            const cat = (e.categoria || '').toLowerCase();
+            return cat.includes('embalagem') || cat.includes('material') || cat.includes('uso');
+          });
+
+          for (const emb of embsParaDescontar) {
+            const nomeEmb = emb.nome.toLowerCase();
+            if (nomeEmb.includes('saco') || nomeEmb.includes('garfo') || nomeEmb.includes('pote') || nomeEmb.includes('embalagem')) {
+              const stockAtualEmb = Number(emb.estoque_atual) || 0;
+
+              // Embalagens e materiais também podem ficar negativos,
+              // para o sistema continuar a contabilizar o consumo real.
+              const novoStockEmb = stockAtualEmb - quantidadePratos;
+
+              await supabase.from('produtos').update({ estoque_atual: novoStockEmb }).eq('id', emb.id);
+              await supabase.from('movimentos_estoque').insert([{
+                produto_id: emb.id, nome_produto: emb.nome, tipo_movimento: 'SAÍDA', quantidade: quantidadePratos,
+                saldo_atualizado: novoStockEmb, origem: 'VENDA PDV (Automático)', observacoes: `Acompanhamento Pedido #${numeroDaFatura}`
+              }]);
+            }
+          }
+        }
+      }
+
+    } catch (err) {
+      console.error("Erro fatal ao descontar stock:", err);
+    }
   };
+
+  const subtotalProdutos = carrinho.reduce((acc, item) => acc + item.precoAplicado * item.quantidade, 0);
+  const totalGeral = Math.max(0, subtotalProdutos - (parseFloat(descontoManual) || 0)) + (parseFloat(taxaEntrega) || 0);
+
+  const finalizarVenda = async () => {
+    if (carrinho.length === 0) return alert('O carrinho está vazio!');
+    if (!cliente.trim()) return alert('Insira o nome do cliente!');
+    
+    setIsProcessando(true);
+    const estaPago = formaPagamento !== 'Caderninho';
+    const agora = new Date();
+    const dataHoraCriacaoCompleta = `${dataPedido}T${agora.toTimeString().split(' ')[0]}`;
+
+    try {
+      const nomeDoCliente = cliente.trim();
+      
+      const { data: clienteExistente } = await supabase.from('clientes').select('id').eq('nome', nomeDoCliente).single();
+        
+      if (clienteExistente) {
+        await supabase.from('clientes').update({ contacto: contactoCliente.trim(), morada: moradaCliente.trim() }).eq('id', clienteExistente.id);
+      } else {
+        await supabase.from('clientes').insert([{ nome: nomeDoCliente, contacto: contactoCliente.trim(), morada: moradaCliente.trim() }]);
+      }
+
+      const { data: todosPedidosNum } = await supabase
+        .from('pedidos')
+        .select('numero_pedido');
+        
+      let maiorNumero = 365;
+      if (todosPedidosNum) {
+        todosPedidosNum.forEach(p => {
+          const num = parseInt(p.numero_pedido, 10);
+          if (!isNaN(num) && num > maiorNumero) maiorNumero = num;
+        });
+      }
+
+      const novoNumeroStr = String(maiorNumero + 1);
+
+      const { data: pedidoGravado, error: erroPedido } = await supabase.from('pedidos').insert([{ 
+          numero_pedido: novoNumeroStr, 
+          cliente: nomeDoCliente, 
+          contacto_cliente: contactoCliente.trim(),
+          endereco: moradaCliente.trim(),
+          canal: canal, 
+          forma_pagamento: formaPagamento, 
+          entregador: entregador || null, 
+          taxa_entrega: parseFloat(taxaEntrega), 
+          desconto: parseFloat(descontoManual) || 0,
+          total_geral: totalGeral,
+          total_liquido: totalGeral,
+          pago: estaPago,
+          data_pedido: dataPedido, 
+          criado_em: dataHoraCriacaoCompleta
+        }]).select().single();
+      
+      if (erroPedido) throw erroPedido;
+      
+      if (pedidoGravado) {
+        const itensDB = carrinho.map(item => ({ 
+          pedido_id: pedidoGravado.id, 
+          produto_id: item.isCombo ? null : item.produto.id, 
+          codigo_produto: item.produto.codigo, 
+          nome_produto: item.isCombo ? `${item.produto.nome} (${item.detalhesCombo?.join(', ')})` : item.produto.nome, 
+          quantidade: item.quantidade, 
+          preco_unitario: item.precoAplicado 
+        }));
+        
+        const { error: errItens } = await supabase.from('itens_pedido').insert(itensDB);
+        if (errItens) throw errItens;
+        
+        await descontarStockAutomaticamente(carrinho, novoNumeroStr);
+
+        if (formaPagamento === 'Stripe') {
+          const taxaFixa = 0.25;
+          const taxaVariavel = totalGeral * 0.015;
+          const custoStripeFinal = Number((taxaFixa + taxaVariavel).toFixed(2));
+
+          const { error: errStripe } = await supabase.from('despesas').insert([{
+            descricao: `Comissão Stripe | Stripe 📄 Pedido #${novoNumeroStr}`,
+            categoria: 'Taxas e Comissões (Glovo/Uber)',
+            valor: custoStripeFinal,
+            data_despesa: dataPedido,
+            metodo_pagamento: 'Débito Automático Stripe',
+            status: 'Validado' 
+          }]);
+          
+          if (errStripe) console.error("Aviso: Falha ao lançar despesa Stripe:", errStripe);
+        }
+
+        if (imprimirAtivado) {
+          const dadosRecibo = {
+            numero_pedido: novoNumeroStr,
+            canal: canal,
+            cliente: nomeDoCliente,
+            contacto_cliente: contactoCliente.trim(),
+            endereco: moradaCliente.trim(),
+            itens_pedido: carrinho.map(item => ({
+              quantidade: item.quantidade,
+              nome_produto: item.isCombo ? `${item.produto.nome} (${item.detalhesCombo?.join(', ')})` : item.produto.nome,
+              preco_unitario: item.precoAplicado
+            })),
+            taxa_entrega: parseFloat(taxaEntrega),
+            desconto: parseFloat(descontoManual) || 0,
+            total_geral: totalGeral,
+            forma_pagamento: formaPagamento,
+            pago: estaPago
+          };
+
+          void imprimirReciboTermico(dadosRecibo);
+        }
+        
+        // 🎯 Lança a Janela de Sucesso e bloqueia o ecrã com o número da Senha!
+        setModalSucesso({ visivel: true, numeroPedido: novoNumeroStr });
+      }
+      
+      setCarrinho([]); 
+      setCliente(''); 
+      setContactoCliente(''); 
+      setMoradaCliente('');
+      setTaxaEntrega('0.00'); 
+      setDescontoManual('0.00');
+      
+      setListaClientesCadastrados(prev => {
+        if (!prev.some(c => c.nome.toLowerCase() === nomeDoCliente.toLowerCase())) {
+          return [...prev, { id: 'novo', nome: nomeDoCliente, contacto: contactoCliente.trim(), morada: moradaCliente.trim() }];
+        }
+        return prev;
+      });
+
+    } catch (err: any) { 
+      alert(`Erro ao gravar pedido: ${err.message}`); 
+    } finally {
+      setIsProcessando(false);
+    }
+  };
+
+  const renderBotaoCombo = (combo: Combo) => (
+    <button key={combo.id} onClick={() => iniciarMontagemCombo(combo)} className="bg-zinc-900 hover:bg-zinc-800 border border-orange-500/20 p-5 rounded-2xl text-left h-40 flex flex-col justify-between transition-all">
+      <div><span className="text-[9px] font-bold text-orange-400 bg-orange-500/10 px-2 py-0.5 rounded">COMBO DINÂMICO</span><h3 className="font-bold mt-2 text-zinc-100">{combo.nome}</h3><p className="text-xs text-zinc-400 mt-1 line-clamp-2">{combo.descricao}</p></div>
+      <div className="text-xs font-semibold text-orange-500">Montar Opções ➜</div>
+    </button>
+  );
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-white flex flex-col font-sans relative">
-      <header className="bg-zinc-900 border-b border-zinc-800 px-6 py-4 flex justify-between items-center shadow-lg">
+    <div className="min-h-screen bg-zinc-950 text-white flex flex-col relative font-sans">
+      
+      <div className="bg-zinc-900 border-b border-zinc-800 px-5 py-3 flex justify-between items-center">
+        <div className="flex gap-2">
+          <span className="px-4 py-1.5 rounded-lg text-xs font-bold bg-orange-600 text-white">PDV</span>
+        </div>
         <div className="flex items-center gap-3">
-          <span className="text-2xl">📓</span>
-          <h1 className="text-xl font-bold tracking-wide">Registo e Controlo de Vendas</h1>
-        </div>
-        <button onClick={buscarPedidosDaBase} className="bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold px-4 py-2 rounded-xl border border-zinc-700 transition-all">
-          🔄 Sincronizar Dados
-        </button>
-      </header>
-
-      <section className="px-6 pt-6">
-        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-4">
-          <div className="flex flex-col md:flex-row gap-4 items-center">
-            <div className="flex-1 w-full">
-              <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">Pesquisar Pedido</label>
-              <input type="text" value={termoPesquisa} onChange={e => setTermoPesquisa(e.target.value)} placeholder="Pesquise por nome do cliente ou número do pedido..." className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-orange-500 outline-none" />
-            </div>
-            <div>
-              <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">Ordem</label>
-              <select value={ordemDirecao} onChange={e => setOrdemDirecao(e.target.value as 'desc' | 'asc')} className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-orange-500 outline-none cursor-pointer">
-                <option value="desc">⬇️ Decrescente (Mais Recentes)</option>
-                <option value="asc">⬆️ Crescente (Mais Antigos)</option>
-              </select>
-            </div>
-          </div>
-          <div className="flex flex-col xl:flex-row xl:items-end justify-between gap-4 pt-3 border-t border-zinc-800">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full xl:w-auto">
-              <div>
-                <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">De (Data Inicial)</label>
-                <input type="date" value={dataInicio} max={dataFim || undefined} onChange={e => setDataInicio(e.target.value)} className="w-full sm:w-48 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white focus:border-orange-500 outline-none [color-scheme:dark]" />
-              </div>
-              <div>
-                <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">Até (Data Final)</label>
-                <input type="date" value={dataFim} min={dataInicio || undefined} onChange={e => setDataFim(e.target.value)} className="w-full sm:w-48 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white focus:border-orange-500 outline-none [color-scheme:dark]" />
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <button type="button" onClick={selecionarHoje} className="bg-orange-600 hover:bg-orange-500 text-xs font-bold px-4 py-2.5 rounded-xl transition-all shadow-md">Hoje</button>
-              <button type="button" onClick={limparFiltros} disabled={!dataInicio && !dataFim && !termoPesquisa} className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-xs font-bold px-4 py-2.5 rounded-xl border border-zinc-700 transition-all">Limpar</button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="bg-zinc-900 border border-zinc-800/60 p-4 rounded-xl flex justify-between items-center">
-          <div><span className="text-[10px] text-zinc-400 uppercase font-black">Faturamento Bruto</span><p className="text-2xl font-black mt-1">{faturamentoTotal.toFixed(2)}€</p></div><span className="text-2xl">💰</span>
-        </div>
-        <div className="bg-zinc-900 border border-zinc-800/60 p-4 rounded-xl flex justify-between items-center">
-          <div><span className="text-[10px] text-zinc-400 uppercase font-black">Descontos Aplicados</span><p className="text-2xl font-black mt-1 text-red-400">{totalDescontos.toFixed(2)}€</p></div><span className="text-2xl">🎟️</span>
-        </div>
-        <div className="bg-zinc-900 border border-zinc-800/60 p-4 rounded-xl flex justify-between items-center">
-          <div><span className="text-[10px] text-zinc-400 uppercase font-black">Em Falta (Caderninho)</span><p className="text-2xl font-black mt-1 text-orange-400">{pendenteCaderninho.toFixed(2)}€</p></div><span className="text-2xl">✏️</span>
+          <span className="text-xl">🥔</span>
+          <span className="text-xs font-bold text-orange-500 uppercase tracking-widest flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> Caixa Aberta
+          </span>
         </div>
       </div>
 
-      <main className="flex-1 px-6 pb-6 overflow-y-auto">
-        {loading ? ( <div className="text-center text-zinc-500 py-24">A carregar registos...</div> ) : pedidosExibidos.length === 0 ? (
-          <div className="text-center text-zinc-500 py-24 bg-zinc-900/20 border border-dashed border-zinc-800 rounded-2xl max-w-xl mx-auto space-y-2">
-            <p className="text-base font-bold text-zinc-300">Nenhum pedido para exibir</p>
-            <p className="text-xs text-zinc-500">Utilize os filtros para visualizar os pedidos desta data.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-            {pedidosExibidos.map(ped => (
-              <div key={ped.id} className="bg-zinc-900 border border-zinc-800/80 rounded-2xl p-4 flex flex-col justify-between shadow-md hover:border-zinc-700/60 transition-all relative group">
-                <div className="absolute top-3 right-3 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => imprimirReciboTermico(ped)} className="w-7 h-7 bg-zinc-800 hover:bg-green-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Imprimir Talão">🖨️</button>
-                  <button onClick={() => abrirEdicao(ped)} className="w-7 h-7 bg-zinc-800 hover:bg-blue-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Editar Informações e Itens/Combos">✏️</button>
-                  <button onClick={() => excluirPedido(ped.numero_pedido, ped.ids_fragmentados!)} className="w-7 h-7 bg-zinc-800 hover:bg-red-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Excluir Pedido">🗑️</button>
-                </div>
-                <div>
-                  <div className="flex justify-between items-start gap-2 border-b border-zinc-800/60 pb-3 mb-3 pr-24">
-                    <div>
-                      <span className="text-[10px] font-mono text-zinc-500">#{ped.numero_pedido} · {ped.data_pedido.substring(0,10)}</span>
-                      <h3 className="font-bold text-zinc-100 text-sm mt-0.5">{ped.cliente || 'Cliente Anónimo'}</h3>
-                    </div>
-                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase ${getCorCanal(ped.canal)}`}>{ped.canal}</span>
-                  </div>
-                  <div className="space-y-2 mb-4">
-                    {ped.itens && ped.itens.map((item, i) => (
-                      <div key={i} className="flex justify-between text-xs text-zinc-300">
-                        <span className="pr-2"><span className="font-bold text-orange-400 mr-1.5">{item.quantidade}x</span>{item.nome_produto}</span>
-                        <span className="font-mono text-zinc-500 text-[11px]">{(item.preco_unitario * item.quantidade).toFixed(2)}€</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div className="border-t border-zinc-800/60 pt-3 mt-2 space-y-2 text-xs text-zinc-400">
-                  <div className="flex justify-between text-[11px]">
-                    <span>Pagamento: <span className="text-zinc-200">{ped.forma_pagamento}</span></span>
-                  </div>
-                  
-                  {(ped.desconto > 0 || ped.taxa_entrega > 0) && (
-                    <div className="flex justify-between text-[11px] mt-1">
-                      {ped.desconto > 0 && <span className="text-red-400 font-medium">Desconto: -{ped.desconto.toFixed(2)}€</span>}
-                      {ped.taxa_entrega > 0 && <span className="text-emerald-400 font-medium">Entrega: +{ped.taxa_entrega.toFixed(2)}€</span>}
-                    </div>
-                  )}
+      {erroCaixa && (
+        <div className="m-6 bg-red-950/50 border border-red-900 p-5 rounded-2xl z-50">
+          <h2 className="text-red-500 font-bold text-sm uppercase tracking-wider mb-2">⚠️ Bloqueio de Sincronização POS</h2>
+          <code className="block bg-black/50 p-3 rounded-lg text-red-400 font-mono text-xs">{erroCaixa}</code>
+        </div>
+      )}
 
-                  <div className="flex justify-between items-center border-t border-zinc-800/40 pt-2">
-                    <span className="text-[11px]">Estafeta: <span className="text-zinc-300">{ped.entregador || 'Nenhum'}</span></span>
-                    <span className="text-base font-black text-orange-500">{ped.total_geral.toFixed(2)}€</span>
-                  </div>
-                  {!ped.pago && (
-                    <div className="mt-2 grid grid-cols-2 gap-2">
-                      <button
-                        onClick={() => liquidarCaderninho(ped, 'Dinheiro')}
-                        className="rounded-lg bg-green-600 py-1.5 text-[10px] font-bold text-white hover:bg-green-700"
-                      >
-                        💶 Dinheiro
-                      </button>
-                      <button
-                        onClick={() => liquidarCaderninho(ped, 'MB Way')}
-                        className="rounded-lg bg-blue-600 py-1.5 text-[10px] font-bold text-white hover:bg-blue-700"
-                      >
-                        📱 MB Way
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </main>
-
-      {modalEditar && pedidoEditando && (
-        <div className="fixed inset-0 bg-black/80 flex justify-center items-center z-50 p-4">
-          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl p-6">
-            <button onClick={() => setModalEditar(false)} className="float-right text-zinc-400">✕</button>
-            <h2 className="text-xl font-bold mb-3">Editar Pedido #{pedidoEditando.numero_pedido}</h2>
-            
-            {/* ALERTA VISUAL PARA ENSINAR A REGRA DO ESTOQUE */}
-            <div className="bg-orange-500/10 border border-orange-500/50 p-3 rounded-xl mb-5">
-              <p className="text-xs text-orange-400 font-bold flex items-center gap-1"><span>⚠️</span> ATENÇÃO AO ESTOQUE</p>
-              <p className="text-[10px] text-zinc-300 mt-1">
-                Alterar itens por aqui <strong>NÃO</strong> atualiza o estoque. Se o pedido original estiver errado, feche isto, <strong>exclua o pedido inteiro</strong> (o sistema devolve tudo ao stock) e registe-o novamente no PDV.
-              </p>
+      {!erroCaixa && (
+        <div className="bg-zinc-900 border-b border-zinc-800 p-5 grid grid-cols-2 md:grid-cols-4 lg:grid-cols-9 gap-4 shadow-xl relative">
+          
+          <div className="relative col-span-2">
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Cliente / Nome</label>
+            <div className="relative">
+              <input 
+                type="text" 
+                value={cliente} 
+                onChange={(e) => { setCliente(e.target.value); setMostrarSugestoes(true); }} 
+                onFocus={() => setMostrarSugestoes(true)}
+                onBlur={() => setTimeout(() => setMostrarSugestoes(false), 200)}
+                placeholder="Nome ou Telemóvel..." 
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-3 pr-10 py-2 text-sm focus:border-orange-500 outline-none text-white font-bold transition-all"
+                autoComplete="off" 
+              />
+              <button
+                type="button"
+                onMouseDown={async (e) => {
+                  e.preventDefault(); 
+                  try {
+                    const textoColado = await navigator.clipboard.readText();
+                    if (textoColado) {
+                      setCliente(textoColado);
+                      setMostrarSugestoes(true);
+                    }
+                  } catch (err) {
+                    alert("Por favor, permita o acesso à área de transferência no seu navegador para usar este botão.");
+                  }
+                }}
+                className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center bg-zinc-900 rounded-lg border border-zinc-700 hover:bg-orange-600 hover:text-white transition-all text-xs text-zinc-400 cursor-pointer"
+                title="Colar (Sem precisar de Ctrl+V)"
+              >
+                📋
+              </button>
             </div>
 
-            <form onSubmit={salvarEdicao} className="space-y-4">
-              <input value={pedidoEditando.cliente || ''} onChange={e => setPedidoEditando({ ...pedidoEditando, cliente: e.target.value })} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm" placeholder="Nome do Cliente" />
-              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                <label className="space-y-1">
-                  <span className="text-[10px] font-black uppercase text-zinc-500">Forma de pagamento</span>
-                  <select
-                    value={pedidoEditando.forma_pagamento || 'Caderninho'}
-                    onChange={e => setPedidoEditando({
-                      ...pedidoEditando,
-                      forma_pagamento: e.target.value,
-                    })}
-                    className="w-full rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-sm"
-                  >
-                    <option value="Caderninho">Caderninho</option>
-                    <option value="Dinheiro">Dinheiro</option>
-                    <option value="MB Way">MB Way</option>
-                  </select>
-                </label>
+            {mostrarSugestoes && cliente.trim().length > 0 && (
+              <div className="absolute left-0 right-0 top-full mt-2 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-[100] max-h-60 overflow-y-auto custom-scrollbar">
+                {listaClientesCadastrados
+                  .filter(c => {
+                    const termoBusca = cliente.toLowerCase().trim();
+                    return Object.values(c).some(val => val && String(val).toLowerCase().includes(termoBusca));
+                  })
+                  .map(c => {
+                    const nomeExibicao = c.nome || c.Nome || c.nome_cliente || c.cliente || c.NOME || 'Sem Nome';
+                    const telExibicao = c.contacto || c.telefone || c.telemovel || c.Contacto || 'S/N';
+                    const moradaExibicao = c.morada || c.endereco || c.Morada || '';
 
-                <label className="space-y-1">
-                  <span className="text-[10px] font-black uppercase text-zinc-500">Estado</span>
-                  <select
-                    value={pedidoEditando.pago ? 'pago' : 'pendente'}
-                    onChange={e => setPedidoEditando({
-                      ...pedidoEditando,
-                      pago: e.target.value === 'pago',
-                    })}
-                    className="w-full rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-sm"
-                  >
-                    <option value="pendente">Pendente</option>
-                    <option value="pago">Pago</option>
-                  </select>
-                </label>
-
-                <label className="space-y-1">
-                  <span className="text-[10px] font-black uppercase text-zinc-500">Data do recebimento</span>
-                  <input
-                    type="date"
-                    value={dataRecebimentoEdicao}
-                    onChange={e => setDataRecebimentoEdicao(e.target.value)}
-                    className="w-full rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-sm"
-                  />
-                </label>
+                    return (
+                      <div key={c.id} onMouseDown={(e) => { e.preventDefault(); selecionarClienteSugerido(c); }} className="p-3 hover:bg-orange-600/20 cursor-pointer border-b border-zinc-800/50 text-xs flex justify-between items-center transition-all">
+                        <span className="font-bold text-white">{nomeExibicao}</span>
+                        <span className="text-zinc-400 text-[10px] truncate max-w-[150px] text-right">📞 {telExibicao} {moradaExibicao ? `| 📍 ${moradaExibicao}` : ''}</span>
+                      </div>
+                    );
+                  })}
               </div>
-              <div className="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
-                {pedidoEditando.itens?.map((item, idx) => (
-                  <div key={idx} className="flex items-center gap-2 bg-zinc-950 p-2 rounded-xl text-sm">
-                    <span className="flex-1 truncate">{item.nome_produto}</span>
-                    <input type="number" min="1" value={item.quantidade} onChange={e => alterarQtdItemEdicao(idx, Number(e.target.value))} className="w-16 bg-zinc-900 rounded p-1 text-center outline-none focus:border-orange-500 border border-zinc-800" />
-                    <button type="button" onClick={() => removerItemEdicao(idx)} className="text-zinc-500 hover:text-red-400 px-2">✕</button>
+            )}
+          </div>
+
+          <div>
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Contacto</label>
+            <input type="text" value={contactoCliente} onChange={(e) => setContactoCliente(e.target.value)} placeholder="Telemóvel" className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none" />
+          </div>
+
+          <div className="col-span-2">
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Morada de Entrega</label>
+            <input type="text" value={moradaCliente} onChange={(e) => setMoradaCliente(e.target.value)} placeholder="Rua, Número, Andar..." className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none text-zinc-200" />
+          </div>
+
+          <div>
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Data</label>
+            <input type="date" value={dataPedido} onChange={(e) => setDataPedido(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-300 outline-none cursor-pointer" />
+          </div>
+
+          <div>
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Canal</label>
+            <select value={canal} onChange={(e) => { const nc = e.target.value as any; setCanal(nc); setFormaPagamento(regrasPagamento[nc as keyof typeof regrasPagamento][0].value); }} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-300 outline-none">
+              <option value="Balcão">Balcão</option>
+              <option value="WhatsApp">WhatsApp</option>
+              <option value="Glovo">Glovo</option>
+              <option value="Palmbites">Palmbites</option>
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Pagamento</label>
+            <select value={formaPagamento} onChange={(e) => setFormaPagamento(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-300 outline-none">
+              {regrasPagamento[canal as keyof typeof regrasPagamento]?.map(opcao => (
+                <option key={opcao.value} value={opcao.value}>{opcao.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Estafeta</label>
+            <select value={entregador} onChange={(e) => setEntregador(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-300 outline-none">
+              <option value="">-- Nenhum --</option>
+              {listaEstafetas.map(est => (<option key={est.nome} value={est.nome}>{est.nome}</option>))}
+            </select>
+          </div>
+
+          <div>
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Taxa Entr. (€)</label>
+            <input type="number" step="0.10" min="0" value={taxaEntrega} onChange={(e) => setTaxaEntrega(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm font-bold text-orange-400 outline-none" />
+          </div>
+
+          <div>
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Desconto (€)</label>
+            <input type="number" step="0.50" min="0" value={descontoManual} onChange={(e) => setDescontoManual(e.target.value)} className="w-full bg-zinc-950 border border-red-900/50 rounded-xl px-3 py-2 text-sm font-bold text-red-400 outline-none" />
+          </div>
+
+        </div>
+      )}
+
+      {!erroCaixa && (
+        <div className="flex-1 flex overflow-hidden">
+          
+          <main className="flex-1 p-6 overflow-y-auto flex flex-col gap-6">
+            <div className="flex flex-wrap gap-2 bg-zinc-900/60 p-2 rounded-2xl border border-zinc-800/80">
+              {[
+                { id: 'todos', label: 'Todos' }, 
+                { id: 'batatas', label: '🥔 Batatas' }, 
+                { id: 'adicionais', label: '🥓 Adicionais' }, 
+                { id: 'sobremesas', label: '🍫 Sobremesas' }, 
+                { id: 'bebidas', label: '🥤 Bebidas' }, 
+                { id: 'combos', label: '🎁 Combos' }
+              ].map((cat) => (
+                <button key={cat.id} onClick={() => setCategoriaAtiva(cat.id as CategoriaFiltro)} className={`px-5 py-2.5 rounded-xl text-sm font-medium transition-all ${categoriaAtiva === cat.id ? 'bg-orange-600 text-white shadow-lg' : 'text-zinc-400 hover:text-zinc-200'}`}>{cat.label}</button>
+              ))}
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 content-start flex-1">
+              {loading ? (
+                <div className="col-span-full text-center text-zinc-500 py-12">A sincronizar com a base de dados...</div>
+              ) : categoriaAtiva === 'combos' ? (
+                combos.map(renderBotaoCombo)
+              ) : (
+                <>
+                  {produtos.filter((prod) => {
+                    if (categoriaAtiva === 'todos') return true;
+                    if (categoriaAtiva === 'batatas') return prod.categoria === 'batata';
+                    if (categoriaAtiva === 'adicionais') return prod.categoria === 'adicional' || prod.categoria === 'extra';
+                    if (categoriaAtiva === 'sobremesas') return prod.categoria === 'brownie' || prod.categoria === 'sobremesa';
+                    if (categoriaAtiva === 'bebidas') return prod.categoria === 'bebida';
+                    return false;
+                  }).map((prod) => (
+                    <button key={prod.id} onClick={() => adicionarAoCarrinho(prod)} className="bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 p-4 rounded-xl text-left flex flex-col justify-between h-32 transition-all">
+                      <div><span className="text-[9px] font-bold uppercase text-orange-400 bg-orange-500/10 px-2 py-0.5 rounded">{prod.categoria}</span><h3 className="font-semibold mt-2 text-zinc-200 text-sm">{prod.nome}</h3></div>
+                      <span className="text-base font-bold text-white mt-1">{getPrecoPorCanal(prod).toFixed(2)}€</span>
+                    </button>
+                  ))}
+                  {categoriaAtiva === 'todos' && combos.map(renderBotaoCombo)}
+                </>
+              )}
+            </div>
+          </main>
+
+          <aside className="w-96 bg-zinc-900 border-l border-zinc-800 flex flex-col shadow-2xl z-10">
+            <div className="p-4 border-b border-zinc-800 font-semibold text-zinc-300 flex justify-between items-center">
+              <div className="flex flex-col">
+                <span className="text-xs text-zinc-500">Pedido de:</span>
+                <span className="text-white font-bold">{cliente || '---'}</span>
+              </div>
+              <span className="text-xs text-zinc-400 bg-zinc-950 px-2 py-1 rounded border border-zinc-800">{canal}</span>
+            </div>
+
+            <div className="flex-1 p-4 overflow-y-auto space-y-3 custom-scrollbar">
+              {carrinho.map((item, idx) => (
+                <div key={idx} className="bg-zinc-950 p-3 rounded-xl border border-zinc-800 flex flex-col gap-1">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1 min-w-0 pr-2">
+                      {item.isCombo && <span className="inline-block text-[9px] font-bold text-orange-400 bg-orange-500/10 px-1.5 py-0.5 rounded mb-1.5 uppercase">COMBO</span>}
+                      <h4 className="text-xs font-bold text-zinc-200">{item.produto.nome}</h4>
+                      {item.isCombo && item.detalhesCombo && (
+                        <ul className="mt-1 space-y-0.5">
+                          {item.detalhesCombo.map((d, i) => (<li key={i} className="text-[10px] text-zinc-400">↳ {d}</li>))}
+                        </ul>
+                      )}
+                      <div className="text-xs text-zinc-400 mt-1">{item.precoAplicado.toFixed(2)}€ × {item.quantidade}</div>
+                    </div>
+                    <button onClick={() => removerDoCarrinho(idx)} className="text-zinc-500 text-lg hover:text-red-400 px-2">✕</button>
                   </div>
-                ))}
-              </div>
-              <button type="submit" disabled={salvando} className="w-full bg-orange-600 hover:bg-orange-500 rounded-xl px-6 py-3.5 font-bold uppercase tracking-widest text-sm shadow-lg disabled:opacity-50 mt-2">
-                {salvando ? 'A guardar...' : 'Guardar Alterações'}
+                </div>
+              ))}
+            </div>
+
+            <div className="p-4 bg-zinc-950 border-t border-zinc-800 space-y-3">
+              <label className="flex items-center gap-2 text-xs font-bold text-zinc-300 cursor-pointer bg-zinc-900/60 p-2 rounded-lg border border-zinc-800">
+                <input 
+                  type="checkbox" 
+                  checked={imprimirAtivado} 
+                  onChange={(e) => setImprimirAtivado(e.target.checked)} 
+                  className="accent-orange-600 w-4 h-4 cursor-pointer" 
+                />
+                Imprimir talão automaticamente
+              </label>
+
+              <div className="flex justify-between items-center text-zinc-400 text-xs"><span>Subtotal:</span><span className="text-white font-medium">{subtotalProdutos.toFixed(2)}€</span></div>
+              {parseFloat(descontoManual) > 0 && <div className="flex justify-between items-center text-red-400 text-xs"><span>Desconto:</span><span>-{parseFloat(descontoManual).toFixed(2)}€</span></div>}
+              <div className="flex justify-between items-center text-zinc-400 text-xs"><span>Taxa de Entrega:</span><span className="text-white font-medium">{parseFloat(taxaEntrega).toFixed(2)}€</span></div>
+              
+              {formaPagamento === 'Stripe' && (
+                <div className="flex justify-between items-center text-amber-500/80 text-[10px] border-t border-zinc-800/50 pt-2">
+                  <span>Custo Stripe (Auto):</span>
+                  <span>- {((totalGeral * 0.015) + 0.25).toFixed(2)}€</span>
+                </div>
+              )}
+
+              <div className="flex justify-between items-center border-t border-zinc-800 pt-2 text-zinc-300 text-sm"><span>Total a Cobrar:</span><span className="text-orange-500 font-black text-xl">{totalGeral.toFixed(2)}€</span></div>
+              
+              <button 
+                onClick={finalizarVenda} 
+                disabled={isProcessando}
+                className="w-full font-bold py-3.5 rounded-xl text-center text-sm shadow-lg bg-orange-600 hover:bg-orange-700 text-white transition-all disabled:opacity-50 uppercase tracking-widest mt-2"
+              >
+                {isProcessando ? 'A Processar...' : 'Confirmar e Imprimir'}
               </button>
-            </form>
+            </div>
+          </aside>
+
+        </div>
+      )}
+
+      {/* 🎯 MODAL DE SUCESSO - ECRÃ BLOQUEADO */}
+      {modalSucesso.visivel && (
+        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex justify-center items-center z-[200] p-4 animate-in fade-in duration-200">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-sm rounded-3xl p-8 flex flex-col items-center text-center shadow-[0_0_50px_rgba(249,115,22,0.2)] animate-in zoom-in-95 duration-300">
+            <div className="w-20 h-20 bg-green-500/20 text-green-500 rounded-full flex items-center justify-center text-4xl mb-6 shadow-inner border border-green-500/50">
+              ✓
+            </div>
+            <h2 className="text-2xl font-black text-white mb-2">Pedido Registado!</h2>
+            <p className="text-zinc-400 text-sm mb-6">
+              O pedido foi guardado com sucesso e o stock atualizado.
+            </p>
+            <div className="bg-zinc-950 border border-zinc-800 rounded-2xl w-full py-4 mb-8">
+              <span className="block text-[10px] uppercase font-bold text-zinc-500 mb-1">Senha do Pedido</span>
+              <span className="text-4xl font-black text-orange-500 font-mono">#{modalSucesso.numeroPedido}</span>
+            </div>
+            <button 
+              onClick={() => setModalSucesso({ visivel: false, numeroPedido: '' })}
+              className="w-full bg-orange-600 hover:bg-orange-500 text-white font-black py-4 rounded-xl uppercase tracking-widest shadow-lg transition-transform active:scale-95"
+            >
+              OK, Próximo Cliente
+            </button>
           </div>
         </div>
       )}
 
-      {modalComboEdicao && comboSelecionadoParaMontar && (
-        <div className="fixed inset-0 bg-black/80 flex justify-center items-center z-[60] p-4">
-          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl p-6">
-            <h2 className="text-xl font-bold text-orange-500">{comboSelecionadoParaMontar.nome}</h2>
-            <button onClick={() => setModalComboEdicao(false)} className="text-zinc-400 hover:text-white mt-4 mr-4">Cancelar</button>
-            <button onClick={confirmarComboEdicao} className="bg-orange-600 hover:bg-orange-500 px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg">Adicionar Combo</button>
+      {mostrarModalCombo && comboSelecionado && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-50 p-4">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-2xl p-6 flex flex-col max-h-[90vh] relative shadow-2xl">
+            <button onClick={() => setMostrarModalCombo(false)} className="absolute top-4 right-4 text-zinc-400 hover:text-white bg-zinc-800 w-8 h-8 rounded-full flex items-center justify-center">✕</button>
+            <h2 className="text-xl font-bold text-orange-500">{comboSelecionado.nome}</h2>
+            <p className="text-xs text-zinc-400 mt-1">Selecione os sabores clicando nas caixas abaixo.</p>
+            
+            <div className="flex-1 overflow-y-auto space-y-6 mt-6 pr-1 custom-scrollbar">
+              {comboSelecionado.combo_grupos.map((grupo) => {
+                const selecoesDesteGrupo = selecoesCombo[grupo.id] || [];
+                return (
+                  <div key={grupo.id}>
+                    <h3 className="text-xs font-bold text-zinc-300 uppercase mb-3 flex items-center justify-between border-b border-zinc-800 pb-2">
+                      <span>{grupo.nome}</span>
+                      <span className={`px-2 py-0.5 rounded text-[10px] ${selecoesDesteGrupo.length >= grupo.quantidade_maxima ? 'bg-green-500/20 text-green-400' : 'bg-orange-500/20 text-orange-400'}`}>
+                        ({selecoesDesteGrupo.length}/{grupo.quantidade_maxima})
+                      </span>
+                    </h3>
+                    <div className="grid grid-cols-2 gap-3">
+                      {grupo.combo_grupo_produtos.filter(i => i.ativo).map((item) => {
+                        const qtdSelecionadaDesteItem = selecoesDesteGrupo.filter(s => s.produto_id === item.produto_id).length;
+                        const estaSelecionado = qtdSelecionadaDesteItem > 0;
+                        
+                        return (
+                          <button 
+                            key={item.produto_id} type="button" onClick={() => toggleSelecaoCombo(grupo, item)} 
+                            className={`p-4 text-left rounded-xl text-xs border transition-all ${estaSelecionado ? 'bg-orange-600/20 border-orange-500 text-white shadow-[0_0_15px_rgba(249,115,22,0.15)]' : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700'}`}
+                          >
+                            <div className="flex justify-between items-center gap-2">
+                              <span className="block font-medium">{item.produto.nome}</span>
+                              {qtdSelecionadaDesteItem > 1 && (
+                                <span className="bg-orange-500 text-white px-2 py-0.5 rounded text-[10px] font-black shadow-md">
+                                  x{qtdSelecionadaDesteItem}
+                                </span>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="pt-4 border-t border-zinc-800 mt-6">
+              <button type="button" onClick={confirmarMontagemCombo} className="w-full bg-orange-600 hover:bg-orange-700 py-3.5 rounded-xl text-sm font-bold text-white uppercase tracking-widest shadow-lg">Adicionar Combo ao Carrinho</button>
+            </div>
           </div>
         </div>
       )}
