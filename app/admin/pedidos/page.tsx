@@ -3,16 +3,160 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
-export const imprimirReciboTermico = (pedido: any) => {
-  if (typeof window !== 'undefined' && (window as any).imprimirSilencioso) {
-    (window as any).imprimirSilencioso(JSON.stringify(pedido));
-  } else {
-    alert("ERRO: O Motor ESC/POS profissional só funciona dentro do sistema instalado no Windows.");
+const escaparHtml = (valor: any) =>
+  String(valor ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+
+const moedaTalao = (valor: any) => `${Number(valor || 0).toFixed(2)}€`;
+
+const imprimirPeloWindows = (pedido: any) => {
+  if (typeof window === 'undefined') return;
+
+  const itens = Array.isArray(pedido?.itens)
+    ? pedido.itens
+    : Array.isArray(pedido?.itens_pedido)
+      ? pedido.itens_pedido
+      : [];
+
+  const linhasItens = itens.map((item: any) => {
+    const qtd = Number(item.quantidade || 0);
+    const preco = Number(item.preco_unitario || 0);
+    const total = qtd * preco;
+
+    return `
+      <div class="item">
+        <div class="item-nome">${qtd}x ${escaparHtml(item.nome_produto)}</div>
+        <div class="item-valores">
+          <span>${moedaTalao(preco)} cada</span>
+          <strong>${moedaTalao(total)}</strong>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  const taxaEntrega = Number(pedido?.taxa_entrega || 0);
+  const desconto = Number(pedido?.desconto || 0);
+  const total = Number(pedido?.total_geral || 0);
+
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  iframe.style.visibility = 'hidden';
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentWindow?.document;
+  if (!doc) {
+    iframe.remove();
+    alert('Não foi possível abrir a impressão do Windows.');
+    return;
   }
+
+  doc.open();
+  doc.write(`
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>Pedido #${escaparHtml(pedido?.numero_pedido)}</title>
+        <style>
+          @page { size: 80mm auto; margin: 2mm; }
+          * { box-sizing: border-box; }
+          html, body { margin: 0; padding: 0; background: #fff; color: #000; }
+          body {
+            width: 76mm;
+            font-family: "Courier New", Courier, monospace;
+            font-size: 11px;
+            line-height: 1.25;
+            padding: 1mm;
+          }
+          .centro { text-align: center; }
+          .titulo { font-size: 18px; font-weight: 900; }
+          .pedido { font-size: 17px; font-weight: 900; margin: 4px 0; }
+          .linha { border-top: 1px dashed #000; margin: 6px 0; }
+          .dados { margin: 2px 0; word-break: break-word; }
+          .item { margin: 5px 0; page-break-inside: avoid; }
+          .item-nome { font-weight: 700; word-break: break-word; }
+          .item-valores, .total-linha { display: flex; justify-content: space-between; gap: 5px; }
+          .total-geral { font-size: 15px; font-weight: 900; margin-top: 4px; }
+          .rodape { margin-top: 8px; text-align: center; font-size: 10px; }
+        </style>
+      </head>
+      <body>
+        <div class="centro">
+          <div class="titulo">CHEF BATATÔ</div>
+          <div>Talão do Pedido</div>
+          <div class="pedido">#${escaparHtml(pedido?.numero_pedido)}</div>
+        </div>
+
+        <div class="linha"></div>
+
+        <div class="dados"><strong>Canal:</strong> ${escaparHtml(pedido?.canal)}</div>
+        <div class="dados"><strong>Cliente:</strong> ${escaparHtml(pedido?.cliente)}</div>
+        ${pedido?.contacto_cliente ? `<div class="dados"><strong>Contacto:</strong> ${escaparHtml(pedido.contacto_cliente)}</div>` : ''}
+        ${pedido?.endereco ? `<div class="dados"><strong>Morada:</strong> ${escaparHtml(pedido.endereco)}</div>` : ''}
+        <div class="dados"><strong>Pagamento:</strong> ${escaparHtml(pedido?.forma_pagamento)}</div>
+
+        <div class="linha"></div>
+
+        ${linhasItens || '<div>Nenhum item encontrado.</div>'}
+
+        <div class="linha"></div>
+
+        ${desconto > 0 ? `<div class="total-linha"><span>Desconto</span><span>-${moedaTalao(desconto)}</span></div>` : ''}
+        ${taxaEntrega > 0 ? `<div class="total-linha"><span>Entrega</span><span>${moedaTalao(taxaEntrega)}</span></div>` : ''}
+
+        <div class="total-linha total-geral">
+          <span>TOTAL</span>
+          <span>${moedaTalao(total)}</span>
+        </div>
+
+        <div class="linha"></div>
+        <div class="rodape">Obrigado pelo pedido!<br/>Chef Batatô</div>
+      </body>
+    </html>
+  `);
+  doc.close();
+
+  window.setTimeout(() => {
+    try {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+    } finally {
+      window.setTimeout(() => iframe.remove(), 1500);
+    }
+  }, 250);
+};
+
+export const imprimirReciboTermico = async (pedido: any) => {
+  if (typeof window === 'undefined') return;
+
+  const motorEscPos = (window as any).imprimirSilencioso;
+
+  if (typeof motorEscPos === 'function') {
+    try {
+      const resultado = motorEscPos(JSON.stringify(pedido));
+      if (resultado && typeof resultado.then === 'function') {
+        await resultado;
+      }
+      return;
+    } catch (erro) {
+      console.warn('Falha no motor ESC/POS. A usar impressão do Windows...', erro);
+    }
+  }
+
+  imprimirPeloWindows(pedido);
 };
 
 interface ItemPedido { id?: string; produto_id?: string; codigo_produto: string; nome_produto: string; quantidade: number; preco_unitario: number; }
-interface Pedido { id: string; numero_pedido: number; data_pedido: string; cliente: string; canal: string; forma_pagamento: string; entregador: string; taxa_entrega: number; desconto: number; total_geral: number; pago: boolean; itens?: ItemPedido[]; ids_fragmentados?: string[]; criado_em?: string; }
+interface Pedido { id: string; numero_pedido: number; data_pedido: string; cliente: string; canal: string; forma_pagamento: string; entregador: string; taxa_entrega: number; desconto: number; total_geral: number; pago: boolean; data_recebimento?: string | null; itens?: ItemPedido[]; ids_fragmentados?: string[]; criado_em?: string; }
 interface Combo { id: string; codigo: string; nome: string; descricao: string; tipo_preco: 'fixo' | 'desconto' | 'desconto_fixo' | 'item_gratis'; preco_fixo: number | null; preco_glovo?: number | null; preco_whatsapp?: number | null; desconto_percentual: number; desconto_absoluto: number; item_gratis_categoria: string; combo_grupos: any[]; }
 
 const getHojeLisboa = () => {
@@ -38,6 +182,7 @@ export default function GestaoPedidos() {
   const [ordemDirecao, setOrdemDirecao] = useState<'desc' | 'asc'>('desc');
   const [modalEditar, setModalEditar] = useState(false);
   const [pedidoEditando, setPedidoEditando] = useState<Pedido | null>(null);
+  const [dataRecebimentoEdicao, setDataRecebimentoEdicao] = useState(getHojeLisboa());
   const [salvando, setSalvando] = useState(false);
   const [modalComboEdicao, setModalComboEdicao] = useState(false);
   const [comboSelecionadoParaMontar, setComboSelecionadoParaMontar] = useState<Combo | null>(null);
@@ -117,6 +262,7 @@ export default function GestaoPedidos() {
             if (!existente.entregador && linha.entregador) existente.entregador = linha.entregador;
             if (!existente.cliente && linha.cliente) existente.cliente = linha.cliente;
             if (linha.pago === true) existente.pago = true;
+            if (linha.data_recebimento) existente.data_recebimento = linha.data_recebimento;
             existente.taxa_entrega = Math.max(existente.taxa_entrega, taxa);
             existente.desconto = Math.max(existente.desconto, descontoLinha);
           }
@@ -141,19 +287,76 @@ export default function GestaoPedidos() {
   useEffect(() => {
     buscarPedidosDaBase();
     
-    const canalAtualizacao = supabase.channel('schema-db-changes').on('postgres_changes', { event: '*', schema: 'public', table: 'pedidos' }, () => { 
-      buscarPedidosDaBase(); 
-    }).subscribe();
+    const canalAtualizacao = supabase
+      .channel('pedidos-tempo-real')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pedidos' }, buscarPedidosDaBase)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'itens_pedido' }, buscarPedidosDaBase)
+      .subscribe();
     
     return () => { supabase.removeChannel(canalAtualizacao); };
   }, [buscarPedidosDaBase]);
 
-  const liquidarCaderninho = async (pedidoNum: number) => {
+  const liquidarCaderninho = async (
+    pedido: Pedido,
+    formaRecebimento: 'Dinheiro' | 'MB Way'
+  ) => {
+    const dataRecebimento = getHojeLisboa();
+    const valorRecebido = Number(pedido.total_geral || 0);
+    const entraNoCaixaFisico = formaRecebimento === 'Dinheiro';
+
+    if (valorRecebido <= 0) {
+      alert('Não foi possível liquidar: o pedido não possui um valor válido.');
+      return;
+    }
+
+    const confirmou = confirm(
+      `Confirmar recebimento do pedido #${pedido.numero_pedido}?\n\n` +
+      `Valor: ${valorRecebido.toFixed(2)}€\n` +
+      `Forma: ${formaRecebimento}\n` +
+      (entraNoCaixaFisico
+        ? `Entrada no caixa físico: ${dataRecebimento}\n\n`
+        : `Recebimento por MB Way: não altera o dinheiro físico do caixa.\n\n`) +
+      'A venda continuará com a data original do pedido.'
+    );
+
+    if (!confirmou) return;
+
     try {
-      const { error } = await supabase.from('pedidos').update({ pago: true }).eq('numero_pedido', pedidoNum);
-      if (error) throw error;
-      setPedidos(prev => prev.map(p => p.numero_pedido === pedidoNum ? { ...p, pago: true } : p));
-    } catch (err) { alert('Erro ao liquidar pagamento.'); }
+      // O trigger do Supabase cria, atualiza ou remove a entrada do caixa
+      // dentro da mesma operação. A página não duplica regras financeiras.
+      const { error: erroPedido } = await supabase
+        .from('pedidos')
+        .update({
+          pago: true,
+          forma_pagamento: formaRecebimento,
+          data_recebimento: dataRecebimento,
+        })
+        .eq('numero_pedido', pedido.numero_pedido);
+
+      if (erroPedido) throw erroPedido;
+
+      setPedidos(prev => prev.map(p =>
+        p.numero_pedido === pedido.numero_pedido
+          ? { ...p, pago: true, forma_pagamento: formaRecebimento, data_recebimento: dataRecebimento }
+          : p
+      ));
+
+      if (entraNoCaixaFisico) {
+        alert(
+          `Pedido #${pedido.numero_pedido} liquidado com sucesso.\n` +
+          `${valorRecebido.toFixed(2)}€ entraram no caixa de ${dataRecebimento}.`
+        );
+      } else {
+        alert(
+          `Pedido #${pedido.numero_pedido} liquidado por MB Way.\n` +
+          `${valorRecebido.toFixed(2)}€ foram recebidos em ${dataRecebimento}.\n` +
+          'O dinheiro físico do caixa não foi alterado.'
+        );
+      }
+    } catch (err) {
+      console.error('Erro ao liquidar pagamento do caderninho:', err);
+      alert('Erro ao liquidar pagamento. Nenhuma entrada duplicada foi criada.');
+    }
   };
 
   // =========================================================================================
@@ -238,6 +441,11 @@ export default function GestaoPedidos() {
 
   const abrirEdicao = (pedido: Pedido) => {
     setPedidoEditando(JSON.parse(JSON.stringify(pedido)));
+    setDataRecebimentoEdicao(
+      pedido.data_recebimento
+        ? extrairDataEstatica(pedido.data_recebimento)
+        : getHojeLisboa()
+    );
     setModalEditar(true);
   };
 
@@ -382,15 +590,32 @@ export default function GestaoPedidos() {
       const subtotalItens = pedidoEditando.itens?.reduce((acc, item) => acc + (item.quantidade * item.preco_unitario), 0) || 0;
       const novoTotal = Math.max(0, subtotalItens + Number(pedidoEditando.taxa_entrega) - Number(pedidoEditando.desconto || 0));
       const principalId = pedidoEditando.ids_fragmentados?.[0] || pedidoEditando.id;
+      const idsRelacionados = pedidoEditando.ids_fragmentados || [pedidoEditando.id];
 
       const { error: erroPrincipal } = await supabase.from('pedidos').update({
         cliente: pedidoEditando.cliente, canal: pedidoEditando.canal, forma_pagamento: pedidoEditando.forma_pagamento,
         entregador: pedidoEditando.entregador || null, taxa_entrega: pedidoEditando.taxa_entrega,
-        desconto: pedidoEditando.desconto || 0, pago: pedidoEditando.pago, total_geral: novoTotal
+        desconto: pedidoEditando.desconto || 0, pago: pedidoEditando.pago, total_geral: novoTotal,
+        data_recebimento: pedidoEditando.pago ? dataRecebimentoEdicao : null
       }).eq('id', principalId);
       if (erroPrincipal) throw erroPrincipal;
 
-      const idsRelacionados = pedidoEditando.ids_fragmentados || [pedidoEditando.id];
+      // A forma de pagamento e o estado precisam ficar iguais em todos os
+      // fragmentos que pertencem ao mesmo número de pedido.
+      const { error: erroFragmentos } = await supabase
+        .from('pedidos')
+        .update({
+          forma_pagamento: pedidoEditando.forma_pagamento,
+          pago: pedidoEditando.pago,
+          data_recebimento: pedidoEditando.pago ? dataRecebimentoEdicao : null,
+        })
+        .in('id', idsRelacionados);
+
+      if (erroFragmentos) throw erroFragmentos;
+
+      // A sincronização Pedidos -> Caixa é feita pelo trigger no Supabase.
+      // Assim funciona mesmo quando a forma já estava como Dinheiro.
+
       await supabase.from('itens_pedido').delete().in('pedido_id', idsRelacionados);
 
       if (pedidoEditando.itens && pedidoEditando.itens.length > 0) {
@@ -509,10 +734,31 @@ export default function GestaoPedidos() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
             {pedidosExibidos.map(ped => (
               <div key={ped.id} className="bg-zinc-900 border border-zinc-800/80 rounded-2xl p-4 flex flex-col justify-between shadow-md hover:border-zinc-700/60 transition-all relative group">
-                <div className="absolute top-3 right-3 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => imprimirReciboTermico(ped)} className="w-7 h-7 bg-zinc-800 hover:bg-green-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Imprimir Talão">🖨️</button>
-                  <button onClick={() => abrirEdicao(ped)} className="w-7 h-7 bg-zinc-800 hover:bg-blue-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Editar Informações e Itens/Combos">✏️</button>
-                  <button onClick={() => excluirPedido(ped.numero_pedido, ped.ids_fragmentados!)} className="w-7 h-7 bg-zinc-800 hover:bg-red-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Excluir Pedido">🗑️</button>
+                <div className="absolute top-3 right-3 flex gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => void imprimirReciboTermico(ped)}
+                    className="h-7 px-2.5 bg-green-700 hover:bg-green-600 rounded-lg flex items-center justify-center gap-1 text-[10px] font-bold text-white transition-colors"
+                    title="Imprimir Talão"
+                  >
+                    🖨️ Imprimir
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => abrirEdicao(ped)}
+                    className="w-7 h-7 bg-zinc-800 hover:bg-blue-600 rounded-lg flex items-center justify-center text-xs transition-colors"
+                    title="Editar Informações e Itens/Combos"
+                  >
+                    ✏️
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => excluirPedido(ped.numero_pedido, ped.ids_fragmentados!)}
+                    className="w-7 h-7 bg-zinc-800 hover:bg-red-600 rounded-lg flex items-center justify-center text-xs transition-colors"
+                    title="Excluir Pedido"
+                  >
+                    🗑️
+                  </button>
                 </div>
                 <div>
                   <div className="flex justify-between items-start gap-2 border-b border-zinc-800/60 pb-3 mb-3 pr-24">
@@ -548,9 +794,20 @@ export default function GestaoPedidos() {
                     <span className="text-base font-black text-orange-500">{ped.total_geral.toFixed(2)}€</span>
                   </div>
                   {!ped.pago && (
-                    <button onClick={() => liquidarCaderninho(ped.numero_pedido)} className="w-full mt-2 bg-green-600 hover:bg-green-700 text-white text-[10px] font-bold py-1.5 rounded-lg">
-                      ✓ Recebido
-                    </button>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => liquidarCaderninho(ped, 'Dinheiro')}
+                        className="rounded-lg bg-green-600 py-1.5 text-[10px] font-bold text-white hover:bg-green-700"
+                      >
+                        💶 Dinheiro
+                      </button>
+                      <button
+                        onClick={() => liquidarCaderninho(ped, 'MB Way')}
+                        className="rounded-lg bg-blue-600 py-1.5 text-[10px] font-bold text-white hover:bg-blue-700"
+                      >
+                        📱 MB Way
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -575,6 +832,48 @@ export default function GestaoPedidos() {
 
             <form onSubmit={salvarEdicao} className="space-y-4">
               <input value={pedidoEditando.cliente || ''} onChange={e => setPedidoEditando({ ...pedidoEditando, cliente: e.target.value })} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm" placeholder="Nome do Cliente" />
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <label className="space-y-1">
+                  <span className="text-[10px] font-black uppercase text-zinc-500">Forma de pagamento</span>
+                  <select
+                    value={pedidoEditando.forma_pagamento || 'Caderninho'}
+                    onChange={e => setPedidoEditando({
+                      ...pedidoEditando,
+                      forma_pagamento: e.target.value,
+                    })}
+                    className="w-full rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-sm"
+                  >
+                    <option value="Caderninho">Caderninho</option>
+                    <option value="Dinheiro">Dinheiro</option>
+                    <option value="MB Way">MB Way</option>
+                  </select>
+                </label>
+
+                <label className="space-y-1">
+                  <span className="text-[10px] font-black uppercase text-zinc-500">Estado</span>
+                  <select
+                    value={pedidoEditando.pago ? 'pago' : 'pendente'}
+                    onChange={e => setPedidoEditando({
+                      ...pedidoEditando,
+                      pago: e.target.value === 'pago',
+                    })}
+                    className="w-full rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-sm"
+                  >
+                    <option value="pendente">Pendente</option>
+                    <option value="pago">Pago</option>
+                  </select>
+                </label>
+
+                <label className="space-y-1">
+                  <span className="text-[10px] font-black uppercase text-zinc-500">Data do recebimento</span>
+                  <input
+                    type="date"
+                    value={dataRecebimentoEdicao}
+                    onChange={e => setDataRecebimentoEdicao(e.target.value)}
+                    className="w-full rounded-xl border border-zinc-800 bg-zinc-950 p-3 text-sm"
+                  />
+                </label>
+              </div>
               <div className="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
                 {pedidoEditando.itens?.map((item, idx) => (
                   <div key={idx} className="flex items-center gap-2 bg-zinc-950 p-2 rounded-xl text-sm">
