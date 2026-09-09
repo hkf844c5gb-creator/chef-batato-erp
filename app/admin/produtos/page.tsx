@@ -289,15 +289,15 @@ function ProdutosTab() {
               <div className="grid grid-cols-3 gap-4 p-4 bg-zinc-950 rounded-xl border border-zinc-800">
                 <div>
                   <label className="block text-[10px] font-bold text-zinc-400 mb-1">PREÇO BALCÃO (€)</label>
-                  <input type="number" step="0.10" required value={precoCardapio} onChange={e => setPrecoCardapio(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white outline-none" />
+                  <input type="number" step="0.01" required value={precoCardapio} onChange={e => setPrecoCardapio(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white outline-none" />
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold text-zinc-400 mb-1">PREÇO WHATSAPP (€)</label>
-                  <input type="number" step="0.10" value={precoWhatsapp} onChange={e => setPrecoWhatsapp(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white outline-none" />
+                  <input type="number" step="0.01" value={precoWhatsapp} onChange={e => setPrecoWhatsapp(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white outline-none" />
                 </div>
                 <div>
                   <label className="block text-[10px] font-bold text-zinc-400 mb-1">PREÇO GLOVO (€)</label>
-                  <input type="number" step="0.10" value={precoGlovo} onChange={e => setPrecoGlovo(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white outline-none" />
+                  <input type="number" step="0.01" value={precoGlovo} onChange={e => setPrecoGlovo(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-sm text-white outline-none" />
                 </div>
               </div>
 
@@ -736,7 +736,7 @@ function CombosTab() {
                                         <span className="text-[9px] font-bold text-zinc-500 uppercase">Taxa Extra:</span>
                                         <input 
                                           type="number" 
-                                          step="0.10"
+                                          step="0.01"
                                           min="0"
                                           value={valorTaxa}
                                           onChange={(e) => handleTaxaChange(grp.id, prod.id, e.target.value)}
@@ -810,9 +810,9 @@ function CombosTab() {
                   </select>
                 </div>
                 {tipoPreco === 'desconto' && (<div><label className="block text-xs font-bold text-zinc-400 mb-1">PERCENTAGEM DE DESCONTO (%)</label><input type="number" step="0.1" min="0" max="100" required value={descontoPercentual} onChange={e => setDescontoPercentual(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2.5 text-sm text-white outline-none" /></div>)}
-                {tipoPreco === 'desconto_fixo' && (<div><label className="block text-xs font-bold text-zinc-400 mb-1">VALOR EXATO A DESCONTAR (€)</label><input type="number" step="0.10" min="0" required value={descontoAbsoluto} onChange={e => setDescontoAbsoluto(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2.5 text-sm text-white outline-none" /></div>)}
+                {tipoPreco === 'desconto_fixo' && (<div><label className="block text-xs font-bold text-zinc-400 mb-1">VALOR EXATO A DESCONTAR (€)</label><input type="number" step="0.01" min="0" required value={descontoAbsoluto} onChange={e => setDescontoAbsoluto(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2.5 text-sm text-white outline-none" /></div>)}
                 {tipoPreco === 'item_gratis' && (<div><label className="block text-xs font-bold text-zinc-400 mb-1">QUAL CATEGORIA SERÁ GRÁTIS NO COMBO?</label><select value={itemGratisCategoria} onChange={e => setItemGratisCategoria(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2.5 text-sm text-white outline-none"><option value="bebida">Bebida Grátis</option><option value="sobremesa">Sobremesa By BrownieRia Grátis</option><option value="batata">Batata Grátis</option><option value="mais_barato">Descontar o Item mais barato</option></select></div>)}
-                {tipoPreco === 'fixo' && (<div><label className="block text-xs font-bold text-zinc-400 mb-1">PREÇO FIXO FINAL (€)</label><input type="number" step="0.10" min="0" required value={precoFixo} onChange={e => setPrecoFixo(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2.5 text-sm text-white outline-none" /></div>)}
+                {tipoPreco === 'fixo' && (<div><label className="block text-xs font-bold text-zinc-400 mb-1">PREÇO FIXO FINAL (€)</label><input type="number" step="0.01" min="0" required value={precoFixo} onChange={e => setPrecoFixo(e.target.value)} className="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2.5 text-sm text-white outline-none" /></div>)}
               </div>
               <div className="flex gap-3 pt-2">
                 <button type="button" onClick={() => setModalAberto(false)} className="flex-1 bg-zinc-800 hover:bg-zinc-700 py-3 rounded-xl text-sm font-bold text-zinc-300">Cancelar</button>
