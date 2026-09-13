@@ -221,6 +221,32 @@ function chaveNegocio(fornecedor: string, numeroDocumento: string, data: string)
   ].join('|');
 }
 
+function inferirFornecedorPelaDescricao(descricao: string) {
+  const texto = normalizarTexto(descricao);
+
+  if (texto.includes('bemol')) return 'Bemol';
+
+  if (texto.includes('recheio')) return 'Recheio Cash & Carry';
+
+  if (
+    texto.includes('facebook') ||
+    texto.includes('facebk')
+  ) {
+    return 'Facebook';
+  }
+
+  if (
+    texto.includes('meta pay') ||
+    texto.includes('meta platforms') ||
+    texto === 'meta' ||
+    texto.startsWith('meta ')
+  ) {
+    return 'Meta';
+  }
+
+  return '';
+}
+
 function converterDespesaEmGasto(registo: DespesaRow): Gasto {
   const descricao = registo.descricao?.trim() || 'Gasto sem descrição';
   const marcadorFatura = ' 📄 ';
@@ -271,10 +297,12 @@ function converterDespesaEmGasto(registo: DespesaRow): Gasto {
     }
   }
 
+  const fornecedorInferido = inferirFornecedorPelaDescricao(descricao);
+
   return {
     id: registo.id,
     nome: descricao,
-    fornecedor: 'Sem fornecedor',
+    fornecedor: fornecedorInferido || 'Sem fornecedor',
     nifFornecedor: '',
     numeroDocumento: 'Gasto avulso',
     quantidade: 1,
