@@ -67,32 +67,104 @@ const imprimirPeloWindows = (pedido: any) => {
         <meta charset="utf-8" />
         <title>Pedido #${escaparHtml(pedido?.numero_pedido)}</title>
         <style>
-          @page { size: 80mm auto; margin: 2mm; }
+          @page { size: 80mm auto; margin: 1.5mm; }
           * { box-sizing: border-box; }
           html, body { margin: 0; padding: 0; background: #fff; color: #000; }
+
           body {
             width: 76mm;
-            font-family: "Courier New", Courier, monospace;
-            font-size: 11px;
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 15px;
+            font-weight: 700;
             line-height: 1.25;
             padding: 1mm;
+            -webkit-font-smoothing: none;
+            text-rendering: geometricPrecision;
           }
+
           .centro { text-align: center; }
-          .titulo { font-size: 18px; font-weight: 900; }
-          .pedido { font-size: 17px; font-weight: 900; margin: 4px 0; }
-          .linha { border-top: 1px dashed #000; margin: 6px 0; }
-          .dados { margin: 2px 0; word-break: break-word; }
-          .item { margin: 5px 0; page-break-inside: avoid; }
-          .item-nome { font-weight: 700; word-break: break-word; }
-          .item-valores, .total-linha { display: flex; justify-content: space-between; gap: 5px; }
-          .total-geral { font-size: 15px; font-weight: 900; margin-top: 4px; }
-          .rodape { margin-top: 8px; text-align: center; font-size: 10px; }
+
+          .titulo {
+            font-size: 26px;
+            font-weight: 900;
+            letter-spacing: 0.2px;
+          }
+
+          .pedido {
+            font-size: 30px;
+            font-weight: 900;
+            line-height: 1;
+            margin: 6px 0;
+          }
+
+          .linha {
+            border-top: 2px dashed #000;
+            margin: 8px 0;
+          }
+
+          .dados {
+            margin: 3px 0;
+            word-break: break-word;
+            font-size: 14px;
+            font-weight: 800;
+          }
+
+          .item {
+            margin: 8px 0;
+            page-break-inside: avoid;
+          }
+
+          .item-nome {
+            font-size: 16px;
+            font-weight: 900;
+            line-height: 1.2;
+            word-break: break-word;
+          }
+
+          .item-valores {
+            display: flex;
+            justify-content: space-between;
+            gap: 5px;
+            margin-top: 2px;
+            font-size: 14px;
+            font-weight: 800;
+          }
+
+          .item-valores strong {
+            font-weight: 900;
+          }
+
+          .total-linha {
+            display: flex;
+            justify-content: space-between;
+            gap: 5px;
+            font-size: 15px;
+            font-weight: 800;
+            margin: 3px 0;
+          }
+
+          .total-geral {
+            font-size: 24px;
+            font-weight: 900;
+            margin-top: 7px;
+          }
+
+          .rodape {
+            margin-top: 10px;
+            text-align: center;
+            font-size: 13px;
+            font-weight: 800;
+          }
+
+          strong {
+            font-weight: 900;
+          }
         </style>
       </head>
       <body>
         <div class="centro">
           <div class="titulo">CHEF BATATÔ</div>
-          <div>Talão do Pedido</div>
+          <div style="font-size:14px;font-weight:800;">Talão do Pedido</div>
           <div class="pedido">#${escaparHtml(pedido?.numero_pedido)}</div>
         </div>
 
