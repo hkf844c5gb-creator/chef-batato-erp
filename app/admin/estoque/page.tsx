@@ -37,6 +37,7 @@ export default function GestaoEstoqueProdutos() {
 
   // Modais Originais
   const [modalRepor, setModalRepor] = useState<ProdutoEstoque | null>(null);
+  const [modalPerda, setModalPerda] = useState<ProdutoEstoque | null>(null);
   const [modalAlerta, setModalAlerta] = useState<ProdutoEstoque | null>(null);
   const [modalHistorico, setModalHistorico] = useState<ProdutoEstoque | null>(null);
   const [historicoProduto, setHistoricoProduto] = useState<MovimentoKardex[]>([]);
@@ -53,6 +54,9 @@ export default function GestaoEstoqueProdutos() {
   const [qtdRepor, setQtdRepor] = useState('');
   const [dataRepor, setDataRepor] = useState(() => new Date().toISOString().split('T')[0]);
   const [motivoRepor, setMotivoRepor] = useState(''); // NOVO CAMPO DE MOTIVO
+  const [qtdPerda, setQtdPerda] = useState('');
+  const [dataPerda, setDataPerda] = useState(() => new Date().toISOString().split('T')[0]);
+  const [motivoPerda, setMotivoPerda] = useState('');
   const [novoAlerta, setNovoAlerta] = useState('');
   const [processando, setProcessando] = useState(false);
 
@@ -241,6 +245,65 @@ export default function GestaoEstoqueProdutos() {
       carregarDados();
     } catch (err: any) {
       alert(`Erro ao repor stock: ${err.message}`);
+    } finally {
+      setProcessando(false);
+    }
+  };
+
+  const registarPerdaStock = async () => {
+    if (!modalPerda || !qtdPerda || Number(qtdPerda) <= 0) return;
+
+    const quantidade = Number(qtdPerda);
+    const stockAtual = Number(modalPerda.estoque_atual || 0);
+
+    if (quantidade > stockAtual) {
+      alert(`Não pode retirar ${quantidade} unidades. O estoque atual é ${stockAtual}.`);
+      return;
+    }
+
+    if (!motivoPerda.trim()) {
+      alert('Informe o motivo da perda/devolução.');
+      return;
+    }
+
+    setProcessando(true);
+
+    try {
+      const novoStock = stockAtual - quantidade;
+
+      const { error: errUpdate } = await supabase
+        .from('produtos')
+        .update({ estoque_atual: novoStock })
+        .eq('id', modalPerda.id);
+
+      if (errUpdate) throw errUpdate;
+
+      const horaAtual = new Date().toISOString().split('T')[1] || '00:00:00.000Z';
+      const dataFinalMovimento = `${dataPerda}T${horaAtual}`;
+
+      const { error: errInsert } = await supabase
+        .from('movimentos_estoque')
+        .insert([{
+          produto_id: modalPerda.id,
+          nome_produto: modalPerda.nome,
+          tipo_movimento: 'SAÍDA',
+          quantidade,
+          saldo_atualizado: novoStock,
+          origem: 'PERDA / DEVOLUÇÃO',
+          observacoes: `${motivoPerda.trim()} (Data Registo: ${dataPerda})`,
+          data_movimento: dataFinalMovimento
+        }]);
+
+      if (errInsert) throw errInsert;
+
+      alert(`✅ ${quantidade} unidade(s) de ${modalPerda.nome} retiradas do estoque.`);
+
+      setModalPerda(null);
+      setQtdPerda('');
+      setMotivoPerda('');
+      carregarDados();
+    } catch (err: any) {
+      alert(`Erro ao registar perda: ${err.message}`);
     } finally {
       setProcessando(false);
     }
@@ -462,6 +525,18 @@ export default function GestaoEstoqueProdutos() {
                           <button onClick={() => verHistoricoProduto(item)} className="text-[9px] text-zinc-400 hover:text-blue-400 uppercase font-bold flex items-center gap-1 bg-zinc-950 hover:bg-zinc-800 px-2 py-1 rounded border border-zinc-800 transition-all">
                             🕒 Histórico
                           </button>
+                          <button
+                            onClick={() => {
+                              setModalPerda(item);
+                              setQtdPerda('');
+                              setMotivoPerda('');
+                              setDataPerda(new Date().toISOString().split('T')[0]);
+                            }}
+                            disabled={!item.ativo || stockAtual <= 0}
+                            className="text-[9px] text-zinc-400 hover:text-red-400 uppercase font-bold flex items-center gap-1 bg-zinc-950 hover:bg-red-950/30 px-2 py-1 rounded border border-zinc-800 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                          >
+                            ⚠️ Perda
+                          </button>
                         </div>
 
                       </div>
@@ -584,6 +659,84 @@ export default function GestaoEstoqueProdutos() {
                   🗑️ Excluir Item Definitivamente
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {modalPerda && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-[60] p-4">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-md rounded-3xl p-6 shadow-2xl relative">
+            <button
+              onClick={() => setModalPerda(null)}
+              className="absolute top-5 right-5 text-zinc-400 hover:text-white bg-zinc-800 w-8 h-8 rounded-full flex items-center justify-center"
+            >
+              ✕
+            </button>
+
+            <h2 className="text-lg font-black text-white pr-8">⚠️ Registar Perda / Devolução</h2>
+            <p className="text-xs text-red-400 mb-6 font-bold">{modalPerda.nome}</p>
+
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4 mb-5">
+              <span className="text-[10px] uppercase font-bold text-zinc-500">Estoque atual</span>
+              <p className="text-2xl font-black font-mono text-white mt-1">
+                {modalPerda.estoque_atual || 0} un
+              </p>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
+                  Data
+                </label>
+                <input
+                  type="date"
+                  value={dataPerda}
+                  onChange={(e) => setDataPerda(e.target.value)}
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 outline-none focus:border-red-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
+                  Quantidade a retirar
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max={modalPerda.estoque_atual || 0}
+                  step="1"
+                  value={qtdPerda}
+                  onChange={(e) => setQtdPerda(e.target.value)}
+                  placeholder="Quantas unidades?"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-lg font-black text-red-400 outline-none focus:border-red-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
+                  Motivo da perda / devolução
+                </label>
+                <input
+                  type="text"
+                  value={motivoPerda}
+                  onChange={(e) => setMotivoPerda(e.target.value)}
+                  placeholder="Ex: Vencido e devolvido ao fornecedor"
+                  className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 outline-none focus:border-red-500"
+                />
+              </div>
+
+              <p className="text-[10px] text-zinc-500 leading-relaxed">
+                Esta operação apenas retira as unidades do estoque e regista o movimento no histórico.
+              </p>
+
+              <button
+                onClick={registarPerdaStock}
+                disabled={processando}
+                className="w-full bg-red-600 hover:bg-red-500 text-white font-black py-4 rounded-xl text-sm uppercase tracking-widest shadow-lg disabled:opacity-50"
+              >
+                {processando ? 'A gravar...' : 'Confirmar Perda / Devolução'}
+              </button>
             </div>
           </div>
         </div>
