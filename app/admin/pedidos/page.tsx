@@ -4,11 +4,290 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { createBrowserClient } from '@supabase/ssr';
 
 export const imprimirReciboTermico = (pedido: any) => {
-  if (typeof window !== 'undefined' && (window as any).imprimirSilencioso) {
-    (window as any).imprimirSilencioso(JSON.stringify(pedido));
-  } else {
-    alert("ERRO: O Motor ESC/POS profissional só funciona dentro do sistema instalado no Windows.");
+  if (typeof window === 'undefined') return;
+
+  const itens = Array.isArray(pedido?.itens) ? pedido.itens : [];
+
+  const escaparHtml = (valor: any) =>
+    String(valor ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+
+  const valorFormatado = (valor: number) =>
+    `${Number(valor || 0).toFixed(2).replace('.', ',')} €`;
+
+  const subtotal = itens.reduce(
+    (acc: number, item: any) =>
+      acc +
+      Number(item?.quantidade || 0) *
+        Number(item?.preco_unitario || 0),
+    0
+  );
+
+  const desconto = Number(pedido?.desconto || 0);
+  const taxaEntrega = Number(pedido?.taxa_entrega || 0);
+  const total = Number(pedido?.total_geral || 0);
+
+  const linhasItens = itens
+    .map((item: any) => {
+      const quantidade = Number(item?.quantidade || 0);
+      const precoUnitario = Number(item?.preco_unitario || 0);
+      const totalItem = quantidade * precoUnitario;
+
+      return `
+        <tr>
+          <td class="qtd">${quantidade}x</td>
+          <td class="item-nome">${escaparHtml(item?.nome_produto)}</td>
+          <td class="item-valor">${valorFormatado(totalItem)}</td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  const iframe = document.createElement('iframe');
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = '0';
+  iframe.style.visibility = 'hidden';
+  document.body.appendChild(iframe);
+
+  const doc = iframe.contentWindow?.document;
+
+  if (!doc) {
+    iframe.remove();
+    alert('Não foi possível abrir a impressão.');
+    return;
   }
+
+  doc.open();
+  doc.write(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>Pedido #${escaparHtml(pedido?.numero_pedido || '---')}</title>
+
+        <style>
+          @page {
+            margin: 0;
+            size: 80mm auto;
+          }
+
+          * {
+            box-sizing: border-box;
+          }
+
+          html,
+          body {
+            margin: 0;
+            padding: 0;
+            background: white;
+            color: black;
+          }
+
+          body {
+            width: 72mm;
+            padding: 3mm;
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 15px;
+            font-weight: 700;
+            line-height: 1.25;
+            -webkit-font-smoothing: none;
+            text-rendering: geometricPrecision;
+          }
+
+          .centro {
+            text-align: center;
+          }
+
+          .titulo {
+            font-size: 27px;
+            font-weight: 900;
+            margin: 0;
+            padding-bottom: 4px;
+            border-bottom: 3px solid black;
+          }
+
+          .pedido-numero {
+            font-size: 38px;
+            font-weight: 900;
+            line-height: 1;
+            margin: 8px 0 3px 0;
+          }
+
+          .conferencia {
+            font-size: 19px;
+            font-weight: 900;
+            margin-bottom: 10px;
+          }
+
+          .linha {
+            border-top: 2px dashed black;
+            margin: 8px 0;
+          }
+
+          .dados {
+            font-size: 14px;
+            font-weight: 800;
+            line-height: 1.35;
+            margin: 2px 0;
+            word-break: break-word;
+          }
+
+          table {
+            width: 100%;
+            border-collapse: collapse;
+          }
+
+          td {
+            font-size: 15px;
+            font-weight: 800;
+          }
+
+          .qtd {
+            width: 28px;
+            vertical-align: top;
+            font-size: 16px;
+            font-weight: 900;
+            padding-bottom: 8px;
+          }
+
+          .item-nome {
+            vertical-align: top;
+            padding-bottom: 8px;
+            padding-right: 4px;
+            font-size: 15px;
+            font-weight: 800;
+            line-height: 1.15;
+            word-break: break-word;
+          }
+
+          .item-valor {
+            vertical-align: top;
+            text-align: right;
+            white-space: nowrap;
+            padding-bottom: 8px;
+            font-size: 15px;
+            font-weight: 900;
+          }
+
+          .total-linha {
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+            margin: 3px 0;
+            font-size: 15px;
+            font-weight: 800;
+          }
+
+          .total-geral {
+            font-size: 26px;
+            font-weight: 900;
+            margin-top: 8px;
+          }
+
+          .rodape {
+            margin-top: 12px;
+            padding-top: 8px;
+            border-top: 2px solid black;
+            text-align: center;
+            font-size: 13px;
+            font-weight: 800;
+          }
+
+          strong {
+            font-weight: 900;
+          }
+        </style>
+      </head>
+
+      <body>
+        <div class="centro">
+          <div class="titulo">CHEF BATATÔ</div>
+          <div class="pedido-numero">#${escaparHtml(pedido?.numero_pedido || '---')}</div>
+          <div class="conferencia">CONFERÊNCIA</div>
+        </div>
+
+        <div class="dados"><strong>Canal:</strong> ${escaparHtml(pedido?.canal || '---')}</div>
+        <div class="dados"><strong>Cliente:</strong> ${escaparHtml(pedido?.cliente || 'Consumidor Final')}</div>
+        <div class="dados"><strong>Pagamento:</strong> ${escaparHtml(pedido?.forma_pagamento || '---')}</div>
+        ${
+          pedido?.entregador
+            ? `<div class="dados"><strong>Estafeta:</strong> ${escaparHtml(pedido.entregador)}</div>`
+            : ''
+        }
+
+        <div class="linha"></div>
+
+        <table>
+          ${
+            linhasItens ||
+            `<tr><td style="text-align:center;">Sem itens</td></tr>`
+          }
+        </table>
+
+        <div class="linha"></div>
+
+        <div class="total-linha">
+          <span>Subtotal</span>
+          <span>${valorFormatado(subtotal)}</span>
+        </div>
+
+        ${
+          desconto > 0
+            ? `
+          <div class="total-linha">
+            <span>Desconto</span>
+            <span>-${valorFormatado(desconto)}</span>
+          </div>
+        `
+            : ''
+        }
+
+        ${
+          taxaEntrega > 0
+            ? `
+          <div class="total-linha">
+            <span>Entrega</span>
+            <span>${valorFormatado(taxaEntrega)}</span>
+          </div>
+        `
+            : ''
+        }
+
+        <div class="total-linha total-geral">
+          <span>TOTAL</span>
+          <span>${valorFormatado(total)}</span>
+        </div>
+
+        <div class="rodape">
+          Chef Batatô
+        </div>
+
+        <div style="height:30px;">&nbsp;</div>
+      </body>
+    </html>
+  `);
+  doc.close();
+
+  window.setTimeout(() => {
+    try {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+    } finally {
+      window.setTimeout(() => {
+        if (iframe.parentNode) {
+          iframe.parentNode.removeChild(iframe);
+        }
+      }, 1500);
+    }
+  }, 300);
 };
 
 interface ItemPedido { id?: string; produto_id?: string; codigo_produto: string; nome_produto: string; quantidade: number; preco_unitario: number; }
@@ -510,7 +789,15 @@ export default function GestaoPedidos() {
             {pedidosExibidos.map(ped => (
               <div key={ped.id} className="bg-zinc-900 border border-zinc-800/80 rounded-2xl p-4 flex flex-col justify-between shadow-md hover:border-zinc-700/60 transition-all relative group">
                 <div className="absolute top-3 right-3 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={() => imprimirReciboTermico(ped)} className="w-7 h-7 bg-zinc-800 hover:bg-green-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Imprimir Talão">🖨️</button>
+                  <button
+                    type="button"
+                    onClick={() => imprimirReciboTermico(ped)}
+                    className="w-7 h-7 bg-zinc-800 hover:bg-green-600 rounded-lg flex items-center justify-center text-sm transition-colors"
+                    title="Imprimir Talão"
+                    aria-label="Imprimir Talão"
+                  >
+                    🖨️
+                  </button>
                   <button onClick={() => abrirEdicao(ped)} className="w-7 h-7 bg-zinc-800 hover:bg-blue-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Editar Informações e Itens/Combos">✏️</button>
                   <button onClick={() => excluirPedido(ped.numero_pedido, ped.ids_fragmentados!)} className="w-7 h-7 bg-zinc-800 hover:bg-red-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Excluir Pedido">🗑️</button>
                 </div>
