@@ -16,38 +16,31 @@ export const imprimirReciboTermico = (pedido: any) => {
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
 
-  const valorFormatado = (valor: number) =>
-    `${Number(valor || 0).toFixed(2).replace('.', ',')} €`;
+  const moedaTalao = (valor: any) =>
+    `${Number(valor || 0).toFixed(2).replace('.', ',')}€`;
 
-  const subtotal = itens.reduce(
-    (acc: number, item: any) =>
-      acc +
-      Number(item?.quantidade || 0) *
-        Number(item?.preco_unitario || 0),
-    0
-  );
+  const linhasItens = itens.map((item: any) => {
+    const qtd = Number(item?.quantidade || 0);
+    const preco = Number(item?.preco_unitario || 0);
+    const totalItem = qtd * preco;
+
+    return `
+      <div class="item">
+        <div class="item-nome">${qtd}x ${escaparHtml(item?.nome_produto || '')}</div>
+        <div class="item-valores">
+          <span>${moedaTalao(preco)} cada</span>
+          <strong>${moedaTalao(totalItem)}</strong>
+        </div>
+      </div>
+    `;
+  }).join('');
 
   const desconto = Number(pedido?.desconto || 0);
   const taxaEntrega = Number(pedido?.taxa_entrega || 0);
   const total = Number(pedido?.total_geral || 0);
 
-  const linhasItens = itens
-    .map((item: any) => {
-      const quantidade = Number(item?.quantidade || 0);
-      const precoUnitario = Number(item?.preco_unitario || 0);
-      const totalItem = quantidade * precoUnitario;
-
-      return `
-        <tr>
-          <td class="qtd">${quantidade}x</td>
-          <td class="item-nome">${escaparHtml(item?.nome_produto)}</td>
-          <td class="item-valor">${valorFormatado(totalItem)}</td>
-        </tr>
-      `;
-    })
-    .join('');
-
   const iframe = document.createElement('iframe');
+  iframe.setAttribute('aria-hidden', 'true');
   iframe.style.position = 'fixed';
   iframe.style.right = '0';
   iframe.style.bottom = '0';
@@ -67,28 +60,21 @@ export const imprimirReciboTermico = (pedido: any) => {
 
   doc.open();
   doc.write(`
-    <!DOCTYPE html>
+    <!doctype html>
     <html>
       <head>
         <meta charset="utf-8" />
-        <title>Pedido #${escaparHtml(pedido?.numero_pedido || '---')}</title>
-
+        <title>Pedido #${escaparHtml(pedido?.numero_pedido || '')}</title>
         <style>
-          @page {
-            size: 80mm auto;
-            margin: 2mm;
-          }
+          @page { size: 80mm auto; margin: 2mm; }
 
-          * {
-            box-sizing: border-box;
-          }
+          * { box-sizing: border-box; }
 
-          html,
-          body {
+          html, body {
             margin: 0;
             padding: 0;
-            background: white;
-            color: black;
+            background: #fff;
+            color: #000;
           }
 
           body {
@@ -97,118 +83,100 @@ export const imprimirReciboTermico = (pedido: any) => {
             font-family: Arial, Helvetica, sans-serif;
             font-size: 15px;
             font-weight: 700;
-            line-height: 1.28;
+            line-height: 1.22;
             -webkit-font-smoothing: none;
             text-rendering: geometricPrecision;
           }
 
-          .centro {
-            text-align: center;
-          }
+          .centro { text-align: center; }
 
           .titulo {
-            font-size: 26px;
-            font-weight: 900;
-            margin: 0;
-            padding-bottom: 3px;
-            border-bottom: 2px solid black;
-          }
-
-          .pedido-numero {
-            font-size: 30px;
+            font-size: 27px;
             font-weight: 900;
             line-height: 1;
-            margin: 6px 0;
+            letter-spacing: 0.2px;
+            margin-top: 2px;
           }
 
-          .conferencia {
-            font-size: 15px;
-            font-weight: 800;
-            margin-bottom: 8px;
+          .subtitulo {
+            font-size: 16px;
+            font-weight: 900;
+            margin-top: 4px;
+          }
+
+          .pedido {
+            font-size: 34px;
+            font-weight: 900;
+            line-height: 1;
+            margin: 8px 0 7px;
           }
 
           .linha {
             border-top: 2px dashed #000;
-            margin: 8px 0;
+            margin: 6px 0;
           }
 
           .dados {
-            font-size: 14px;
-            font-weight: 800;
-            line-height: 1.28;
+            font-size: 15px;
+            font-weight: 900;
             margin: 3px 0;
             word-break: break-word;
           }
 
-          table {
-            width: 100%;
-            border-collapse: collapse;
-          }
-
-          td {
-            font-size: 15px;
-            font-weight: 800;
-          }
-
-          .qtd {
-            width: 28px;
-            vertical-align: top;
-            font-size: 16px;
-            font-weight: 900;
-            padding-bottom: 8px;
+          .item {
+            margin: 8px 0 9px;
+            page-break-inside: avoid;
           }
 
           .item-nome {
-            vertical-align: top;
-            padding-bottom: 8px;
-            padding-right: 4px;
             font-size: 16px;
             font-weight: 900;
-            line-height: 1.2;
+            line-height: 1.16;
             word-break: break-word;
           }
 
-          .item-valor {
-            vertical-align: top;
-            text-align: right;
-            white-space: nowrap;
-            padding-bottom: 8px;
+          .item-valores {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            gap: 8px;
+            margin-top: 2px;
             font-size: 14px;
             font-weight: 900;
+          }
+
+          .item-valores strong {
+            font-size: 15px;
+            font-weight: 900;
+            white-space: nowrap;
           }
 
           .total-linha {
             display: flex;
             justify-content: space-between;
-            gap: 5px;
+            gap: 8px;
             margin: 3px 0;
             font-size: 15px;
-            font-weight: 800;
+            font-weight: 900;
           }
 
           .total-geral {
-            font-size: 24px;
+            font-size: 28px;
             font-weight: 900;
-            margin-top: 7px;
+            line-height: 1;
+            margin: 9px 0 7px;
           }
 
           .rodape {
-            margin-top: 10px;
-            padding-top: 8px;
-            border-top: 2px solid black;
             text-align: center;
-            font-size: 13px;
-            font-weight: 800;
+            margin-top: 10px;
+            font-size: 14px;
+            font-weight: 900;
+            line-height: 1.15;
           }
 
           @media print {
-            body {
-              width: 76mm;
-            }
-          }
-
-          strong {
-            font-weight: 900;
+            body { width: 76mm; }
           }
         </style>
       </head>
@@ -216,70 +184,55 @@ export const imprimirReciboTermico = (pedido: any) => {
       <body>
         <div class="centro">
           <div class="titulo">CHEF BATATÔ</div>
-          <div class="pedido-numero">#${escaparHtml(pedido?.numero_pedido || '---')}</div>
-          <div class="conferencia">CONFERÊNCIA</div>
+          <div class="subtitulo">Talão do Pedido</div>
+          <div class="pedido">#${escaparHtml(pedido?.numero_pedido || '')}</div>
         </div>
+
+        <div class="linha"></div>
 
         <div class="dados"><strong>Canal:</strong> ${escaparHtml(pedido?.canal || '---')}</div>
         <div class="dados"><strong>Cliente:</strong> ${escaparHtml(pedido?.cliente || 'Consumidor Final')}</div>
+        ${pedido?.contacto_cliente ? `<div class="dados"><strong>Contacto:</strong> ${escaparHtml(pedido.contacto_cliente)}</div>` : ''}
+        ${pedido?.endereco ? `<div class="dados"><strong>Morada:</strong> ${escaparHtml(pedido.endereco)}</div>` : ''}
         <div class="dados"><strong>Pagamento:</strong> ${escaparHtml(pedido?.forma_pagamento || '---')}</div>
-        ${
-          pedido?.entregador
-            ? `<div class="dados"><strong>Estafeta:</strong> ${escaparHtml(pedido.entregador)}</div>`
-            : ''
-        }
 
         <div class="linha"></div>
 
-        <table>
-          ${
-            linhasItens ||
-            `<tr><td style="text-align:center;">Sem itens</td></tr>`
-          }
-        </table>
+        ${linhasItens || '<div class="dados">Nenhum item encontrado.</div>'}
 
         <div class="linha"></div>
 
-        <div class="total-linha">
-          <span>Subtotal</span>
-          <span>${valorFormatado(subtotal)}</span>
-        </div>
-
-        ${
-          desconto > 0
-            ? `
+        ${desconto > 0 ? `
           <div class="total-linha">
             <span>Desconto</span>
-            <span>-${valorFormatado(desconto)}</span>
+            <span>-${moedaTalao(desconto)}</span>
           </div>
-        `
-            : ''
-        }
+        ` : ''}
 
-        ${
-          taxaEntrega > 0
-            ? `
+        ${taxaEntrega > 0 ? `
           <div class="total-linha">
             <span>Entrega</span>
-            <span>${valorFormatado(taxaEntrega)}</span>
+            <span>${moedaTalao(taxaEntrega)}</span>
           </div>
-        `
-            : ''
-        }
+        ` : ''}
 
         <div class="total-linha total-geral">
           <span>TOTAL</span>
-          <span>${valorFormatado(total)}</span>
+          <span>${moedaTalao(total)}</span>
         </div>
 
+        <div class="linha"></div>
+
         <div class="rodape">
+          Obrigado pelo pedido!<br />
           Chef Batatô
         </div>
 
-        <div style="height:30px;">&nbsp;</div>
+        <div style="height:18px">&nbsp;</div>
       </body>
     </html>
   `);
+
   doc.close();
 
   window.setTimeout(() => {
@@ -287,13 +240,9 @@ export const imprimirReciboTermico = (pedido: any) => {
       iframe.contentWindow?.focus();
       iframe.contentWindow?.print();
     } finally {
-      window.setTimeout(() => {
-        if (iframe.parentNode) {
-          iframe.parentNode.removeChild(iframe);
-        }
-      }, 1500);
+      window.setTimeout(() => iframe.remove(), 1500);
     }
-  }, 300);
+  }, 250);
 };
 
 interface ItemPedido { id?: string; produto_id?: string; codigo_produto: string; nome_produto: string; quantidade: number; preco_unitario: number; }
