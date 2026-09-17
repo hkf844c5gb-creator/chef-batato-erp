@@ -75,8 +75,8 @@ export const imprimirReciboTermico = (pedido: any) => {
 
         <style>
           @page {
-            margin: 0;
             size: 80mm auto;
+            margin: 2mm;
           }
 
           * {
@@ -92,12 +92,12 @@ export const imprimirReciboTermico = (pedido: any) => {
           }
 
           body {
-            width: 72mm;
-            padding: 3mm;
+            width: 76mm;
+            padding: 1mm;
             font-family: Arial, Helvetica, sans-serif;
             font-size: 15px;
             font-weight: 700;
-            line-height: 1.25;
+            line-height: 1.28;
             -webkit-font-smoothing: none;
             text-rendering: geometricPrecision;
           }
@@ -107,36 +107,36 @@ export const imprimirReciboTermico = (pedido: any) => {
           }
 
           .titulo {
-            font-size: 27px;
+            font-size: 26px;
             font-weight: 900;
             margin: 0;
-            padding-bottom: 4px;
-            border-bottom: 3px solid black;
+            padding-bottom: 3px;
+            border-bottom: 2px solid black;
           }
 
           .pedido-numero {
-            font-size: 38px;
+            font-size: 30px;
             font-weight: 900;
             line-height: 1;
-            margin: 8px 0 3px 0;
+            margin: 6px 0;
           }
 
           .conferencia {
-            font-size: 19px;
-            font-weight: 900;
-            margin-bottom: 10px;
+            font-size: 15px;
+            font-weight: 800;
+            margin-bottom: 8px;
           }
 
           .linha {
-            border-top: 2px dashed black;
+            border-top: 2px dashed #000;
             margin: 8px 0;
           }
 
           .dados {
             font-size: 14px;
             font-weight: 800;
-            line-height: 1.35;
-            margin: 2px 0;
+            line-height: 1.28;
+            margin: 3px 0;
             word-break: break-word;
           }
 
@@ -162,9 +162,9 @@ export const imprimirReciboTermico = (pedido: any) => {
             vertical-align: top;
             padding-bottom: 8px;
             padding-right: 4px;
-            font-size: 15px;
-            font-weight: 800;
-            line-height: 1.15;
+            font-size: 16px;
+            font-weight: 900;
+            line-height: 1.2;
             word-break: break-word;
           }
 
@@ -173,32 +173,38 @@ export const imprimirReciboTermico = (pedido: any) => {
             text-align: right;
             white-space: nowrap;
             padding-bottom: 8px;
-            font-size: 15px;
+            font-size: 14px;
             font-weight: 900;
           }
 
           .total-linha {
             display: flex;
             justify-content: space-between;
-            gap: 8px;
+            gap: 5px;
             margin: 3px 0;
             font-size: 15px;
             font-weight: 800;
           }
 
           .total-geral {
-            font-size: 26px;
+            font-size: 24px;
             font-weight: 900;
-            margin-top: 8px;
+            margin-top: 7px;
           }
 
           .rodape {
-            margin-top: 12px;
+            margin-top: 10px;
             padding-top: 8px;
             border-top: 2px solid black;
             text-align: center;
             font-size: 13px;
             font-weight: 800;
+          }
+
+          @media print {
+            body {
+              width: 76mm;
+            }
           }
 
           strong {
@@ -891,4 +897,3 @@ export default function GestaoPedidos() {
     </div>
   );
 }
-
