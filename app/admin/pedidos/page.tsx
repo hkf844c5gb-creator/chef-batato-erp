@@ -382,12 +382,28 @@ export default function GestaoPedidos() {
     return () => { supabase.removeChannel(canalAtualizacao); };
   }, [buscarPedidosDaBase]);
 
-  const liquidarCaderninho = async (pedidoNum: number) => {
+  const liquidarCaderninho = async (pedidoNum: number, formaRecebimento: 'Dinheiro' | 'MBWay') => {
     try {
-      const { error } = await supabase.from('pedidos').update({ pago: true }).eq('numero_pedido', pedidoNum);
+      const { error } = await supabase
+        .from('pedidos')
+        .update({
+          pago: true,
+          forma_pagamento: formaRecebimento
+        })
+        .eq('numero_pedido', pedidoNum);
+
       if (error) throw error;
-      setPedidos(prev => prev.map(p => p.numero_pedido === pedidoNum ? { ...p, pago: true } : p));
-    } catch (err) { alert('Erro ao liquidar pagamento.'); }
+
+      setPedidos(prev =>
+        prev.map(p =>
+          p.numero_pedido === pedidoNum
+            ? { ...p, pago: true, forma_pagamento: formaRecebimento }
+            : p
+        )
+      );
+    } catch (err: any) {
+      alert('Erro ao liquidar pagamento: ' + (err?.message || 'erro desconhecido'));
+    }
   };
 
   // =========================================================================================
@@ -789,10 +805,30 @@ export default function GestaoPedidos() {
                     <span className="text-[11px]">Estafeta: <span className="text-zinc-300">{ped.entregador || 'Nenhum'}</span></span>
                     <span className="text-base font-black text-orange-500">{ped.total_geral.toFixed(2)}€</span>
                   </div>
-                  {!ped.pago && (
-                    <button onClick={() => liquidarCaderninho(ped.numero_pedido)} className="w-full mt-2 bg-green-600 hover:bg-green-700 text-white text-[10px] font-bold py-1.5 rounded-lg">
-                      ✓ Recebido
-                    </button>
+                  {!ped.pago && ped.forma_pagamento === 'Caderninho' && (
+                    <div className="mt-2 border-t border-zinc-800/50 pt-2">
+                      <div className="text-[9px] uppercase tracking-wider font-bold text-orange-400 mb-1.5">
+                        Marcar como pago:
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => liquidarCaderninho(ped.numero_pedido, 'Dinheiro')}
+                          className="bg-green-600 hover:bg-green-500 text-white text-[10px] font-bold py-2 rounded-lg transition-colors"
+                          title="Recebido em Dinheiro"
+                        >
+                          💵 Dinheiro
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => liquidarCaderninho(ped.numero_pedido, 'MBWay')}
+                          className="bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold py-2 rounded-lg transition-colors"
+                          title="Recebido por MB Way"
+                        >
+                          📱 MB Way
+                        </button>
+                      </div>
+                    </div>
                   )}
                 </div>
               </div>
