@@ -1255,67 +1255,92 @@ function PainelDirecao({
   onFornecedor: (nome: string) => void;
   onCategoria: (nome: string) => void;
 }) {
-  // Agrupa somente quando fornecedor, item e unidade são iguais.
-  // Assim, o mesmo produto comprado em fornecedores diferentes não é misturado.
-  const gruposMaioresGastos = new Map<
+  // ---------------------------------------------------------------------------
+  // ITENS MAIS COMPRADOS NO MÊS
+  //
+  // Usa SOMENTE linhas de faturas importadas/estruturadas.
+  // Gastos avulsos, extrato bancário, retiradas, "Payment", etc. não entram.
+  //
+  // O agrupamento é feito por ITEM EXATO + UNIDADE.
+  // Assim somamos a quantidade comprada em TODAS as faturas do mês,
+  // independentemente de o mesmo item ter sido comprado em fornecedores diferentes.
+  // ---------------------------------------------------------------------------
+
+  const gruposItensComprados = new Map<
     string,
     {
-      fornecedor: string;
       nome: string;
       unidade: string;
       quantidade: number;
       valor: number;
       compras: number;
+      fornecedores: Set<string>;
       categorias: Map<string, number>;
       datas: string[];
     }
   >();
 
-  gastos.forEach((gasto) => {
-    const fornecedorNormalizado = normalizarTexto(gasto.fornecedor)
-      .replace(/[^a-z0-9]+/g, ' ')
-      .trim();
-    const itemNormalizado = normalizarTexto(gasto.nome)
-      .replace(/^\[validado\]\s*/i, '')
-      .replace(/[^a-z0-9]+/g, ' ')
-      .trim();
-    const unidadeNormalizada = normalizarTexto(gasto.unidade || 'un');
-    const chave = [fornecedorNormalizado, itemNormalizado, unidadeNormalizada].join('|');
+  gastos
+    .filter((gasto) => gasto.estruturado)
+    .forEach((gasto) => {
+      const itemExato = gasto.nome.trim();
+      const itemNormalizado = normalizarTexto(itemExato)
+        .replace(/^\[validado\]\s*/i, '')
+        .replace(/\s+/g, ' ')
+        .trim();
 
-    const atual = gruposMaioresGastos.get(chave) || {
-      fornecedor: gasto.fornecedor || 'Sem fornecedor',
-      nome: gasto.nome,
-      unidade: gasto.unidade || 'un',
-      quantidade: 0,
-      valor: 0,
-      compras: 0,
-      categorias: new Map<string, number>(),
-      datas: [],
-    };
+      const unidade = gasto.unidade || 'un';
+      const unidadeNormalizada = normalizarTexto(unidade);
+      const chave = [itemNormalizado, unidadeNormalizada].join('|');
 
-    atual.quantidade += numero(gasto.quantidade);
-    atual.valor += numero(gasto.valor);
-    atual.compras += 1;
-    atual.categorias.set(
-      gasto.categoria,
-      (atual.categorias.get(gasto.categoria) || 0) + numero(gasto.valor)
-    );
+      const atual = gruposItensComprados.get(chave) || {
+        nome: itemExato,
+        unidade,
+        quantidade: 0,
+        valor: 0,
+        compras: 0,
+        fornecedores: new Set<string>(),
+        categorias: new Map<string, number>(),
+        datas: [],
+      };
 
-    const data = gasto.data?.slice(0, 10);
-    if (data) atual.datas.push(data);
+      atual.quantidade += numero(gasto.quantidade);
+      atual.valor += numero(gasto.valor);
+      atual.compras += 1;
 
-    gruposMaioresGastos.set(chave, atual);
-  });
+      if (gasto.fornecedor && gasto.fornecedor !== 'Sem fornecedor') {
+        atual.fornecedores.add(gasto.fornecedor);
+      }
 
-  const maioresGastos = [...gruposMaioresGastos.values()]
+      atual.categorias.set(
+        gasto.categoria,
+        (atual.categorias.get(gasto.categoria) || 0) + numero(gasto.valor)
+      );
+
+      const data = gasto.data?.slice(0, 10);
+      if (data) atual.datas.push(data);
+
+      gruposItensComprados.set(chave, atual);
+    });
+
+  const itensMaisComprados = [...gruposItensComprados.values()]
     .map((grupo) => {
       const datas = [...new Set(grupo.datas)].sort();
-      const categoria = [...grupo.categorias.entries()]
-        .sort((a, b) => b[1] - a[1])[0]?.[0] || '⚠️ Por Classificar';
+      const categoria =
+        [...grupo.categorias.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ||
+        '⚠️ Por Classificar';
+
+      const fornecedoresLista = [...grupo.fornecedores].sort((a, b) =>
+        collation.compare(a, b)
+      );
 
       return {
         ...grupo,
         categoria,
+        fornecedoresTexto:
+          fornecedoresLista.length === 0
+            ? 'Fornecedor não identificado'
+            : fornecedoresLista.join(', '),
         periodo:
           datas.length === 0
             ? 'Sem data'
@@ -1324,8 +1349,18 @@ function PainelDirecao({
               : `${dataPT(datas[0])} a ${dataPT(datas[datas.length - 1])}`,
       };
     })
-    .sort((a, b) => b.valor - a.valor)
-    .slice(0, 12);
+    .sort((a, b) => {
+      // Primeiro: maior quantidade comprada.
+      // Em empate, maior valor gasto.
+      if (b.quantidade !== a.quantidade) return b.quantidade - a.quantidade;
+      return b.valor - a.valor;
+    })
+    .slice(0, 30);
+
+  const totalItensFaturas = gastos.filter((gasto) => gasto.estruturado).length;
+  const totalDocumentosFaturas = new Set(
+    gastos.filter((gasto) => gasto.estruturado).map((gasto) => gasto.chaveDocumento)
+  ).size;
 
   return (
     <div className="space-y-5">
@@ -1345,6 +1380,7 @@ function PainelDirecao({
           total={total}
           onAbrir={onFornecedor}
         />
+
         <PainelRanking
           titulo="Custos por categoria"
           subtitulo="Em que tipo de gasto o dinheiro foi utilizado"
@@ -1365,50 +1401,77 @@ function PainelDirecao({
       <div className="overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900">
         <div className="border-b border-zinc-800 p-5">
           <h2 className="text-sm font-black uppercase tracking-wider text-white">
-            Maiores gastos do período
+            Itens mais comprados no mês
           </h2>
           <p className="mt-1 text-xs text-zinc-500">
-            Itens iguais do mesmo fornecedor são unificados, somando quantidades e valores.
+            Soma a quantidade do item exato em todas as faturas importadas do mês selecionado.
+            Gastos avulsos e movimentos bancários não entram neste ranking.
+          </p>
+          <p className="mt-2 text-[10px] text-zinc-600">
+            Base analisada: {totalDocumentosFaturas} fatura(s) · {totalItensFaturas} linha(s) de item.
           </p>
         </div>
+
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-left">
+          <table className="w-full min-w-[900px] text-left">
             <thead>
               <tr className="border-b border-zinc-800 text-[9px] uppercase text-zinc-600">
-                <th className="px-5 py-3">Fornecedor</th>
-                <th className="px-5 py-3">Item</th>
+                <th className="px-5 py-3">Item exato</th>
+                <th className="px-5 py-3">Fornecedor(es)</th>
                 <th className="px-5 py-3">Categoria</th>
-                <th className="px-5 py-3 text-right">Quantidade total</th>
-                <th className="px-5 py-3 text-right">Compras</th>
+                <th className="px-5 py-3 text-right">Qtd. comprada</th>
+                <th className="px-5 py-3 text-right">Linhas de compra</th>
                 <th className="px-5 py-3">Período</th>
-                <th className="px-5 py-3 text-right">Valor total</th>
+                <th className="px-5 py-3 text-right">Total gasto</th>
               </tr>
             </thead>
+
             <tbody>
-              {maioresGastos.map((gasto) => (
-                <tr
-                  key={normalizarTexto(gasto.fornecedor) + '|' + normalizarTexto(gasto.nome) + '|' + gasto.unidade}
-                  className="border-b border-zinc-800/70 last:border-0"
-                >
-                  <td className="px-5 py-3 text-sm font-bold text-zinc-200">{gasto.fornecedor}</td>
-                  <td className="px-5 py-3 text-sm text-zinc-400">{gasto.nome}</td>
-                  <td className="px-5 py-3">
-                    <EtiquetaCategoria categoria={gasto.categoria} />
-                  </td>
-                  <td className="px-5 py-3 text-right font-mono text-sm font-bold text-white">
-                    {quantidadeFormatada.format(gasto.quantidade)} {gasto.unidade}
-                  </td>
-                  <td className="px-5 py-3 text-right font-mono text-sm text-zinc-400">
-                    {gasto.compras}
-                  </td>
-                  <td className="px-5 py-3 font-mono text-xs text-zinc-500">
-                    {gasto.periodo}
-                  </td>
-                  <td className="px-5 py-3 text-right font-mono text-sm font-black text-red-400">
-                    {moeda.format(gasto.valor)}
+              {itensMaisComprados.length === 0 ? (
+                <tr>
+                  <td
+                    colSpan={7}
+                    className="px-5 py-10 text-center text-sm text-zinc-500"
+                  >
+                    Nenhum item de fatura importada encontrado neste mês.
                   </td>
                 </tr>
-              ))}
+              ) : (
+                itensMaisComprados.map((item) => (
+                  <tr
+                    key={normalizarTexto(item.nome) + '|' + normalizarTexto(item.unidade)}
+                    className="border-b border-zinc-800/70 last:border-0"
+                  >
+                    <td className="px-5 py-3 text-sm font-black text-zinc-100">
+                      {item.nome}
+                    </td>
+
+                    <td className="px-5 py-3 text-sm text-zinc-400">
+                      {item.fornecedoresTexto}
+                    </td>
+
+                    <td className="px-5 py-3">
+                      <EtiquetaCategoria categoria={item.categoria} />
+                    </td>
+
+                    <td className="px-5 py-3 text-right font-mono text-sm font-black text-white">
+                      {quantidadeFormatada.format(item.quantidade)} {item.unidade}
+                    </td>
+
+                    <td className="px-5 py-3 text-right font-mono text-sm text-zinc-400">
+                      {item.compras}
+                    </td>
+
+                    <td className="px-5 py-3 font-mono text-xs text-zinc-500">
+                      {item.periodo}
+                    </td>
+
+                    <td className="px-5 py-3 text-right font-mono text-sm font-black text-red-400">
+                      {moeda.format(item.valor)}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
