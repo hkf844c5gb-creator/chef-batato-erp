@@ -1,884 +1,1798 @@
 'use client';
 
+
+
 import { useState, useEffect, useMemo, useCallback } from 'react';
+
 import { createBrowserClient } from '@supabase/ssr';
 
+const formatarDataHoraPedido = (valor: any) => {
+  const texto = String(valor ?? '').trim();
+  if (!texto) return '---';
+
+  const local = texto.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/);
+  const temFuso = /(?:Z|[+-]\d{2}:\d{2})$/i.test(texto);
+
+  if (local && !temFuso) {
+    const [, ano, mes, dia, hora, minuto] = local;
+    return `${dia}/${mes}/${ano} ${hora}:${minuto}`;
+  }
+
+  const data = new Date(texto);
+  if (!Number.isNaN(data.getTime())) {
+    return new Intl.DateTimeFormat('pt-PT', {
+      timeZone: 'Europe/Lisbon',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(data);
+  }
+
+  const apenasData = texto.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (apenasData) {
+    const [, ano, mes, dia] = apenasData;
+    return `${dia}/${mes}/${ano} --:--`;
+  }
+
+  return texto;
+};
+
+
+
+
+
 export const imprimirReciboTermico = (pedido: any) => {
+
   if (typeof window === 'undefined') return;
+
+
 
   const itens = Array.isArray(pedido?.itens) ? pedido.itens : [];
 
+
+
   const escaparHtml = (valor: any) =>
+
     String(valor ?? '')
+
       .replace(/&/g, '&amp;')
+
       .replace(/</g, '&lt;')
+
       .replace(/>/g, '&gt;')
+
       .replace(/"/g, '&quot;')
+
       .replace(/'/g, '&#039;');
 
+
+
   const moedaTalao = (valor: any) =>
+
     `${Number(valor || 0).toFixed(2).replace('.', ',')}€`;
 
+
+
   const linhasItens = itens.map((item: any) => {
+
     const qtd = Number(item?.quantidade || 0);
+
     const preco = Number(item?.preco_unitario || 0);
+
     const totalItem = qtd * preco;
 
+
+
     return `
+
       <div class="item">
+
         <div class="item-nome">${qtd}x ${escaparHtml(item?.nome_produto || '')}</div>
+
         <div class="item-valores">
+
           <span>${moedaTalao(preco)} cada</span>
+
           <strong>${moedaTalao(totalItem)}</strong>
+
         </div>
+
       </div>
+
     `;
+
   }).join('');
 
+
+
   const desconto = Number(pedido?.desconto || 0);
+
   const taxaEntrega = Number(pedido?.taxa_entrega || 0);
+
   const total = Number(pedido?.total_geral || 0);
 
+  const dataHoraPedido = formatarDataHoraPedido(
+    pedido?.criado_em || pedido?.created_at || pedido?.data_pedido
+  );
+
+
+
   const iframe = document.createElement('iframe');
+
   iframe.setAttribute('aria-hidden', 'true');
+
   iframe.style.position = 'fixed';
+
   iframe.style.right = '0';
+
   iframe.style.bottom = '0';
+
   iframe.style.width = '0';
+
   iframe.style.height = '0';
+
   iframe.style.border = '0';
+
   iframe.style.visibility = 'hidden';
+
   document.body.appendChild(iframe);
+
+
 
   const doc = iframe.contentWindow?.document;
 
+
+
   if (!doc) {
+
     iframe.remove();
+
     alert('Não foi possível abrir a impressão.');
+
     return;
+
   }
 
+
+
   doc.open();
+
   doc.write(`
+
     <!doctype html>
+
     <html>
+
       <head>
+
         <meta charset="utf-8" />
+
         <title>Pedido #${escaparHtml(pedido?.numero_pedido || '')}</title>
+
         <style>
+
           @page { size: 80mm auto; margin: 2mm; }
+
+
 
           * { box-sizing: border-box; }
 
+
+
           html, body {
+
             margin: 0;
+
             padding: 0;
+
             background: #fff;
+
             color: #000;
+
           }
 
+
+
           body {
+
             width: 76mm;
+
             padding: 1mm;
+
             font-family: Arial, Helvetica, sans-serif;
+
             font-size: 15px;
+
             font-weight: 700;
+
             line-height: 1.22;
+
             -webkit-font-smoothing: none;
+
             text-rendering: geometricPrecision;
+
           }
+
+
 
           .centro { text-align: center; }
 
+
+
           .titulo {
+
             font-size: 27px;
+
             font-weight: 900;
+
             line-height: 1;
+
             letter-spacing: 0.2px;
+
             margin-top: 2px;
+
           }
+
+
 
           .subtitulo {
+
             font-size: 16px;
+
             font-weight: 900;
+
             margin-top: 4px;
+
           }
+
+
 
           .pedido {
+
             font-size: 34px;
+
             font-weight: 900;
+
             line-height: 1;
+
             margin: 8px 0 7px;
+
           }
+
+
 
           .linha {
+
             border-top: 2px dashed #000;
+
             margin: 6px 0;
+
           }
+
+
 
           .dados {
+
             font-size: 15px;
+
             font-weight: 900;
+
             margin: 3px 0;
+
             word-break: break-word;
+
           }
+
+
 
           .item {
+
             margin: 8px 0 9px;
+
             page-break-inside: avoid;
+
           }
+
+
 
           .item-nome {
+
             font-size: 16px;
+
             font-weight: 900;
+
             line-height: 1.16;
+
             word-break: break-word;
+
           }
+
+
 
           .item-valores {
+
             display: flex;
+
             justify-content: space-between;
+
             align-items: baseline;
+
             gap: 8px;
+
             margin-top: 2px;
+
             font-size: 14px;
+
             font-weight: 900;
+
           }
+
+
 
           .item-valores strong {
+
             font-size: 15px;
+
             font-weight: 900;
+
             white-space: nowrap;
+
           }
+
+
 
           .total-linha {
+
             display: flex;
+
             justify-content: space-between;
+
             gap: 8px;
+
             margin: 3px 0;
+
             font-size: 15px;
+
             font-weight: 900;
+
           }
+
+
 
           .total-geral {
+
             font-size: 28px;
+
             font-weight: 900;
+
             line-height: 1;
+
             margin: 9px 0 7px;
+
           }
+
+
 
           .rodape {
+
             text-align: center;
+
             margin-top: 10px;
+
             font-size: 14px;
+
             font-weight: 900;
+
             line-height: 1.15;
+
           }
+
+
 
           @media print {
+
             body { width: 76mm; }
+
           }
+
         </style>
+
       </head>
 
+
+
       <body>
+
         <div class="centro">
+
           <div class="titulo">CHEF BATATÔ</div>
+
           <div class="subtitulo">Talão do Pedido</div>
+
           <div class="pedido">#${escaparHtml(pedido?.numero_pedido || '')}</div>
+
+          <div class="dados"><strong>Data/Hora:</strong> ${escaparHtml(dataHoraPedido)}</div>
+
         </div>
 
+
+
         <div class="linha"></div>
+
+
 
         <div class="dados"><strong>Canal:</strong> ${escaparHtml(pedido?.canal || '---')}</div>
+
         <div class="dados"><strong>Cliente:</strong> ${escaparHtml(pedido?.cliente || 'Consumidor Final')}</div>
+
         ${pedido?.contacto_cliente ? `<div class="dados"><strong>Contacto:</strong> ${escaparHtml(pedido.contacto_cliente)}</div>` : ''}
+
         ${pedido?.endereco ? `<div class="dados"><strong>Morada:</strong> ${escaparHtml(pedido.endereco)}</div>` : ''}
+
         <div class="dados"><strong>Pagamento:</strong> ${escaparHtml(pedido?.forma_pagamento || '---')}</div>
 
+
+
         <div class="linha"></div>
+
+
 
         ${linhasItens || '<div class="dados">Nenhum item encontrado.</div>'}
 
+
+
         <div class="linha"></div>
+
+
 
         ${desconto > 0 ? `
+
           <div class="total-linha">
+
             <span>Desconto</span>
+
             <span>-${moedaTalao(desconto)}</span>
+
           </div>
+
         ` : ''}
+
+
 
         ${taxaEntrega > 0 ? `
+
           <div class="total-linha">
+
             <span>Entrega</span>
+
             <span>${moedaTalao(taxaEntrega)}</span>
+
           </div>
+
         ` : ''}
 
+
+
         <div class="total-linha total-geral">
+
           <span>TOTAL</span>
+
           <span>${moedaTalao(total)}</span>
+
         </div>
+
+
 
         <div class="linha"></div>
 
+
+
         <div class="rodape">
+
           Obrigado pelo pedido!<br />
+
           Chef Batatô
+
         </div>
 
+
+
         <div style="height:18px">&nbsp;</div>
+
       </body>
+
     </html>
+
   `);
+
+
 
   doc.close();
 
+
+
   window.setTimeout(() => {
+
     try {
+
       iframe.contentWindow?.focus();
+
       iframe.contentWindow?.print();
+
     } finally {
+
       window.setTimeout(() => iframe.remove(), 1500);
+
     }
+
   }, 250);
+
 };
+
+
 
 interface ItemPedido { id?: string; produto_id?: string; codigo_produto: string; nome_produto: string; quantidade: number; preco_unitario: number; }
-interface Pedido { id: string; numero_pedido: number; data_pedido: string; cliente: string; canal: string; forma_pagamento: string; entregador: string; taxa_entrega: number; desconto: number; total_geral: number; pago: boolean; itens?: ItemPedido[]; ids_fragmentados?: string[]; criado_em?: string; }
+
+interface Pedido { id: string; numero_pedido: number; data_pedido: string; cliente: string; canal: string; forma_pagamento: string; entregador: string; taxa_entrega: number; desconto: number; total_geral: number; pago: boolean; itens?: ItemPedido[]; ids_fragmentados?: string[]; criado_em?: string; created_at?: string; }
+
 interface Combo { id: string; codigo: string; nome: string; descricao: string; tipo_preco: 'fixo' | 'desconto' | 'desconto_fixo' | 'item_gratis'; preco_fixo: number | null; preco_glovo?: number | null; preco_whatsapp?: number | null; desconto_percentual: number; desconto_absoluto: number; item_gratis_categoria: string; combo_grupos: any[]; }
 
+
+
 const getHojeLisboa = () => {
+
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Lisbon' }).format(new Date());
+
 };
+
+
 
 const extrairDataEstatica = (dataIso: string) => {
+
   if (!dataIso) return '';
+
   return dataIso.substring(0, 10);
+
 };
 
+
+
 export default function GestaoPedidos() {
+
   const [pedidos, setPedidos] = useState<Pedido[]>([]);
+
   const [produtosDB, setProdutosDB] = useState<any[]>([]);
+
   const [combosDB, setCombosDB] = useState<Combo[]>([]);
+
   const [listaEstafetas, setListaEstafetas] = useState<{ nome: string }[]>([]);
+
   const [loading, setLoading] = useState(true);
-  
+
+
+
   const [dataInicio, setDataInicio] = useState(getHojeLisboa());
+
   const [dataFim, setDataFim] = useState(getHojeLisboa());
-  
+
+
+
   const [termoPesquisa, setTermoPesquisa] = useState('');
+
   const [ordemDirecao, setOrdemDirecao] = useState<'desc' | 'asc'>('desc');
+
   const [modalEditar, setModalEditar] = useState(false);
+
   const [pedidoEditando, setPedidoEditando] = useState<Pedido | null>(null);
+
   const [salvando, setSalvando] = useState(false);
+
   const [modalComboEdicao, setModalComboEdicao] = useState(false);
+
   const [comboSelecionadoParaMontar, setComboSelecionadoParaMontar] = useState<Combo | null>(null);
+
   const [selecoesComboEdicao, setSelecoesComboEdicao] = useState<{ [grupoId: string]: any[] }>({});
+
+
 
   const supabase = createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
 
+
+
   useEffect(() => {
+
     const carregarConfiguracoes = async () => {
+
       try {
+
         const { data: dataProds } = await supabase.from('produtos').select('*').eq('ativo', true);
+
         if (dataProds) setProdutosDB(dataProds);
 
+
+
         const { data: dataEsts } = await supabase.from('estafetas').select('nome').eq('ativo', true).order('nome', { ascending: true });
+
         if (dataEsts) setListaEstafetas(dataEsts);
 
+
+
         const { data: dataCombos } = await supabase.from('combos').select(`*, combo_grupos (*, combo_grupo_produtos (*, produto:produtos (*)))`).eq('ativo', true).eq('esgotado', false);
+
         if (dataCombos) {
+
           const combosOrdenados = dataCombos.map(cb => ({
+
             ...cb, combo_grupos: (cb.combo_grupos || []).sort((a: any, b: any) => a.ordem - b.ordem)
+
           }));
+
           setCombosDB(combosOrdenados);
+
         }
+
       } catch (err) {
+
         console.error('Erro ao carregar configurações:', err);
+
       }
+
     };
+
     carregarConfiguracoes();
+
   }, []);
 
+
+
   const buscarPedidosDaBase = useCallback(async () => {
+
     setLoading(true);
+
     try {
+
       let query = supabase.from('pedidos').select(`*, itens:itens_pedido (*)`).order('numero_pedido', { ascending: false });
 
+
+
       if (dataInicio) {
+
         query = query.gte('data_pedido', dataInicio);
+
       }
+
       if (dataFim) {
+
         query = query.lte('data_pedido', dataFim);
+
       }
+
+
 
       const { data, error } = await query;
+
       if (error) throw error;
+
+
 
       if (data && data.length > 0) {
+
         const agrupados = new Map<string, Pedido>();
+
         data.forEach((linha: any) => {
+
           const chaveNum = String(linha.numero_pedido);
+
           const taxa = Number(linha.taxa_entrega || 0);
+
           const descontoLinha = Number(linha.desconto || 0);
+
           const dataApenasDia = linha.data_pedido ? extrairDataEstatica(linha.data_pedido) : extrairDataEstatica(linha.criado_em);
 
+
+
           const itensDestaLinha = (linha.itens || []).map((item: any) => {
+
             let precoUnitarioCorreto = Number(item.preco_unitario || 0);
+
             if (linha.canal === 'Revendedores') {
+
               const nomeProduto = (item.nome_produto || '').toLowerCase();
+
               if (nomeProduto.includes('fudge') || nomeProduto.includes('new york')) { precoUnitarioCorreto = 1.70; } 
+
               else { precoUnitarioCorreto = 2.70; }
+
             }
+
             return {
+
               id: item.id, produto_id: item.produto_id, codigo_produto: item.codigo_produto || '',
+
               nome_produto: item.nome_produto || '', quantidade: Number(item.quantidade || 1), preco_unitario: precoUnitarioCorreto
+
             };
+
           });
 
+
+
           if (!agrupados.has(chaveNum)) {
+
             agrupados.set(chaveNum, {
+
               ...linha, numero_pedido: Number(linha.numero_pedido), 
+
               data_pedido: dataApenasDia, 
+
               taxa_entrega: taxa, desconto: descontoLinha, pago: linha.pago === true, itens: [...itensDestaLinha], ids_fragmentados: [linha.id], criado_em: linha.criado_em
+
             });
+
           } else {
+
             const existente = agrupados.get(chaveNum)!;
+
             existente.itens?.push(...itensDestaLinha);
+
             existente.ids_fragmentados?.push(linha.id);
+
             if (!existente.entregador && linha.entregador) existente.entregador = linha.entregador;
+
             if (!existente.cliente && linha.cliente) existente.cliente = linha.cliente;
+
             if (linha.pago === true) existente.pago = true;
+
             existente.taxa_entrega = Math.max(existente.taxa_entrega, taxa);
+
             existente.desconto = Math.max(existente.desconto, descontoLinha);
+
           }
+
         });
+
+
 
         const pedidosFormatados = Array.from(agrupados.values()).map(ped => {
+
           const subtotalItens = (ped.itens || []).reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
+
           ped.total_geral = subtotalItens + ped.taxa_entrega - ped.desconto;
+
           return ped;
+
         });
+
         setPedidos(pedidosFormatados);
+
       } else {
+
         setPedidos([]);
+
       }
+
     } catch (err) {
+
       console.error('Erro ao buscar pedidos:', err);
+
     } finally {
+
       setLoading(false);
+
     }
+
   }, [dataInicio, dataFim]);
 
+
+
   useEffect(() => {
+
     buscarPedidosDaBase();
-    
+
+
+
     const canalAtualizacao = supabase.channel('schema-db-changes').on('postgres_changes', { event: '*', schema: 'public', table: 'pedidos' }, () => { 
+
       buscarPedidosDaBase(); 
+
     }).subscribe();
-    
+
+
+
     return () => { supabase.removeChannel(canalAtualizacao); };
+
   }, [buscarPedidosDaBase]);
 
+
+
   const liquidarCaderninho = async (pedidoNum: number, formaRecebimento: 'Dinheiro' | 'MBWay') => {
+
     try {
+
       const { error } = await supabase
+
         .from('pedidos')
+
         .update({
+
           pago: true,
+
           forma_pagamento: formaRecebimento
+
         })
+
         .eq('numero_pedido', pedidoNum);
+
+
 
       if (error) throw error;
 
+
+
       setPedidos(prev =>
+
         prev.map(p =>
+
           p.numero_pedido === pedidoNum
+
             ? { ...p, pago: true, forma_pagamento: formaRecebimento }
+
             : p
+
         )
+
       );
+
     } catch (err: any) {
+
       alert('Erro ao liquidar pagamento: ' + (err?.message || 'erro desconhecido'));
+
     }
+
   };
 
+
+
   // =========================================================================================
+
   // 🔄 NOVA LÓGICA DE EXCLUSÃO DE PEDIDO COM ESTORNO AUTOMÁTICO DE ESTOQUE
+
   // =========================================================================================
+
   const excluirPedido = async (pedidoNum: number, ids: string[]) => {
-    if (!confirm(`⚠️ Tem a certeza que deseja excluir o pedido #${pedidoNum}?\n\n🔄 Todo o stock gasto neste pedido (produtos, combos e embalagens) será devolvido automaticamente ao sistema.`)) return;
-    
+    if (!confirm(`⚠️ Tem a certeza que deseja excluir o pedido #${pedidoNum}?
+
+🔄 Todos os itens que saíram do estoque por este pedido serão devolvidos automaticamente.`)) {
+      return;
+    }
+
     try {
-      // 1. PRIMEIRO PASSO: Procurar e estornar o stock baseado no histórico de saídas!
-      const { data: movimentosAntigos, error: errBusca } = await supabase
+      // Busca TODAS as movimentações ligadas ao pedido:
+      // - SAÍDAS feitas na venda
+      // - ENTRADAS de estorno já feitas anteriormente
+      //
+      // Isso impede devolver duas vezes o mesmo pedido.
+      const { data: movimentosPedido, error: errBusca } = await supabase
         .from('movimentos_estoque')
         .select('*')
-        .eq('tipo_movimento', 'SAÍDA')
-        .ilike('observacoes', `%Pedido #${pedidoNum}%`); // Apanha tanto "Pedido #516" como "Acompanhamento Pedido #516"
+        .ilike('observacoes', `%Pedido #${pedidoNum}%`);
 
       if (errBusca) throw errBusca;
 
+      const porProduto = new Map<
+        string,
+        {
+          nome: string;
+          totalSaidaVenda: number;
+          totalJaDevolvido: number;
+        }
+      >();
+
+      for (const mov of movimentosPedido || []) {
+        if (!mov.produto_id) continue;
+
+        const atual = porProduto.get(mov.produto_id) || {
+          nome: mov.nome_produto || 'Produto',
+          totalSaidaVenda: 0,
+          totalJaDevolvido: 0
+        };
+
+        const qtd = Number(mov.quantidade || 0);
+
+        // Só considera como consumo do pedido as saídas efetivamente criadas pelo PDV.
+        if (
+          mov.tipo_movimento === 'SAÍDA' &&
+          (
+            mov.origem === 'VENDA PDV' ||
+            mov.origem === 'VENDA PDV (Automático)'
+          )
+        ) {
+          atual.totalSaidaVenda += qtd;
+        }
+
+        // Se já houve estorno, desconta do que ainda falta devolver.
+        if (
+          mov.tipo_movimento === 'ENTRADA' &&
+          mov.origem === 'ESTORNO DE PEDIDO'
+        ) {
+          atual.totalJaDevolvido += qtd;
+        }
+
+        porProduto.set(mov.produto_id, atual);
+      }
+
       let totalItensDevolvidos = 0;
 
-      if (movimentosAntigos && movimentosAntigos.length > 0) {
-        // Agrupa devoluções do mesmo produto para não fazer dezenas de atualizações repetidas
-        const devolucoes = new Map<string, { nome: string, qtd: number }>();
-        for (const mov of movimentosAntigos) {
-          if (!mov.produto_id) continue;
-          const atual = devolucoes.get(mov.produto_id) || { nome: mov.nome_produto, qtd: 0 };
-          atual.qtd += Number(mov.quantidade);
-          devolucoes.set(mov.produto_id, atual);
+      for (const [produtoId, dados] of porProduto.entries()) {
+        const quantidadeADevolver = Math.max(
+          0,
+          dados.totalSaidaVenda - dados.totalJaDevolvido
+        );
+
+        if (quantidadeADevolver <= 0) continue;
+
+        const { error: errEstorno } = await supabase.rpc('movimentar_estoque', {
+          p_produto_id: produtoId,
+          p_delta: quantidadeADevolver,
+          p_origem: 'ESTORNO DE PEDIDO',
+          p_observacoes: `Devolução automática por exclusão do Pedido #${pedidoNum}`,
+          p_data_movimento: new Date().toISOString()
+        });
+
+        if (errEstorno) {
+          throw new Error(
+            `Falha ao devolver ${dados.nome} ao estoque: ${errEstorno.message}`
+          );
         }
 
-        // Devolve ao estoque real e regista a entrada
-        for (const [produtoId, dados] of devolucoes.entries()) {
-          const { data: prodData } = await supabase.from('produtos').select('estoque_atual').eq('id', produtoId).single();
-          if (prodData) {
-            const novoStock = Number(prodData.estoque_atual) + dados.qtd;
-            
-            // 1. Repõe o produto
-            await supabase.from('produtos').update({ estoque_atual: novoStock }).eq('id', produtoId);
-
-            // 2. Regista o estorno para aparecer certinho no Extrato do Estoque
-            await supabase.from('movimentos_estoque').insert([{
-              produto_id: produtoId,
-              nome_produto: dados.nome,
-              tipo_movimento: 'ENTRADA',
-              quantidade: dados.qtd,
-              saldo_atualizado: novoStock,
-              origem: 'ESTORNO DE PEDIDO',
-              observacoes: `Devolução automática por exclusão do Pedido #${pedidoNum}`,
-              data_movimento: new Date().toISOString()
-            }]);
-            
-            totalItensDevolvidos += dados.qtd;
-          }
-        }
+        totalItensDevolvidos += quantidadeADevolver;
       }
 
-      // 2. SEGUNDO PASSO: Apagar o pedido da base de dados!
-      await supabase.from('itens_pedido').delete().in('pedido_id', ids);
-      const { error } = await supabase.from('pedidos').delete().in('id', ids);
-      if (error) throw error;
-      
-      // Limpar a linha no ecrã sem ter de recarregar a página
-      setPedidos(prev => prev.filter(p => p.numero_pedido !== pedidoNum));
-      
-      alert(`✅ Pedido #${pedidoNum} excluído com sucesso!\n🔄 ${totalItensDevolvidos} itens/embalagens foram devolvidos ao stock.`);
-    } catch (err: any) { 
-      alert(`Erro ao excluir pedido e estornar stock: ${err.message}`); 
+      // Só apaga o pedido depois que o estoque foi devolvido.
+      const { error: errItens } = await supabase
+        .from('itens_pedido')
+        .delete()
+        .in('pedido_id', ids);
+
+      if (errItens) throw errItens;
+
+      const { error: errPedido } = await supabase
+        .from('pedidos')
+        .delete()
+        .in('id', ids);
+
+      if (errPedido) throw errPedido;
+
+      setPedidos(prev =>
+        prev.filter(p => p.numero_pedido !== pedidoNum)
+      );
+
+      alert(
+        `✅ Pedido #${pedidoNum} excluído com sucesso!\n` +
+        `🔄 ${totalItensDevolvidos} unidade(s) devolvida(s) ao estoque.`
+      );
+    } catch (err: any) {
+      alert(`Erro ao excluir pedido e estornar estoque: ${err.message}`);
     }
   };
+
   // =========================================================================================
 
+
+
   const calcularPrecoPorCanalEProduto = (canal: string, prod: any) => {
+
     const nome = (prod.nome || '').toLowerCase();
+
     if (canal === 'Revendedores') {
+
       if (nome.includes('fudge') || nome.includes('new york')) return 1.70;
+
       return 2.70;
+
     }
+
     if (canal === 'Glovo') return Number(prod.preco_glovo || prod.preco_cardapio || 0);
+
     if (canal === 'WhatsApp' || canal === 'Palmbites' || canal === 'Balcão') return Number(prod.preco_cardapio || 0);
+
     return Number(prod.preco_cardapio || 0);
+
   };
+
+
 
   const abrirEdicao = (pedido: Pedido) => {
+
     setPedidoEditando(JSON.parse(JSON.stringify(pedido)));
+
     setModalEditar(true);
+
   };
+
+
 
   const alterarCanalEdicao = (novoCanal: string) => {
+
     if (!pedidoEditando) return;
+
     const itensAtualizados = (pedidoEditando.itens || []).map(item => {
+
       if (item.codigo_produto === 'COMBO') {
+
         const baseName = item.nome_produto.split(' (')[0];
+
         const comboRef = combosDB.find(c => c.nome === baseName);
+
         if (comboRef && comboRef.tipo_preco === 'fixo') {
+
           let novoPreco = Number(comboRef.preco_fixo || 0);
+
           if (novoCanal === 'Glovo') novoPreco = Number(comboRef.preco_glovo || comboRef.preco_fixo || 0);
+
           if (novoCanal === 'WhatsApp' || novoCanal === 'Balcão' || novoCanal === 'Palmbites') novoPreco = Number(comboRef.preco_whatsapp || comboRef.preco_fixo || 0);
+
           return { ...item, preco_unitario: novoPreco };
+
         }
+
         return item; 
+
       }
+
       const prod = produtosDB.find(p => p.id === item.produto_id || p.nome.toLowerCase() === item.nome_produto.toLowerCase());
+
       if (prod) { return { ...item, preco_unitario: calcularPrecoPorCanalEProduto(novoCanal, prod) }; }
+
       return item;
+
     });
+
+
 
     const subtotalLocal = itensAtualizados.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
+
     const novoTotal = Math.max(0, subtotalLocal + pedidoEditando.taxa_entrega - (pedidoEditando.desconto || 0));
+
     setPedidoEditando({ ...pedidoEditando, canal: novoCanal, itens: itensAtualizados, total_geral: novoTotal });
+
   };
+
+
 
   const alterarQtdItemEdicao = (index: number, novaQtd: number) => {
+
     if (!pedidoEditando || !pedidoEditando.itens) return;
+
     const qtd = Math.max(1, novaQtd);
+
     const novosItens = [...pedidoEditando.itens];
+
     novosItens[index].quantidade = qtd;
+
     const subtotalLocal = novosItens.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
+
     const novoTotal = Math.max(0, subtotalLocal + pedidoEditando.taxa_entrega - (pedidoEditando.desconto || 0));
+
     setPedidoEditando({ ...pedidoEditando, itens: novosItens, total_geral: novoTotal });
+
   };
+
+
 
   const removerItemEdicao = (index: number) => {
+
     if (!pedidoEditando || !pedidoEditando.itens) return;
+
     const novosItens = pedidoEditando.itens.filter((_, i) => i !== index);
+
     const subtotalLocal = novosItens.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
+
     const novoTotal = Math.max(0, subtotalLocal + pedidoEditando.taxa_entrega - (pedidoEditando.desconto || 0));
+
     setPedidoEditando({ ...pedidoEditando, itens: novosItens, total_geral: novoTotal });
+
   };
+
+
 
   const adicionarProdutoEdicao = (produtoId: string) => {
+
     if (!pedidoEditando || !produtoId) return;
+
     const prod = produtosDB.find(p => p.id === produtoId);
+
     if (!prod) return;
+
     const precoUnit = calcularPrecoPorCanalEProduto(pedidoEditando.canal, prod);
+
     const itensAtuais = pedidoEditando.itens || [];
+
     const existenteIndex = itensAtuais.findIndex(it => it.produto_id === prod.id && !it.nome_produto.includes('('));
+
     let novosItens = [...itensAtuais];
+
     if (existenteIndex >= 0) { novosItens[existenteIndex].quantidade += 1; } 
+
     else { novosItens.push({ produto_id: prod.id, codigo_produto: prod.codigo || '', nome_produto: prod.nome, quantidade: 1, preco_unitario: precoUnit }); }
+
     const subtotalLocal = novosItens.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
+
     const novoTotal = Math.max(0, subtotalLocal + pedidoEditando.taxa_entrega - (pedidoEditando.desconto || 0));
+
     setPedidoEditando({ ...pedidoEditando, itens: novosItens, total_geral: novoTotal });
+
   };
+
+
 
   const iniciarMontagemComboEdicao = (comboId: string) => {
+
     if (!comboId) return;
+
     const combo = combosDB.find(c => c.id === comboId);
+
     if (!combo) return;
+
     setComboSelecionadoParaMontar(combo);
+
     setSelecoesComboEdicao({});
+
     setModalComboEdicao(true);
+
   };
+
+
 
   const toggleSelecaoComboEdicao = (grupo: any, itemVinculado: any) => {
+
     setSelecoesComboEdicao(prev => {
+
       const selecoesGrupo = [...(prev[grupo.id] || [])];
+
       const indexExistente = selecoesGrupo.findIndex(s => s.produto_id === itemVinculado.produto_id);
+
       const totalSelecionadoNoGrupo = selecoesGrupo.reduce((acc, curr) => acc + (curr.quantidade || 1), 0);
 
+
+
       if (indexExistente >= 0) {
+
         if (totalSelecionadoNoGrupo < grupo.quantidade_maxima) { selecoesGrupo[indexExistente].quantidade += 1; } 
+
         else {
+
           if (selecoesGrupo[indexExistente].quantidade > 1) { selecoesGrupo[indexExistente].quantidade -= 1; } 
+
           else { selecoesGrupo.splice(indexExistente, 1); }
+
         }
+
       } else {
+
         if (totalSelecionadoNoGrupo < grupo.quantidade_maxima) { selecoesGrupo.push({ ...itemVinculado, quantidade: 1 }); } 
+
         else if (grupo.quantidade_maxima === 1) { return { ...prev, [grupo.id]: [{ ...itemVinculado, quantidade: 1 }] }; }
+
       }
+
       return { ...prev, [grupo.id]: selecoesGrupo };
+
     });
+
   };
+
+
 
   const confirmarComboEdicao = () => {
+
     if (!comboSelecionadoParaMontar || !pedidoEditando) return;
+
     for (const grupo of comboSelecionadoParaMontar.combo_grupos) {
+
       const selecoes = selecoesComboEdicao[grupo.id] || [];
+
       const totalGrupo = selecoes.reduce((acc, s) => acc + (s.quantidade || 1), 0);
+
       if (grupo.obrigatorio && totalGrupo < grupo.quantidade_minima) {
+
         return alert(`O grupo "${grupo.nome}" exige no mínimo ${grupo.quantidade_minima} item(ns).`);
+
       }
+
     }
+
+
 
     let somaPrecos = 0; let somaAcrescimos = 0; const detalhes: string[] = [];
+
     Object.values(selecoesComboEdicao).forEach((selGrupo: any) => {
+
       selGrupo.forEach((item: any) => {
+
         const qtdItem = item.quantidade || 1;
+
         for (let i = 0; i < qtdItem; i++) {
+
           const precoItem = calcularPrecoPorCanalEProduto(pedidoEditando.canal, item.produto);
+
           somaPrecos += precoItem;
+
           somaAcrescimos += Number(item.acrescimo_preco || 0);
+
           detalhes.push(`${item.produto.nome}`);
+
         }
+
       });
+
     });
+
+
 
     let precoComboFinal = somaPrecos;
+
     if (comboSelecionadoParaMontar.tipo_preco === 'fixo') {
+
       if (pedidoEditando.canal === 'Glovo') { precoComboFinal = Number(comboSelecionadoParaMontar.preco_glovo || comboSelecionadoParaMontar.preco_fixo || 0); } 
+
       else if (pedidoEditando.canal === 'WhatsApp' || pedidoEditando.canal === 'Balcão' || pedidoEditando.canal === 'Palmbites') { precoComboFinal = Number(comboSelecionadoParaMontar.preco_whatsapp || comboSelecionadoParaMontar.preco_fixo || 0); } 
+
       else { precoComboFinal = Number(comboSelecionadoParaMontar.preco_fixo || 0); }
+
     } else if (comboSelecionadoParaMontar.tipo_preco === 'desconto' || comboSelecionadoParaMontar.nome.toLowerCase().includes('batatô10') || comboSelecionadoParaMontar.nome.toLowerCase().includes('batato10')) {
+
       const perc = Number(comboSelecionadoParaMontar.desconto_percentual || 10);
+
       precoComboFinal = somaPrecos * (1 - perc / 100);
+
     } else if (comboSelecionadoParaMontar.tipo_preco === 'desconto_fixo' || comboSelecionadoParaMontar.nome.toLowerCase().includes('para dois')) {
+
       const desc = Number(comboSelecionadoParaMontar.desconto_absoluto || 1.70);
+
       precoComboFinal = Math.max(0, somaPrecos - desc);
+
     }
+
+
 
     const precoFinalAplicado = precoComboFinal + somaAcrescimos;
+
     const nomeComboFormatado = `${comboSelecionadoParaMontar.nome} (${detalhes.join(', ')})`;
+
     const novosItens = [...(pedidoEditando.itens || []), { produto_id: undefined, codigo_produto: 'COMBO', nome_produto: nomeComboFormatado, quantidade: 1, preco_unitario: Number(precoFinalAplicado.toFixed(2)) }];
+
     const subtotalLocal = novosItens.reduce((acc, it) => acc + (it.quantidade * it.preco_unitario), 0);
+
     const novoTotal = Math.max(0, subtotalLocal + pedidoEditando.taxa_entrega - (pedidoEditando.desconto || 0));
 
+
+
     setPedidoEditando({ ...pedidoEditando, itens: novosItens, total_geral: novoTotal });
+
     setModalComboEdicao(false);
+
     setComboSelecionadoParaMontar(null);
+
   };
+
+
 
   const salvarEdicao = async (e: React.FormEvent) => {
+
     e.preventDefault();
+
     if (!pedidoEditando) return;
+
     setSalvando(true);
+
     try {
+
       const subtotalItens = pedidoEditando.itens?.reduce((acc, item) => acc + (item.quantidade * item.preco_unitario), 0) || 0;
+
       const novoTotal = Math.max(0, subtotalItens + Number(pedidoEditando.taxa_entrega) - Number(pedidoEditando.desconto || 0));
+
       const principalId = pedidoEditando.ids_fragmentados?.[0] || pedidoEditando.id;
 
+
+
       const { error: erroPrincipal } = await supabase.from('pedidos').update({
+
         cliente: pedidoEditando.cliente, canal: pedidoEditando.canal, forma_pagamento: pedidoEditando.forma_pagamento,
+
         entregador: pedidoEditando.entregador || null, taxa_entrega: pedidoEditando.taxa_entrega,
+
         desconto: pedidoEditando.desconto || 0, pago: pedidoEditando.pago, total_geral: novoTotal
+
       }).eq('id', principalId);
+
       if (erroPrincipal) throw erroPrincipal;
 
+
+
       const idsRelacionados = pedidoEditando.ids_fragmentados || [pedidoEditando.id];
+
       await supabase.from('itens_pedido').delete().in('pedido_id', idsRelacionados);
 
+
+
       if (pedidoEditando.itens && pedidoEditando.itens.length > 0) {
+
         const novosItensDB = pedidoEditando.itens.map(item => ({
+
           pedido_id: principalId, produto_id: item.produto_id || null, codigo_produto: item.codigo_produto,
+
           nome_produto: item.nome_produto, quantidade: item.quantidade, preco_unitario: item.preco_unitario
+
         }));
+
         const { error: erroItens } = await supabase.from('itens_pedido').insert(novosItensDB);
+
         if (erroItens) throw erroItens;
+
       }
 
+
+
       setModalEditar(false);
+
       buscarPedidosDaBase();
+
     } catch (err: any) { alert(`Erro ao salvar edição: ${err.message}`); } finally { setSalvando(false); }
+
   };
+
+
 
   const pedidosExibidos = useMemo(() => {
+
     let filtrados = [...pedidos];
+
     if (termoPesquisa.trim() !== '') {
+
       const termo = termoPesquisa.toLowerCase().trim();
+
       filtrados = filtrados.filter(pedido => {
+
         const nomeCliente = (pedido.cliente || '').toLowerCase();
+
         const numPedidoStr = String(pedido.numero_pedido);
+
         return nomeCliente.includes(termo) || numPedidoStr.includes(termo);
+
       });
+
     }
+
     return filtrados.sort((a, b) => {
+
       if (ordemDirecao === 'desc') return b.numero_pedido - a.numero_pedido;
+
       return a.numero_pedido - b.numero_pedido;
+
     });
+
   }, [pedidos, termoPesquisa, ordemDirecao]);
 
+
+
   const limparFiltros = () => { setDataInicio(''); setDataFim(''); setTermoPesquisa(''); };
+
   const selecionarHoje = () => {
+
     const hoje = getHojeLisboa();
+
     setDataInicio(hoje); setDataFim(hoje);
+
   };
+
+
 
   const faturamentoTotal = pedidosExibidos.reduce((acc, p) => acc + p.total_geral, 0);
+
   const totalDescontos = pedidosExibidos.reduce((acc, p) => acc + p.desconto, 0);
+
   const pendenteCaderninho = pedidosExibidos.filter(p => !p.pago).reduce((acc, p) => acc + p.total_geral, 0);
 
+
+
   const getCorCanal = (canal: string) => {
+
     if (canal === 'Glovo') return 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20';
+
     if (canal === 'WhatsApp') return 'bg-green-500/10 text-green-500 border-green-500/20';
+
     if (canal === 'Palmbites') return 'bg-teal-500/10 text-teal-500 border-teal-500/20';
+
     if (canal === 'Revendedores') return 'bg-purple-500/10 text-purple-400 border-purple-500/20';
+
     return 'bg-zinc-500/10 text-zinc-400 border-zinc-800';
+
   };
 
+
+
   return (
+
     <div className="min-h-screen bg-zinc-950 text-white flex flex-col font-sans relative">
+
       <header className="bg-zinc-900 border-b border-zinc-800 px-6 py-4 flex justify-between items-center shadow-lg">
+
         <div className="flex items-center gap-3">
+
           <span className="text-2xl">📓</span>
+
           <h1 className="text-xl font-bold tracking-wide">Registo e Controlo de Vendas</h1>
+
         </div>
+
         <button onClick={buscarPedidosDaBase} className="bg-zinc-800 hover:bg-zinc-700 text-xs font-semibold px-4 py-2 rounded-xl border border-zinc-700 transition-all">
+
           🔄 Sincronizar Dados
+
         </button>
+
       </header>
 
+
+
       <section className="px-6 pt-6">
+
         <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-4 space-y-4">
+
           <div className="flex flex-col md:flex-row gap-4 items-center">
+
             <div className="flex-1 w-full">
+
               <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">Pesquisar Pedido</label>
+
               <input type="text" value={termoPesquisa} onChange={e => setTermoPesquisa(e.target.value)} placeholder="Pesquise por nome do cliente ou número do pedido..." className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-orange-500 outline-none" />
+
             </div>
+
             <div>
+
               <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">Ordem</label>
+
               <select value={ordemDirecao} onChange={e => setOrdemDirecao(e.target.value as 'desc' | 'asc')} className="bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-orange-500 outline-none cursor-pointer">
+
                 <option value="desc">⬇️ Decrescente (Mais Recentes)</option>
+
                 <option value="asc">⬆️ Crescente (Mais Antigos)</option>
+
               </select>
+
             </div>
+
           </div>
+
           <div className="flex flex-col xl:flex-row xl:items-end justify-between gap-4 pt-3 border-t border-zinc-800">
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full xl:w-auto">
+
               <div>
+
                 <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">De (Data Inicial)</label>
+
                 <input type="date" value={dataInicio} max={dataFim || undefined} onChange={e => setDataInicio(e.target.value)} className="w-full sm:w-48 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white focus:border-orange-500 outline-none [color-scheme:dark]" />
+
               </div>
+
               <div>
+
                 <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">Até (Data Final)</label>
+
                 <input type="date" value={dataFim} min={dataInicio || undefined} onChange={e => setDataFim(e.target.value)} className="w-full sm:w-48 bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-white focus:border-orange-500 outline-none [color-scheme:dark]" />
+
               </div>
+
             </div>
+
             <div className="flex items-center gap-2">
+
               <button type="button" onClick={selecionarHoje} className="bg-orange-600 hover:bg-orange-500 text-xs font-bold px-4 py-2.5 rounded-xl transition-all shadow-md">Hoje</button>
+
               <button type="button" onClick={limparFiltros} disabled={!dataInicio && !dataFim && !termoPesquisa} className="bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 text-xs font-bold px-4 py-2.5 rounded-xl border border-zinc-700 transition-all">Limpar</button>
+
             </div>
+
           </div>
+
         </div>
+
       </section>
 
+
+
       <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+
         <div className="bg-zinc-900 border border-zinc-800/60 p-4 rounded-xl flex justify-between items-center">
+
           <div><span className="text-[10px] text-zinc-400 uppercase font-black">Faturamento Bruto</span><p className="text-2xl font-black mt-1">{faturamentoTotal.toFixed(2)}€</p></div><span className="text-2xl">💰</span>
+
         </div>
+
         <div className="bg-zinc-900 border border-zinc-800/60 p-4 rounded-xl flex justify-between items-center">
+
           <div><span className="text-[10px] text-zinc-400 uppercase font-black">Descontos Aplicados</span><p className="text-2xl font-black mt-1 text-red-400">{totalDescontos.toFixed(2)}€</p></div><span className="text-2xl">🎟️</span>
+
         </div>
+
         <div className="bg-zinc-900 border border-zinc-800/60 p-4 rounded-xl flex justify-between items-center">
+
           <div><span className="text-[10px] text-zinc-400 uppercase font-black">Em Falta (Caderninho)</span><p className="text-2xl font-black mt-1 text-orange-400">{pendenteCaderninho.toFixed(2)}€</p></div><span className="text-2xl">✏️</span>
+
         </div>
+
       </div>
 
+
+
       <main className="flex-1 px-6 pb-6 overflow-y-auto">
+
         {loading ? ( <div className="text-center text-zinc-500 py-24">A carregar registos...</div> ) : pedidosExibidos.length === 0 ? (
+
           <div className="text-center text-zinc-500 py-24 bg-zinc-900/20 border border-dashed border-zinc-800 rounded-2xl max-w-xl mx-auto space-y-2">
+
             <p className="text-base font-bold text-zinc-300">Nenhum pedido para exibir</p>
+
             <p className="text-xs text-zinc-500">Utilize os filtros para visualizar os pedidos desta data.</p>
+
           </div>
+
         ) : (
+
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+
             {pedidosExibidos.map(ped => (
+
               <div key={ped.id} className="bg-zinc-900 border border-zinc-800/80 rounded-2xl p-4 flex flex-col justify-between shadow-md hover:border-zinc-700/60 transition-all relative group">
+
                 <div className="absolute top-3 right-3 flex gap-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
+
                   <button
+
                     type="button"
+
                     onClick={() => imprimirReciboTermico(ped)}
+
                     className="w-7 h-7 bg-zinc-800 hover:bg-green-600 rounded-lg flex items-center justify-center text-sm transition-colors"
+
                     title="Imprimir Talão"
+
                     aria-label="Imprimir Talão"
+
                   >
+
                     🖨️
+
                   </button>
+
                   <button onClick={() => abrirEdicao(ped)} className="w-7 h-7 bg-zinc-800 hover:bg-blue-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Editar Informações e Itens/Combos">✏️</button>
+
                   <button onClick={() => excluirPedido(ped.numero_pedido, ped.ids_fragmentados!)} className="w-7 h-7 bg-zinc-800 hover:bg-red-600 rounded-lg flex items-center justify-center text-xs transition-colors" title="Excluir Pedido">🗑️</button>
+
                 </div>
+
                 <div>
+
                   <div className="flex justify-between items-start gap-2 border-b border-zinc-800/60 pb-3 mb-3 pr-24">
+
                     <div>
+
                       <span className="text-[10px] font-mono text-zinc-500">#{ped.numero_pedido} · {ped.data_pedido.substring(0,10)}</span>
+
                       <h3 className="font-bold text-zinc-100 text-sm mt-0.5">{ped.cliente || 'Cliente Anónimo'}</h3>
+
                     </div>
+
                     <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border uppercase ${getCorCanal(ped.canal)}`}>{ped.canal}</span>
+
                   </div>
+
                   <div className="space-y-2 mb-4">
+
                     {ped.itens && ped.itens.map((item, i) => (
+
                       <div key={i} className="flex justify-between text-xs text-zinc-300">
+
                         <span className="pr-2"><span className="font-bold text-orange-400 mr-1.5">{item.quantidade}x</span>{item.nome_produto}</span>
+
                         <span className="font-mono text-zinc-500 text-[11px]">{(item.preco_unitario * item.quantidade).toFixed(2)}€</span>
+
                       </div>
+
                     ))}
+
                   </div>
+
                 </div>
+
                 <div className="border-t border-zinc-800/60 pt-3 mt-2 space-y-2 text-xs text-zinc-400">
+
                   <div className="flex justify-between text-[11px]">
+
                     <span>Pagamento: <span className="text-zinc-200">{ped.forma_pagamento}</span></span>
+
                   </div>
-                  
+
+
+
                   {(ped.desconto > 0 || ped.taxa_entrega > 0) && (
+
                     <div className="flex justify-between text-[11px] mt-1">
+
                       {ped.desconto > 0 && <span className="text-red-400 font-medium">Desconto: -{ped.desconto.toFixed(2)}€</span>}
+
                       {ped.taxa_entrega > 0 && <span className="text-emerald-400 font-medium">Entrega: +{ped.taxa_entrega.toFixed(2)}€</span>}
+
                     </div>
+
                   )}
+
+
 
                   <div className="flex justify-between items-center border-t border-zinc-800/40 pt-2">
+
                     <span className="text-[11px]">Estafeta: <span className="text-zinc-300">{ped.entregador || 'Nenhum'}</span></span>
+
                     <span className="text-base font-black text-orange-500">{ped.total_geral.toFixed(2)}€</span>
+
                   </div>
+
                   {!ped.pago && ped.forma_pagamento === 'Caderninho' && (
+
                     <div className="mt-2 border-t border-zinc-800/50 pt-2">
+
                       <div className="text-[9px] uppercase tracking-wider font-bold text-orange-400 mb-1.5">
+
                         Marcar como pago:
+
                       </div>
+
                       <div className="grid grid-cols-2 gap-2">
+
                         <button
+
                           type="button"
+
                           onClick={() => liquidarCaderninho(ped.numero_pedido, 'Dinheiro')}
+
                           className="bg-green-600 hover:bg-green-500 text-white text-[10px] font-bold py-2 rounded-lg transition-colors"
+
                           title="Recebido em Dinheiro"
+
                         >
+
                           💵 Dinheiro
+
                         </button>
+
                         <button
+
                           type="button"
+
                           onClick={() => liquidarCaderninho(ped.numero_pedido, 'MBWay')}
+
                           className="bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold py-2 rounded-lg transition-colors"
+
                           title="Recebido por MB Way"
+
                         >
+
                           📱 MB Way
+
                         </button>
+
                       </div>
+
                     </div>
+
                   )}
+
                 </div>
+
               </div>
+
             ))}
+
           </div>
+
         )}
+
       </main>
 
+
+
       {modalEditar && pedidoEditando && (
+
         <div className="fixed inset-0 bg-black/80 flex justify-center items-center z-50 p-4">
+
           <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl p-6">
+
             <button onClick={() => setModalEditar(false)} className="float-right text-zinc-400">✕</button>
+
             <h2 className="text-xl font-bold mb-3">Editar Pedido #{pedidoEditando.numero_pedido}</h2>
-            
+
+
+
             {/* ALERTA VISUAL PARA ENSINAR A REGRA DO ESTOQUE */}
+
             <div className="bg-orange-500/10 border border-orange-500/50 p-3 rounded-xl mb-5">
+
               <p className="text-xs text-orange-400 font-bold flex items-center gap-1"><span>⚠️</span> ATENÇÃO AO ESTOQUE</p>
+
               <p className="text-[10px] text-zinc-300 mt-1">
+
                 Alterar itens por aqui <strong>NÃO</strong> atualiza o estoque. Se o pedido original estiver errado, feche isto, <strong>exclua o pedido inteiro</strong> (o sistema devolve tudo ao stock) e registe-o novamente no PDV.
+
               </p>
+
             </div>
 
+
+
             <form onSubmit={salvarEdicao} className="space-y-4">
+
               <input value={pedidoEditando.cliente || ''} onChange={e => setPedidoEditando({ ...pedidoEditando, cliente: e.target.value })} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm" placeholder="Nome do Cliente" />
+
               <div className="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+
                 {pedidoEditando.itens?.map((item, idx) => (
+
                   <div key={idx} className="flex items-center gap-2 bg-zinc-950 p-2 rounded-xl text-sm">
+
                     <span className="flex-1 truncate">{item.nome_produto}</span>
+
                     <input type="number" min="1" value={item.quantidade} onChange={e => alterarQtdItemEdicao(idx, Number(e.target.value))} className="w-16 bg-zinc-900 rounded p-1 text-center outline-none focus:border-orange-500 border border-zinc-800" />
+
                     <button type="button" onClick={() => removerItemEdicao(idx)} className="text-zinc-500 hover:text-red-400 px-2">✕</button>
+
                   </div>
+
                 ))}
+
               </div>
+
               <button type="submit" disabled={salvando} className="w-full bg-orange-600 hover:bg-orange-500 rounded-xl px-6 py-3.5 font-bold uppercase tracking-widest text-sm shadow-lg disabled:opacity-50 mt-2">
+
                 {salvando ? 'A guardar...' : 'Guardar Alterações'}
+
               </button>
+
             </form>
+
           </div>
+
         </div>
+
       )}
 
+
+
       {modalComboEdicao && comboSelecionadoParaMontar && (
+
         <div className="fixed inset-0 bg-black/80 flex justify-center items-center z-[60] p-4">
+
           <div className="bg-zinc-900 border border-zinc-800 w-full max-w-2xl rounded-3xl p-6">
+
             <h2 className="text-xl font-bold text-orange-500">{comboSelecionadoParaMontar.nome}</h2>
+
             <button onClick={() => setModalComboEdicao(false)} className="text-zinc-400 hover:text-white mt-4 mr-4">Cancelar</button>
+
             <button onClick={confirmarComboEdicao} className="bg-orange-600 hover:bg-orange-500 px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg">Adicionar Combo</button>
+
           </div>
+
         </div>
+
       )}
+
     </div>
+
   );
+
 }

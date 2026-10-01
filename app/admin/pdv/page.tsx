@@ -39,6 +39,46 @@ const escaparHtml = (valor: any) =>
 const moedaTalao = (valor: any) => `${Number(valor || 0).toFixed(2)}€`;
 
 
+const formatarDataHoraPedido = (valor: any) => {
+  const texto = String(valor ?? '').trim();
+  if (!texto) return '---';
+
+  // Os pedidos criados pelo PDV guardam "criado_em" sem fuso.
+  // Neste caso, preservamos exatamente a data/hora gravada.
+  const local = texto.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/);
+  const temFuso = /(?:Z|[+-]\d{2}:\d{2})$/i.test(texto);
+
+  if (local && !temFuso) {
+    const [, ano, mes, dia, hora, minuto] = local;
+    return `${dia}/${mes}/${ano} ${hora}:${minuto}`;
+  }
+
+  // Se o banco devolver timestamp com fuso, converte para hora de Portugal.
+  const data = new Date(texto);
+  if (!Number.isNaN(data.getTime())) {
+    return new Intl.DateTimeFormat('pt-PT', {
+      timeZone: 'Europe/Lisbon',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(data);
+  }
+
+  // Fallback para datas antigas que possam ter apenas YYYY-MM-DD.
+  const apenasData = texto.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (apenasData) {
+    const [, ano, mes, dia] = apenasData;
+    return `${dia}/${mes}/${ano} --:--`;
+  }
+
+  return texto;
+};
+
+
+
 
 const imprimirPeloWindows = (pedido: any) => {
 
@@ -87,6 +127,10 @@ const imprimirPeloWindows = (pedido: any) => {
   const desconto = Number(pedido?.desconto || 0);
 
   const total = Number(pedido?.total_geral || 0);
+
+  const dataHoraPedido = formatarDataHoraPedido(
+    pedido?.criado_em || pedido?.created_at || pedido?.data_hora_pedido || pedido?.data_pedido
+  );
 
 
 
@@ -209,6 +253,8 @@ const imprimirPeloWindows = (pedido: any) => {
           <div>Talão do Pedido</div>
 
           <div class="pedido">#${escaparHtml(pedido?.numero_pedido)}</div>
+
+          <div class="dados"><strong>Data/Hora:</strong> ${escaparHtml(dataHoraPedido)}</div>
 
         </div>
 
@@ -1334,6 +1380,16 @@ export default function CaixaPDV() {
           const dadosRecibo = {
 
             numero_pedido: novoNumeroStr,
+
+            data_pedido: dataPedido,
+
+            criado_em: pedidoGravado?.criado_em || dataHoraCriacaoCompleta,
+
+            created_at: pedidoGravado?.created_at || null,
+
+            data_hora_pedido: formatarDataHoraPedido(
+              pedidoGravado?.criado_em || pedidoGravado?.created_at || dataHoraCriacaoCompleta
+            ),
 
             canal: canal,
 
