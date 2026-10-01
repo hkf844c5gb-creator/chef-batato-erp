@@ -6,16 +6,15 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 
 import { createBrowserClient } from '@supabase/ssr';
 
-const formatarDataHoraPedido = (valor: any) => {
+
+const formatarDataPedido = (valor: any) => {
   const texto = String(valor ?? '').trim();
   if (!texto) return '---';
 
-  const local = texto.match(/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?/);
-  const temFuso = /(?:Z|[+-]\d{2}:\d{2})$/i.test(texto);
-
-  if (local && !temFuso) {
-    const [, ano, mes, dia, hora, minuto] = local;
-    return `${dia}/${mes}/${ano} ${hora}:${minuto}`;
+  const match = texto.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (match) {
+    const [, ano, mes, dia] = match;
+    return `${dia}/${mes}/${ano}`;
   }
 
   const data = new Date(texto);
@@ -25,20 +24,13 @@ const formatarDataHoraPedido = (valor: any) => {
       day: '2-digit',
       month: '2-digit',
       year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
     }).format(data);
-  }
-
-  const apenasData = texto.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (apenasData) {
-    const [, ano, mes, dia] = apenasData;
-    return `${dia}/${mes}/${ano} --:--`;
   }
 
   return texto;
 };
+
+
 
 
 
@@ -114,9 +106,7 @@ export const imprimirReciboTermico = (pedido: any) => {
 
   const total = Number(pedido?.total_geral || 0);
 
-  const dataHoraPedido = formatarDataHoraPedido(
-    pedido?.criado_em || pedido?.created_at || pedido?.data_pedido
-  );
+  const dataPedidoFormatada = formatarDataPedido(pedido?.data_pedido);
 
 
 
@@ -414,7 +404,7 @@ export const imprimirReciboTermico = (pedido: any) => {
 
           <div class="pedido">#${escaparHtml(pedido?.numero_pedido || '')}</div>
 
-          <div class="dados"><strong>Data/Hora:</strong> ${escaparHtml(dataHoraPedido)}</div>
+          <div class="dados"><strong>Data:</strong> ${escaparHtml(dataPedidoFormatada)}</div>
 
         </div>
 
