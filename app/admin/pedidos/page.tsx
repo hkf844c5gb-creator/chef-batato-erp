@@ -853,108 +853,25 @@ export default function GestaoPedidos() {
   // =========================================================================================
 
   const excluirPedido = async (pedidoNum: number, ids: string[]) => {
-    if (!confirm(`⚠️ Tem a certeza que deseja excluir o pedido #${pedidoNum}?
-
-🔄 Todos os itens que saíram do estoque por este pedido serão devolvidos automaticamente.`)) {
+    if (
+      !confirm(
+        `⚠️ Tem a certeza que deseja excluir o pedido #${pedidoNum}?\n\n` +
+        `🔄 O estoque consumido por este pedido será devolvido automaticamente.`
+      )
+    ) {
       return;
     }
 
     try {
-      // Busca TODAS as movimentações ligadas ao pedido:
-      // - SAÍDAS feitas na venda
-      // - ENTRADAS de estorno já feitas anteriormente
-      //
-      // Isso impede devolver duas vezes o mesmo pedido.
-      const { data: movimentosPedido, error: errBusca } = await supabase
-        .from('movimentos_estoque')
-        .select('*')
-        .ilike('observacoes', `%Pedido #${pedidoNum}%`);
-
-      if (errBusca) throw errBusca;
-
-      const porProduto = new Map<
-        string,
+      const { data: totalDevolvido, error } = await supabase.rpc(
+        'cancelar_pedidos_com_estorno',
         {
-          nome: string;
-          totalSaidaVenda: number;
-          totalJaDevolvido: number;
+          p_pedido_ids: ids,
+          p_numero_pedido: String(pedidoNum)
         }
-      >();
+      );
 
-      for (const mov of movimentosPedido || []) {
-        if (!mov.produto_id) continue;
-
-        const atual = porProduto.get(mov.produto_id) || {
-          nome: mov.nome_produto || 'Produto',
-          totalSaidaVenda: 0,
-          totalJaDevolvido: 0
-        };
-
-        const qtd = Number(mov.quantidade || 0);
-
-        // Só considera como consumo do pedido as saídas efetivamente criadas pelo PDV.
-        if (
-          mov.tipo_movimento === 'SAÍDA' &&
-          (
-            mov.origem === 'VENDA PDV' ||
-            mov.origem === 'VENDA PDV (Automático)'
-          )
-        ) {
-          atual.totalSaidaVenda += qtd;
-        }
-
-        // Se já houve estorno, desconta do que ainda falta devolver.
-        if (
-          mov.tipo_movimento === 'ENTRADA' &&
-          mov.origem === 'ESTORNO DE PEDIDO'
-        ) {
-          atual.totalJaDevolvido += qtd;
-        }
-
-        porProduto.set(mov.produto_id, atual);
-      }
-
-      let totalItensDevolvidos = 0;
-
-      for (const [produtoId, dados] of porProduto.entries()) {
-        const quantidadeADevolver = Math.max(
-          0,
-          dados.totalSaidaVenda - dados.totalJaDevolvido
-        );
-
-        if (quantidadeADevolver <= 0) continue;
-
-        const { error: errEstorno } = await supabase.rpc('movimentar_estoque', {
-          p_produto_id: produtoId,
-          p_delta: quantidadeADevolver,
-          p_origem: 'ESTORNO DE PEDIDO',
-          p_observacoes: `Devolução automática por exclusão do Pedido #${pedidoNum}`,
-          p_data_movimento: new Date().toISOString()
-        });
-
-        if (errEstorno) {
-          throw new Error(
-            `Falha ao devolver ${dados.nome} ao estoque: ${errEstorno.message}`
-          );
-        }
-
-        totalItensDevolvidos += quantidadeADevolver;
-      }
-
-      // Só apaga o pedido depois que o estoque foi devolvido.
-      const { error: errItens } = await supabase
-        .from('itens_pedido')
-        .delete()
-        .in('pedido_id', ids);
-
-      if (errItens) throw errItens;
-
-      const { error: errPedido } = await supabase
-        .from('pedidos')
-        .delete()
-        .in('id', ids);
-
-      if (errPedido) throw errPedido;
+      if (error) throw error;
 
       setPedidos(prev =>
         prev.filter(p => p.numero_pedido !== pedidoNum)
@@ -962,10 +879,13 @@ export default function GestaoPedidos() {
 
       alert(
         `✅ Pedido #${pedidoNum} excluído com sucesso!\n` +
-        `🔄 ${totalItensDevolvidos} unidade(s) devolvida(s) ao estoque.`
+        `🔄 ${Number(totalDevolvido || 0)} unidade(s) devolvida(s) ao estoque.`
       );
     } catch (err: any) {
-      alert(`Erro ao excluir pedido e estornar estoque: ${err.message}`);
+      alert(
+        `Erro ao excluir pedido e estornar estoque: ` +
+        `${err?.message || 'erro desconhecido'}`
+      );
     }
   };
 

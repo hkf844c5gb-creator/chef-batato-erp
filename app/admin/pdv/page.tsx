@@ -1068,120 +1068,109 @@ export default function CaixaPDV() {
 
 
 
-  const descontarStockAutomaticamente = async (itensDoCarrinho: ItemCarrinho[], numeroDaFatura: string) => {
-    try {
-      const consumos = new Map<string, number>();
-      let quantidadePratos = 0;
+  const descontarStockAutomaticamente = async (
+    itensDoCarrinho: ItemCarrinho[],
+    pedidoId: string,
+    numeroDaFatura: string
+  ) => {
+    const consumos = new Map<string, number>();
+    let quantidadePratos = 0;
 
-      for (const item of itensDoCarrinho) {
-        const cat = (item.produto.categoria || '').toLowerCase();
+    for (const item of itensDoCarrinho) {
+      const cat = (item.produto.categoria || '').toLowerCase();
 
-        let qtdPratosDesteItem = item.quantidade;
-        if (
-          cat === 'combo' &&
-          (
-            item.produto.nome.toLowerCase().includes('dois') ||
-            item.produto.nome.toLowerCase().includes('duplo')
-          )
-        ) {
-          qtdPratosDesteItem = item.quantidade * 2;
-        }
-
-        if (cat === 'batata' || cat === 'combo') {
-          quantidadePratos += qtdPratosDesteItem;
-        }
-
-        const idsParaProcessar =
-          item.isCombo && item.itensBaseId && item.itensBaseId.length > 0
-            ? item.itensBaseId
-            : [item.produto.id];
-
-        for (const produtoBaseId of idsParaProcessar) {
-          if (!produtoBaseId) continue;
-
-          const qtdAtual = consumos.get(produtoBaseId) || 0;
-          consumos.set(produtoBaseId, qtdAtual + item.quantidade);
-        }
+      let qtdPratosDesteItem = item.quantidade;
+      if (
+        cat === 'combo' &&
+        (
+          item.produto.nome.toLowerCase().includes('dois') ||
+          item.produto.nome.toLowerCase().includes('duplo')
+        )
+      ) {
+        qtdPratosDesteItem = item.quantidade * 2;
       }
 
-      // Cada item vendido é retirado diretamente no banco.
-      // A função SQL movimentar_estoque faz a soma/subtração de forma atómica,
-      // evitando que uma venda sobrescreva outra venda/reposição simultânea.
-      for (const [produtoId, qtdGasta] of consumos.entries()) {
-        const { data: prodData, error: errSelect } = await supabase
-          .from('produtos')
-          .select('id, nome')
-          .eq('id', produtoId)
-          .single();
-
-        if (errSelect) throw errSelect;
-        if (!prodData) continue;
-
-        const { error: errMovimento } = await supabase.rpc('movimentar_estoque', {
-          p_produto_id: produtoId,
-          p_delta: -Number(qtdGasta),
-          p_origem: 'VENDA PDV',
-          p_observacoes: `Pedido #${numeroDaFatura}`,
-          p_data_movimento: new Date().toISOString()
-        });
-
-        if (errMovimento) {
-          throw new Error(
-            `Falha ao retirar ${prodData.nome} do estoque: ${errMovimento.message}`
-          );
-        }
+      if (cat === 'batata' || cat === 'combo') {
+        quantidadePratos += qtdPratosDesteItem;
       }
 
-      // Materiais/embalagens automáticos da venda.
-      if (quantidadePratos > 0) {
-        const { data: todasEmbalagens, error: errEmbalagens } = await supabase
-          .from('produtos')
-          .select('id, nome, categoria');
+      const idsParaProcessar =
+        item.isCombo && item.itensBaseId && item.itensBaseId.length > 0
+          ? item.itensBaseId
+          : [item.produto.id];
 
-        if (errEmbalagens) throw errEmbalagens;
+      for (const produtoBaseId of idsParaProcessar) {
+        if (!produtoBaseId) continue;
+        consumos.set(
+          produtoBaseId,
+          (consumos.get(produtoBaseId) || 0) + item.quantidade
+        );
+      }
+    }
 
-        if (todasEmbalagens) {
-          const embsParaDescontar = todasEmbalagens.filter(e => {
-            const cat = (e.categoria || '').toLowerCase();
-            return (
-              cat.includes('embalagem') ||
-              cat.includes('material') ||
-              cat.includes('uso')
-            );
+    const movimentos: Array<{
+      produto_id: string;
+      quantidade: number;
+      origem: string;
+      observacoes: string;
+    }> = [];
+
+    for (const [produtoId, quantidade] of consumos.entries()) {
+      if (quantidade <= 0) continue;
+      movimentos.push({
+        produto_id: produtoId,
+        quantidade,
+        origem: 'VENDA PDV',
+        observacoes: `Pedido #${numeroDaFatura}`
+      });
+    }
+
+    // Mantém a regra atual de consumo automático de embalagens/materiais,
+    // mas agora todas as saídas da venda são aplicadas numa única transação.
+    if (quantidadePratos > 0) {
+      const { data: todasEmbalagens, error: errEmbalagens } = await supabase
+        .from('produtos')
+        .select('id, nome, categoria');
+
+      if (errEmbalagens) throw errEmbalagens;
+
+      for (const emb of todasEmbalagens || []) {
+        const cat = (emb.categoria || '').toLowerCase();
+        const nomeEmb = (emb.nome || '').toLowerCase();
+
+        const categoriaMaterial =
+          cat.includes('embalagem') ||
+          cat.includes('material') ||
+          cat.includes('uso');
+
+        const materialAutomatico =
+          nomeEmb.includes('saco') ||
+          nomeEmb.includes('garfo') ||
+          nomeEmb.includes('pote') ||
+          nomeEmb.includes('embalagem');
+
+        if (categoriaMaterial && materialAutomatico) {
+          movimentos.push({
+            produto_id: emb.id,
+            quantidade: quantidadePratos,
+            origem: 'VENDA PDV (Automático)',
+            observacoes: `Acompanhamento Pedido #${numeroDaFatura}`
           });
-
-          for (const emb of embsParaDescontar) {
-            const nomeEmb = emb.nome.toLowerCase();
-
-            if (
-              nomeEmb.includes('saco') ||
-              nomeEmb.includes('garfo') ||
-              nomeEmb.includes('pote') ||
-              nomeEmb.includes('embalagem')
-            ) {
-              const { error: errMovimentoEmb } = await supabase.rpc(
-                'movimentar_estoque',
-                {
-                  p_produto_id: emb.id,
-                  p_delta: -Number(quantidadePratos),
-                  p_origem: 'VENDA PDV (Automático)',
-                  p_observacoes: `Acompanhamento Pedido #${numeroDaFatura}`,
-                  p_data_movimento: new Date().toISOString()
-                }
-              );
-
-              if (errMovimentoEmb) {
-                throw new Error(
-                  `Falha ao retirar ${emb.nome} do estoque: ${errMovimentoEmb.message}`
-                );
-              }
-            }
-          }
         }
       }
-    } catch (err) {
-      console.error('Erro fatal ao descontar stock:', err);
-      throw err;
+    }
+
+    if (movimentos.length === 0) return;
+
+    const { error } = await supabase.rpc('registrar_saida_pedido', {
+      p_pedido_id: pedidoId,
+      p_numero_pedido: numeroDaFatura,
+      p_movimentos: movimentos,
+      p_data_movimento: new Date().toISOString()
+    });
+
+    if (error) {
+      throw new Error(`Falha ao atualizar o estoque da venda: ${error.message}`);
     }
   };
 
@@ -1231,32 +1220,12 @@ export default function CaixaPDV() {
 
 
 
-      const { data: todosPedidosNum } = await supabase
+      const { data: proximoNumero, error: erroNumero } = await supabase
+        .rpc('proximo_numero_pedido');
 
-        .from('pedidos')
+      if (erroNumero) throw erroNumero;
 
-        .select('numero_pedido');
-
-
-
-      let maiorNumero = 365;
-
-      if (todosPedidosNum) {
-
-        todosPedidosNum.forEach(p => {
-
-          const num = parseInt(p.numero_pedido, 10);
-
-          if (!isNaN(num) && num > maiorNumero) maiorNumero = num;
-
-        });
-
-      }
-
-
-
-      const novoNumeroStr = String(maiorNumero + 1);
-
+      const novoNumeroStr = String(proximoNumero);
 
 
       const { data: pedidoGravado, error: erroPedido } = await supabase.from('pedidos').insert([{ 
@@ -1323,7 +1292,20 @@ export default function CaixaPDV() {
 
 
 
-        await descontarStockAutomaticamente(carrinho, novoNumeroStr);
+        try {
+          await descontarStockAutomaticamente(
+            carrinho,
+            pedidoGravado.id,
+            novoNumeroStr
+          );
+        } catch (erroStock) {
+          // A função de estoque é transacional. Se ela falhar, nenhuma saída
+          // é aplicada; removemos também o pedido recém-criado para não ficar
+          // uma venda sem baixa de estoque.
+          await supabase.from('itens_pedido').delete().eq('pedido_id', pedidoGravado.id);
+          await supabase.from('pedidos').delete().eq('id', pedidoGravado.id);
+          throw erroStock;
+        }
 
 
 
