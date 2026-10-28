@@ -1639,20 +1639,6 @@ export default function CaixaPDV() {
 
           </div>
 
-          <div className="col-span-2">
-            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
-              Observação
-            </label>
-            <textarea
-              value={observacao}
-              onChange={(e) => setObservacao(e.target.value)}
-              placeholder="Ex: sem cebola, ligar ao chegar, entregar na portaria..."
-              rows={2}
-              maxLength={500}
-              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none text-zinc-200 resize-none"
-            />
-          </div>
-
 
 
           <div>
@@ -1734,6 +1720,21 @@ export default function CaixaPDV() {
             <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Desconto (€)</label>
 
             <input type="number" step="0.50" min="0" value={descontoManual} onChange={(e) => setDescontoManual(e.target.value)} className="w-full bg-zinc-950 border border-red-900/50 rounded-xl px-3 py-2 text-sm font-bold text-red-400 outline-none" />
+
+          </div>
+
+          <div>
+
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">Observação</label>
+
+            <input
+              type="text"
+              value={observacao}
+              onChange={(e) => setObservacao(e.target.value)}
+              placeholder="Ex: sem cebola, ligar ao chegar..."
+              maxLength={500}
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none text-zinc-200"
+            />
 
           </div>
 
