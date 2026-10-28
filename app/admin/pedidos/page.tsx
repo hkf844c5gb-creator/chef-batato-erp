@@ -873,13 +873,30 @@ export default function GestaoPedidos() {
 
       if (error) throw error;
 
+      const { data: numeroLiberado, error: erroLiberarNumero } = await supabase.rpc(
+        'liberar_ultimo_numero_pedido',
+        {
+          p_numero_pedido: Number(pedidoNum)
+        }
+      );
+
+      if (erroLiberarNumero) {
+        console.warn(
+          'Pedido excluído, mas não foi possível verificar a libertação do número:',
+          erroLiberarNumero
+        );
+      }
+
       setPedidos(prev =>
         prev.filter(p => p.numero_pedido !== pedidoNum)
       );
 
       alert(
         `✅ Pedido #${pedidoNum} excluído com sucesso!\n` +
-        `🔄 ${Number(totalDevolvido || 0)} unidade(s) devolvida(s) ao estoque.`
+        `🔄 ${Number(totalDevolvido || 0)} unidade(s) devolvida(s) ao estoque.\n` +
+        (numeroLiberado
+          ? `🔢 O número ${pedidoNum} ficará disponível para o próximo pedido.`
+          : `🔢 A sequência dos pedidos foi mantida.`)
       );
     } catch (err: any) {
       alert(
