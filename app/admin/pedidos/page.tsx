@@ -873,6 +873,9 @@ export default function GestaoPedidos() {
 
       if (error) throw error;
 
+      // Se este era realmente o último número emitido, liberta-o para
+      // que o próximo pedido possa reutilizar o mesmo número.
+      // Se já existir número posterior, a sequência é mantida.
       const { data: numeroLiberado, error: erroLiberarNumero } = await supabase.rpc(
         'liberar_ultimo_numero_pedido',
         {
@@ -1665,6 +1668,72 @@ export default function GestaoPedidos() {
             <form onSubmit={salvarEdicao} className="space-y-4">
 
               <input value={pedidoEditando.cliente || ''} onChange={e => setPedidoEditando({ ...pedidoEditando, cliente: e.target.value })} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm" placeholder="Nome do Cliente" />
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">
+                    Canal da Venda
+                  </label>
+                  <select
+                    value={pedidoEditando.canal || ''}
+                    onChange={e => alterarCanalEdicao(e.target.value)}
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-3 text-sm text-white outline-none focus:border-orange-500"
+                  >
+                    <option value="Balcão">Balcão</option>
+                    <option value="WhatsApp">WhatsApp</option>
+                    <option value="Palmbites">Palmbites</option>
+                    <option value="Glovo">Glovo</option>
+                    <option value="Revendedores">Revendedores</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">
+                    Forma de Pagamento
+                  </label>
+                  <select
+                    value={pedidoEditando.forma_pagamento || ''}
+                    onChange={e =>
+                      setPedidoEditando({
+                        ...pedidoEditando,
+                        forma_pagamento: e.target.value
+                      })
+                    }
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-3 text-sm text-white outline-none focus:border-orange-500"
+                  >
+                    <option value="">Selecionar</option>
+                    <option value="Dinheiro">Dinheiro</option>
+                    <option value="MBWay">MB Way</option>
+                    <option value="Multibanco">Multibanco</option>
+                    <option value="Cartão">Cartão</option>
+                    <option value="Caderninho">Caderninho</option>
+                    <option value="Glovo">Glovo</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">
+                    Entregador
+                  </label>
+                  <select
+                    value={pedidoEditando.entregador || ''}
+                    onChange={e =>
+                      setPedidoEditando({
+                        ...pedidoEditando,
+                        entregador: e.target.value
+                      })
+                    }
+                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-3 text-sm text-white outline-none focus:border-orange-500"
+                  >
+                    <option value="">Nenhum / Balcão</option>
+                    {listaEstafetas.map(est => (
+                      <option key={est.nome} value={est.nome}>
+                        {est.nome}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
 
               <div className="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
 
