@@ -1669,23 +1669,8 @@ export default function GestaoPedidos() {
 
               <input value={pedidoEditando.cliente || ''} onChange={e => setPedidoEditando({ ...pedidoEditando, cliente: e.target.value })} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl p-3 text-sm" placeholder="Nome do Cliente" />
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">
-                    Canal da Venda
-                  </label>
-                  <select
-                    value={pedidoEditando.canal || ''}
-                    onChange={e => alterarCanalEdicao(e.target.value)}
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-3 text-sm text-white outline-none focus:border-orange-500"
-                  >
-                    <option value="Balcão">Balcão</option>
-                    <option value="WhatsApp">WhatsApp</option>
-                    <option value="Palmbites">Palmbites</option>
-                    <option value="Glovo">Glovo</option>
-                    <option value="Revendedores">Revendedores</option>
-                  </select>
-                </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+
 
                 <div>
                   <label className="block text-[10px] uppercase font-black text-zinc-400 mb-1.5">

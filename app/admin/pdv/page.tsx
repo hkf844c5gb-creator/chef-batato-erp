@@ -501,6 +501,7 @@ export default function CaixaPDV() {
   const [taxaEntrega, setTaxaEntrega] = useState('0.00');
 
   const [descontoManual, setDescontoManual] = useState('0.00');
+  const [observacao, setObservacao] = useState('');
 
 
 
@@ -1254,6 +1255,8 @@ export default function CaixaPDV() {
 
           pago: estaPago,
 
+          observacao: observacao.trim() || null,
+
           data_pedido: dataPedido, 
 
           criado_em: dataHoraCriacaoCompleta
@@ -1408,6 +1411,7 @@ export default function CaixaPDV() {
       setTaxaEntrega('0.00'); 
 
       setDescontoManual('0.00');
+      setObservacao('');
 
 
 
@@ -1633,6 +1637,20 @@ export default function CaixaPDV() {
 
             <input type="text" value={moradaCliente} onChange={(e) => setMoradaCliente(e.target.value)} placeholder="Rua, Número, Andar..." className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none text-zinc-200" />
 
+          </div>
+
+          <div className="col-span-2">
+            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1.5">
+              Observação
+            </label>
+            <textarea
+              value={observacao}
+              onChange={(e) => setObservacao(e.target.value)}
+              placeholder="Ex: sem cebola, ligar ao chegar, entregar na portaria..."
+              rows={2}
+              maxLength={500}
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm focus:border-orange-500 outline-none text-zinc-200 resize-none"
+            />
           </div>
 
 
