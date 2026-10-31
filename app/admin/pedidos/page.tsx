@@ -526,7 +526,25 @@ export const imprimirReciboTermico = (pedido: any) => {
 
 interface ItemPedido { id?: string; produto_id?: string; codigo_produto: string; nome_produto: string; quantidade: number; preco_unitario: number; }
 
-interface Pedido { id: string; numero_pedido: number; data_pedido: string; cliente: string; canal: string; forma_pagamento: string; entregador: string; taxa_entrega: number; desconto: number; total_geral: number; pago: boolean; itens?: ItemPedido[]; ids_fragmentados?: string[]; criado_em?: string; created_at?: string; }
+interface Pedido {
+  id: string;
+  numero_pedido: number;
+  data_pedido: string;
+  cliente: string;
+  canal: string;
+  forma_pagamento: string;
+  entregador: string;
+  taxa_entrega: number;
+  desconto: number;
+  total_geral: number;
+  pago: boolean;
+  contacto_cliente?: string;
+  endereco?: string;
+  itens?: ItemPedido[];
+  ids_fragmentados?: string[];
+  criado_em?: string;
+  created_at?: string;
+}
 
 interface Combo { id: string; codigo: string; nome: string; descricao: string; tipo_preco: 'fixo' | 'desconto' | 'desconto_fixo' | 'item_gratis'; preco_fixo: number | null; preco_glovo?: number | null; preco_whatsapp?: number | null; desconto_percentual: number; desconto_absoluto: number; item_gratis_categoria: string; combo_grupos: any[]; }
 
@@ -589,6 +607,56 @@ export default function GestaoPedidos() {
 
 
   const supabase = createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+
+  const imprimirPedidoComDadosAtualizados = async (pedido: Pedido) => {
+    try {
+      let clienteAtual: any = null;
+
+      // Primeiro procura pelo contacto, por ser o dado mais específico.
+      if ((pedido.contacto_cliente || '').trim()) {
+        const { data, error } = await supabase
+          .from('clientes')
+          .select('nome, contacto, morada')
+          .eq('contacto', pedido.contacto_cliente!.trim())
+          .limit(1)
+          .maybeSingle();
+
+        if (!error && data) clienteAtual = data;
+      }
+
+      // Se não encontrar pelo contacto, procura pelo nome.
+      if (!clienteAtual && (pedido.cliente || '').trim()) {
+        const { data, error } = await supabase
+          .from('clientes')
+          .select('nome, contacto, morada')
+          .ilike('nome', pedido.cliente.trim())
+          .limit(1)
+          .maybeSingle();
+
+        if (!error && data) clienteAtual = data;
+      }
+
+      const pedidoParaImprimir = {
+        ...pedido,
+        contacto_cliente:
+          (clienteAtual?.contacto || '').trim() ||
+          pedido.contacto_cliente ||
+          '',
+        endereco:
+          (clienteAtual?.morada || '').trim() ||
+          pedido.endereco ||
+          ''
+      };
+
+      imprimirReciboTermico(pedidoParaImprimir);
+    } catch (erro) {
+      console.warn(
+        'Não foi possível atualizar os dados do cliente antes da impressão. A usar os dados gravados no pedido.',
+        erro
+      );
+      imprimirReciboTermico(pedido);
+    }
+  };
 
 
 
@@ -1487,7 +1555,7 @@ export default function GestaoPedidos() {
 
                     type="button"
 
-                    onClick={() => imprimirReciboTermico(ped)}
+                    onClick={() => void imprimirPedidoComDadosAtualizados(ped)}
 
                     className="w-7 h-7 bg-zinc-800 hover:bg-green-600 rounded-lg flex items-center justify-center text-sm transition-colors"
 
