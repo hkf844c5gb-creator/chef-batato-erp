@@ -188,6 +188,14 @@ function ProdutosTab() {
     }
   };
 
+  const calcularLucroMargem = (preco: number, custo: number) => {
+    const p = Number(preco || 0);
+    const c = Number(custo || 0);
+    const lucro = p - c;
+    const margem = p > 0 ? (lucro / p) * 100 : 0;
+    return { lucro, margem };
+  };
+
   return (
     <div className="min-h-screen bg-zinc-950 text-white font-sans flex flex-col">
       {/* Cabeçalho */}
@@ -210,18 +218,22 @@ function ProdutosTab() {
                 <th className="p-4 font-bold">Código</th>
                 <th className="p-4 font-bold">Produto</th>
                 <th className="p-4 font-bold">Categoria</th>
+                <th className="p-4 font-bold">Custo (€)</th>
                 <th className="p-4 font-bold">Balcão (€)</th>
+                <th className="p-4 font-bold">Lucro / Margem Balcão</th>
                 <th className="p-4 font-bold">WhatsApp (€)</th>
+                <th className="p-4 font-bold">Lucro / Margem WhatsApp</th>
                 <th className="p-4 font-bold">Glovo (€)</th>
+                <th className="p-4 font-bold">Lucro / Margem Glovo</th>
                 <th className="p-4 font-bold">Status</th>
                 <th className="p-4 font-bold text-right">Ações</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800/50">
               {loading ? (
-                <tr><td colSpan={8} className="text-center p-8 text-zinc-500">A carregar cardápio...</td></tr>
+                <tr><td colSpan={12} className="text-center p-8 text-zinc-500">A carregar cardápio...</td></tr>
               ) : produtos.length === 0 ? (
-                <tr><td colSpan={8} className="text-center p-8 text-zinc-500">Nenhum produto cadastrado.</td></tr>
+                <tr><td colSpan={12} className="text-center p-8 text-zinc-500">Nenhum produto cadastrado.</td></tr>
               ) : (
                 produtos.map(prod => (
                   <tr key={prod.id} className="hover:bg-zinc-800/30 transition-colors">
@@ -232,9 +244,53 @@ function ProdutosTab() {
                         {prod.categoria}
                       </span>
                     </td>
-                    <td className="p-4 text-zinc-300">{prod.preco_cardapio.toFixed(2)}€</td>
-                    <td className="p-4 text-zinc-300">{prod.preco_whatsapp.toFixed(2)}€</td>
-                    <td className="p-4 text-zinc-300">{prod.preco_glovo.toFixed(2)}€</td>
+                    <td className="p-4 font-bold text-amber-400">{Number(prod.custo_unitario || 0).toFixed(2)}€</td>
+
+                    <td className="p-4 text-zinc-300">{Number(prod.preco_cardapio || 0).toFixed(2)}€</td>
+                    <td className="p-4">
+                      {(() => {
+                        const { lucro, margem } = calcularLucroMargem(prod.preco_cardapio, prod.custo_unitario);
+                        return (
+                          <div className="flex flex-col">
+                            <span className={`font-bold ${lucro >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                              {lucro.toFixed(2)}€
+                            </span>
+                            <span className="text-[10px] text-zinc-500">{margem.toFixed(1)}%</span>
+                          </div>
+                        );
+                      })()}
+                    </td>
+
+                    <td className="p-4 text-zinc-300">{Number(prod.preco_whatsapp || 0).toFixed(2)}€</td>
+                    <td className="p-4">
+                      {(() => {
+                        const { lucro, margem } = calcularLucroMargem(prod.preco_whatsapp, prod.custo_unitario);
+                        return (
+                          <div className="flex flex-col">
+                            <span className={`font-bold ${lucro >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                              {lucro.toFixed(2)}€
+                            </span>
+                            <span className="text-[10px] text-zinc-500">{margem.toFixed(1)}%</span>
+                          </div>
+                        );
+                      })()}
+                    </td>
+
+                    <td className="p-4 text-zinc-300">{Number(prod.preco_glovo || 0).toFixed(2)}€</td>
+                    <td className="p-4">
+                      {(() => {
+                        const { lucro, margem } = calcularLucroMargem(prod.preco_glovo, prod.custo_unitario);
+                        return (
+                          <div className="flex flex-col">
+                            <span className={`font-bold ${lucro >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                              {lucro.toFixed(2)}€
+                            </span>
+                            <span className="text-[10px] text-zinc-500">{margem.toFixed(1)}%</span>
+                          </div>
+                        );
+                      })()}
+                    </td>
+
                     <td className="p-4">
                       <div className="flex flex-col gap-1 items-start">
                         {prod.ativo ? <span className="bg-green-500/10 text-green-500 border border-green-500/20 text-[9px] px-1.5 py-0.5 rounded font-bold uppercase">Ativo</span> : <span className="bg-red-500/10 text-red-500 border border-red-500/20 text-[9px] px-1.5 py-0.5 rounded font-bold uppercase">Inativo</span>}
@@ -302,8 +358,8 @@ function ProdutosTab() {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-zinc-400 mb-1">CUSTO UNITÁRIO (€) - Opcional</label>
-                <input type="number" step="0.01" value={custoUnitario} onChange={e => setCustoUnitario(e.target.value)} placeholder="Para cálculo de margem de lucro futura" className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-orange-500 outline-none" />
+                <label className="block text-xs font-bold text-zinc-400 mb-1">CUSTO UNITÁRIO (€)</label>
+                <input type="number" step="0.01" value={custoUnitario} onChange={e => setCustoUnitario(e.target.value)} placeholder="Ex: 3.20" className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-orange-500 outline-none" />
               </div>
 
               <div className="flex gap-4 p-4 bg-zinc-950 rounded-xl border border-zinc-800">
