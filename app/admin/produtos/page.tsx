@@ -79,6 +79,7 @@ function ProdutosTab() {
   const [categoria, setCategoria] = useState('batata');
   const [criandoCategoria, setCriandoCategoria] = useState(false);
   const [novaCategoria, setNovaCategoria] = useState('');
+  const [categoriasExtras, setCategoriasExtras] = useState<string[]>([]);
   const [precoCardapio, setPrecoCardapio] = useState('');
   const [precoWhatsapp, setPrecoWhatsapp] = useState('');
   const [precoGlovo, setPrecoGlovo] = useState('');
@@ -112,6 +113,22 @@ function ProdutosTab() {
 
   useEffect(() => {
     carregarProdutos();
+
+    try {
+      const guardadas = window.localStorage.getItem('chefbatato_categorias_produtos');
+      if (guardadas) {
+        const parsed = JSON.parse(guardadas);
+        if (Array.isArray(parsed)) {
+          setCategoriasExtras(
+            parsed
+              .map((cat: any) => String(cat || '').trim().toLowerCase())
+              .filter(Boolean)
+          );
+        }
+      }
+    } catch (erro) {
+      console.warn('Não foi possível carregar categorias guardadas localmente:', erro);
+    }
   }, []);
 
   const categoriasDisponiveis = Array.from(
@@ -121,6 +138,7 @@ function ProdutosTab() {
       'bebida',
       'sobremesa',
       'outro',
+      ...categoriasExtras,
       ...produtos
         .map(prod => (prod.categoria || '').trim().toLowerCase())
         .filter(Boolean),
@@ -146,9 +164,23 @@ function ProdutosTab() {
       return;
     }
 
+    const novasCategorias = Array.from(
+      new Set([...categoriasExtras, valor])
+    ).sort((a, b) => a.localeCompare(b, 'pt'));
+
+    setCategoriasExtras(novasCategorias);
     setCategoria(valor);
     setNovaCategoria('');
     setCriandoCategoria(false);
+
+    try {
+      window.localStorage.setItem(
+        'chefbatato_categorias_produtos',
+        JSON.stringify(novasCategorias)
+      );
+    } catch (erro) {
+      console.warn('Não foi possível guardar a nova categoria localmente:', erro);
+    }
   };
 
   const abrirModalNovo = () => {
@@ -171,7 +203,18 @@ function ProdutosTab() {
     setEditandoId(prod.id);
     setCodigo(prod.codigo || '');
     setNome(prod.nome || '');
-    setCategoria(prod.categoria || 'batata');
+
+    const categoriaProduto = (prod.categoria || 'batata').trim().toLowerCase();
+    setCategoria(categoriaProduto);
+
+    if (
+      categoriaProduto &&
+      !categoriasExtras.includes(categoriaProduto)
+    ) {
+      setCategoriasExtras(prev =>
+        Array.from(new Set([...prev, categoriaProduto]))
+      );
+    }
     setCriandoCategoria(false);
     setNovaCategoria('');
     setPrecoCardapio(prod.preco_cardapio?.toString() || '');
