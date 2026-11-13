@@ -72,6 +72,10 @@ function ProdutosTab() {
   // Estados do Modal
   const [modalAberto, setModalAberto] = useState(false);
   const [editandoId, setEditandoId] = useState<string | null>(null);
+  const [modalCategoriasAberto, setModalCategoriasAberto] = useState(false);
+  const [categoriaEmEdicao, setCategoriaEmEdicao] = useState<string | null>(null);
+  const [nomeCategoriaEdicao, setNomeCategoriaEdicao] = useState('');
+  const [novaCategoriaGestao, setNovaCategoriaGestao] = useState('');
 
   // Campos do Formulário
   const [codigo, setCodigo] = useState('');
@@ -183,6 +187,100 @@ function ProdutosTab() {
     }
   };
 
+  const normalizarCategoria = (valor: string) =>
+    valor.trim().toLowerCase().replace(/\s+/g, '_');
+
+  const guardarCategoriasExtras = (categorias: string[]) => {
+    const lista = Array.from(new Set(categorias.map(normalizarCategoria).filter(Boolean)))
+      .sort((a, b) => a.localeCompare(b, 'pt'));
+
+    setCategoriasExtras(lista);
+
+    try {
+      window.localStorage.setItem(
+        'chefbatato_categorias_produtos',
+        JSON.stringify(lista)
+      );
+    } catch (erro) {
+      console.warn('Não foi possível guardar categorias localmente:', erro);
+    }
+  };
+
+  const adicionarCategoriaGestao = () => {
+    const valor = normalizarCategoria(novaCategoriaGestao);
+
+    if (!valor) {
+      alert('Escreva o nome da categoria.');
+      return;
+    }
+
+    if (categoriasDisponiveis.includes(valor)) {
+      alert('Essa categoria já existe.');
+      return;
+    }
+
+    guardarCategoriasExtras([...categoriasExtras, valor]);
+    setNovaCategoriaGestao('');
+  };
+
+  const iniciarEdicaoCategoria = (categoriaAtual: string) => {
+    setCategoriaEmEdicao(categoriaAtual);
+    setNomeCategoriaEdicao(nomeCategoria(categoriaAtual));
+  };
+
+  const cancelarEdicaoCategoria = () => {
+    setCategoriaEmEdicao(null);
+    setNomeCategoriaEdicao('');
+  };
+
+  const guardarEdicaoCategoria = async () => {
+    if (!categoriaEmEdicao) return;
+
+    const nova = normalizarCategoria(nomeCategoriaEdicao);
+    const antiga = normalizarCategoria(categoriaEmEdicao);
+
+    if (!nova) {
+      alert('O nome da categoria não pode ficar vazio.');
+      return;
+    }
+
+    if (nova !== antiga && categoriasDisponiveis.includes(nova)) {
+      alert('Já existe uma categoria com esse nome.');
+      return;
+    }
+
+    try {
+      if (nova !== antiga) {
+        const { error } = await supabase
+          .from('produtos')
+          .update({ categoria: nova })
+          .eq('categoria', antiga);
+
+        if (error) throw error;
+      }
+
+      const atualizadas = categoriasExtras
+        .filter(cat => normalizarCategoria(cat) !== antiga);
+
+      if (nova) atualizadas.push(nova);
+
+      guardarCategoriasExtras(atualizadas);
+
+      if (categoria === antiga) {
+        setCategoria(nova);
+      }
+
+      setCategoriaEmEdicao(null);
+      setNomeCategoriaEdicao('');
+      await carregarProdutos();
+
+      alert('Categoria atualizada com sucesso!');
+    } catch (err: any) {
+      console.error(err);
+      alert(`Erro ao atualizar categoria: ${err.message || err}`);
+    }
+  };
+
   const abrirModalNovo = () => {
     setEditandoId(null);
     setCodigo('');
@@ -290,11 +388,21 @@ function ProdutosTab() {
       <header className="bg-zinc-900 border-b border-zinc-800 px-6 py-4 flex justify-between items-center">
         <div>
           <h1 className="text-xl font-bold text-orange-500">Gestão de Cardápio</h1>
-          <p className="text-xs text-zinc-400 mt-1">Crie e edite produtos, adicionais e bebidas.</p>
+          <p className="text-xs text-zinc-400 mt-1">Crie e edite produtos, preços e categorias.</p>
         </div>
-        <button onClick={abrirModalNovo} className="bg-orange-600 hover:bg-orange-700 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg transition-all">
-          + Novo Produto
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setModalCategoriasAberto(true)}
+            className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-4 py-2.5 rounded-xl text-sm font-bold border border-zinc-700 transition-all"
+          >
+            🗂️ Gerir Categorias
+          </button>
+
+          <button onClick={abrirModalNovo} className="bg-orange-600 hover:bg-orange-700 text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-lg transition-all">
+            + Novo Produto
+          </button>
+        </div>
       </header>
 
       {/* Tabela de Produtos */}
@@ -397,6 +505,131 @@ function ProdutosTab() {
           </table>
         </div>
       </main>
+
+      {/* Modal Gestão de Categorias */}
+      {modalCategoriasAberto && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex justify-center items-center z-[60] p-4 overflow-y-auto">
+          <div className="bg-zinc-900 border border-zinc-800 w-full max-w-lg rounded-2xl shadow-2xl relative my-8">
+            <div className="p-6 border-b border-zinc-800 flex justify-between items-center">
+              <div>
+                <h2 className="text-lg font-bold text-orange-500">Gerir Categorias</h2>
+                <p className="text-xs text-zinc-500 mt-1">
+                  Adicione novas categorias ou altere o nome das existentes.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setModalCategoriasAberto(false);
+                  cancelarEdicaoCategoria();
+                }}
+                className="text-zinc-400 hover:text-white text-xl"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="p-6 space-y-5">
+              <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+                <label className="block text-[10px] uppercase font-black tracking-wide text-zinc-400 mb-2">
+                  Nova categoria
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={novaCategoriaGestao}
+                    onChange={e => setNovaCategoriaGestao(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        adicionarCategoriaGestao();
+                      }
+                    }}
+                    placeholder="Ex: Rösti, Molhos, Congelados..."
+                    className="flex-1 bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-2.5 text-sm text-white outline-none focus:border-orange-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={adicionarCategoriaGestao}
+                    className="bg-orange-600 hover:bg-orange-500 px-4 py-2.5 rounded-xl text-xs font-black text-white"
+                  >
+                    + Adicionar
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="text-xs uppercase font-black tracking-wide text-zinc-400">
+                    Categorias existentes
+                  </h3>
+                  <span className="text-[10px] text-zinc-600">
+                    {categoriasDisponiveis.length} categoria(s)
+                  </span>
+                </div>
+
+                <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
+                  {categoriasDisponiveis.map(cat => (
+                    <div
+                      key={cat}
+                      className="rounded-xl border border-zinc-800 bg-zinc-950 px-3 py-3"
+                    >
+                      {categoriaEmEdicao === cat ? (
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={nomeCategoriaEdicao}
+                            onChange={e => setNomeCategoriaEdicao(e.target.value)}
+                            className="flex-1 bg-zinc-900 border border-orange-500/50 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-orange-500"
+                            autoFocus
+                          />
+                          <button
+                            type="button"
+                            onClick={guardarEdicaoCategoria}
+                            className="bg-green-600 hover:bg-green-500 px-3 py-2 rounded-lg text-xs font-bold text-white"
+                          >
+                            Guardar
+                          </button>
+                          <button
+                            type="button"
+                            onClick={cancelarEdicaoCategoria}
+                            className="bg-zinc-800 hover:bg-zinc-700 px-3 py-2 rounded-lg text-xs font-bold text-zinc-300"
+                          >
+                            Cancelar
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className={`inline-block text-[10px] uppercase font-bold px-2 py-1 rounded border ${getCorCategoria(cat)}`}>
+                              {nomeCategoria(cat)}
+                            </div>
+                            <div className="text-[9px] text-zinc-600 mt-1 font-mono">
+                              {cat}
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => iniciarEdicaoCategoria(cat)}
+                            className="shrink-0 bg-zinc-800 hover:bg-blue-600 px-3 py-2 rounded-lg text-xs font-bold text-zinc-300 hover:text-white transition-colors"
+                          >
+                            ✏️ Editar
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-orange-500/20 bg-orange-500/5 p-3 text-[10px] leading-relaxed text-zinc-400">
+                Ao renomear uma categoria, todos os produtos que usam essa categoria serão atualizados automaticamente.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Modal Criar/Editar Produto */}
       {modalAberto && (

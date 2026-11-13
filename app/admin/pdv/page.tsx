@@ -456,7 +456,7 @@ interface ItemCarrinho {
 
 
 
-type CategoriaFiltro = 'todos' | 'batatas' | 'adicionais' | 'sobremesas' | 'bebidas' | 'combos';
+type CategoriaFiltro = string;
 
 
 
@@ -1443,6 +1443,35 @@ export default function CaixaPDV() {
 
 
 
+  const categoriasPDV = Array.from(
+    new Set(
+      produtos
+        .map(prod => (prod.categoria || '').trim().toLowerCase())
+        .filter(Boolean)
+    )
+  ).sort((a, b) => a.localeCompare(b, 'pt'));
+
+  const nomeCategoriaPDV = (cat: string) => {
+    const mapa: Record<string, string> = {
+      batata: '🥔 Batatas',
+      adicional: '🥓 Adicionais',
+      extra: '🥓 Extras',
+      sobremesa: '🍫 Sobremesas',
+      brownie: '🍫 Brownies',
+      bebida: '🥤 Bebidas',
+      rosti: '🥔 Rösti',
+      'rösti': '🥔 Rösti',
+    };
+
+    if (mapa[cat]) return mapa[cat];
+
+    const nome = cat
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, letra => letra.toUpperCase());
+
+    return `📦 ${nome}`;
+  };
+
   const renderBotaoCombo = (combo: Combo) => (
 
     <button key={combo.id} onClick={() => iniciarMontagemCombo(combo)} className="bg-zinc-900 hover:bg-zinc-800 border border-orange-500/20 p-5 rounded-2xl text-left h-40 flex flex-col justify-between transition-all">
@@ -1757,23 +1786,24 @@ export default function CaixaPDV() {
             <div className="flex flex-wrap gap-2 bg-zinc-900/60 p-2 rounded-2xl border border-zinc-800/80">
 
               {[
-
-                { id: 'todos', label: 'Todos' }, 
-
-                { id: 'batatas', label: '🥔 Batatas' }, 
-
-                { id: 'adicionais', label: '🥓 Adicionais' }, 
-
-                { id: 'sobremesas', label: '🍫 Sobremesas' }, 
-
-                { id: 'bebidas', label: '🥤 Bebidas' }, 
-
+                { id: 'todos', label: 'Todos' },
+                ...categoriasPDV.map(cat => ({
+                  id: cat,
+                  label: nomeCategoriaPDV(cat)
+                })),
                 { id: 'combos', label: '🎁 Combos' }
-
               ].map((cat) => (
-
-                <button key={cat.id} onClick={() => setCategoriaAtiva(cat.id as CategoriaFiltro)} className={`px-5 py-2.5 rounded-xl text-sm font-medium transition-all ${categoriaAtiva === cat.id ? 'bg-orange-600 text-white shadow-lg' : 'text-zinc-400 hover:text-zinc-200'}`}>{cat.label}</button>
-
+                <button
+                  key={cat.id}
+                  onClick={() => setCategoriaAtiva(cat.id)}
+                  className={`px-5 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    categoriaAtiva === cat.id
+                      ? 'bg-orange-600 text-white shadow-lg'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  {cat.label}
+                </button>
               ))}
 
             </div>
@@ -1798,15 +1828,7 @@ export default function CaixaPDV() {
 
                     if (categoriaAtiva === 'todos') return true;
 
-                    if (categoriaAtiva === 'batatas') return prod.categoria === 'batata';
-
-                    if (categoriaAtiva === 'adicionais') return prod.categoria === 'adicional' || prod.categoria === 'extra';
-
-                    if (categoriaAtiva === 'sobremesas') return prod.categoria === 'brownie' || prod.categoria === 'sobremesa';
-
-                    if (categoriaAtiva === 'bebidas') return prod.categoria === 'bebida';
-
-                    return false;
+                    return prod.categoria === categoriaAtiva;
 
                   }).map((prod) => (
 
