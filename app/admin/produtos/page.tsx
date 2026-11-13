@@ -77,6 +77,8 @@ function ProdutosTab() {
   const [codigo, setCodigo] = useState('');
   const [nome, setNome] = useState('');
   const [categoria, setCategoria] = useState('batata');
+  const [criandoCategoria, setCriandoCategoria] = useState(false);
+  const [novaCategoria, setNovaCategoria] = useState('');
   const [precoCardapio, setPrecoCardapio] = useState('');
   const [precoWhatsapp, setPrecoWhatsapp] = useState('');
   const [precoGlovo, setPrecoGlovo] = useState('');
@@ -112,11 +114,50 @@ function ProdutosTab() {
     carregarProdutos();
   }, []);
 
+  const categoriasDisponiveis = Array.from(
+    new Set([
+      'batata',
+      'adicional',
+      'bebida',
+      'sobremesa',
+      'outro',
+      ...produtos
+        .map(prod => (prod.categoria || '').trim().toLowerCase())
+        .filter(Boolean),
+    ])
+  ).sort((a, b) => a.localeCompare(b, 'pt'));
+
+  const nomeCategoria = (valor: string) => {
+    const mapa: Record<string, string> = {
+      batata: 'Batata Principal',
+      adicional: 'Adicional / Extra',
+      bebida: 'Bebida',
+      sobremesa: 'Sobremesa / Brownie',
+      outro: 'Outro',
+    };
+    return mapa[valor] || valor.charAt(0).toUpperCase() + valor.slice(1);
+  };
+
+  const confirmarNovaCategoria = () => {
+    const valor = novaCategoria.trim().toLowerCase().replace(/\s+/g, '_');
+
+    if (!valor) {
+      alert('Escreva o nome da nova categoria.');
+      return;
+    }
+
+    setCategoria(valor);
+    setNovaCategoria('');
+    setCriandoCategoria(false);
+  };
+
   const abrirModalNovo = () => {
     setEditandoId(null);
     setCodigo('');
     setNome('');
     setCategoria('batata');
+    setCriandoCategoria(false);
+    setNovaCategoria('');
     setPrecoCardapio('');
     setPrecoWhatsapp('');
     setPrecoGlovo('');
@@ -131,6 +172,8 @@ function ProdutosTab() {
     setCodigo(prod.codigo || '');
     setNome(prod.nome || '');
     setCategoria(prod.categoria || 'batata');
+    setCriandoCategoria(false);
+    setNovaCategoria('');
     setPrecoCardapio(prod.preco_cardapio?.toString() || '');
     setPrecoWhatsapp(prod.preco_whatsapp?.toString() || '');
     setPrecoGlovo(prod.preco_glovo?.toString() || '');
@@ -184,7 +227,9 @@ function ProdutosTab() {
       case 'bebida': return 'bg-blue-500/10 text-blue-400 border-blue-500/20';
       case 'sobremesa':
       case 'brownie': return 'bg-amber-500/10 text-amber-400 border-amber-500/20';
-      default: return 'bg-zinc-500/10 text-zinc-400 border-zinc-500/20';
+      case 'rosti':
+      case 'rösti': return 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
+      default: return 'bg-violet-500/10 text-violet-400 border-violet-500/20';
     }
   };
 
@@ -327,13 +372,65 @@ function ProdutosTab() {
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-zinc-400 mb-1">CATEGORIA</label>
-                  <select value={categoria} onChange={e => setCategoria(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-orange-500 outline-none">
-                    <option value="batata">Batata Principal</option>
-                    <option value="adicional">Adicional / Extra</option>
-                    <option value="bebida">Bebida</option>
-                    <option value="sobremesa">Sobremesa / Brownie</option>
-                    <option value="outro">Outro</option>
-                  </select>
+
+                  {!criandoCategoria ? (
+                    <div className="space-y-2">
+                      <select
+                        value={categoria}
+                        onChange={e => setCategoria(e.target.value)}
+                        className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-white focus:border-orange-500 outline-none"
+                      >
+                        {categoriasDisponiveis.map(cat => (
+                          <option key={cat} value={cat}>
+                            {nomeCategoria(cat)}
+                          </option>
+                        ))}
+                      </select>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNovaCategoria('');
+                          setCriandoCategoria(true);
+                        }}
+                        className="w-full rounded-lg border border-orange-500/30 bg-orange-500/10 px-3 py-2 text-[10px] font-black uppercase tracking-wide text-orange-400 hover:bg-orange-500/20"
+                      >
+                        + Criar nova categoria
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <input
+                        type="text"
+                        value={novaCategoria}
+                        onChange={e => setNovaCategoria(e.target.value)}
+                        placeholder="Ex: Rösti, Molhos, Embalagens..."
+                        autoFocus
+                        className="w-full bg-zinc-950 border border-orange-500/50 rounded-xl px-4 py-2.5 text-sm text-white focus:border-orange-500 outline-none"
+                      />
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNovaCategoria('');
+                            setCriandoCategoria(false);
+                          }}
+                          className="rounded-lg bg-zinc-800 px-3 py-2 text-[10px] font-bold text-zinc-300 hover:bg-zinc-700"
+                        >
+                          Cancelar
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={confirmarNovaCategoria}
+                          className="rounded-lg bg-orange-600 px-3 py-2 text-[10px] font-black text-white hover:bg-orange-500"
+                        >
+                          Usar Categoria
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
