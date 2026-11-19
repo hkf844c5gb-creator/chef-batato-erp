@@ -1444,7 +1444,11 @@ export default function GestaoEstoqueProdutos() {
 
 
 
-    if (filtroCategoria === 'batatas') return cat.includes('batata');
+    if (filtroCategoria === 'batatas') return cat.includes('batata') && !cat.includes('rosti') && !cat.includes('rösti');
+
+
+
+    if (filtroCategoria === 'rosti') return cat.includes('rosti') || cat.includes('rösti');
 
 
 
@@ -1649,6 +1653,10 @@ export default function GestaoEstoqueProdutos() {
 
 
             <button onClick={() => setFiltroCategoria('batatas')} className={`text-left px-4 py-3 rounded-xl text-xs font-bold transition-all ${filtroCategoria === 'batatas' ? 'bg-orange-600 text-white shadow-md' : 'bg-zinc-950 text-zinc-400 hover:bg-zinc-800'}`}>🥔 Batatas (Recheios)</button>
+
+
+
+            <button onClick={() => setFiltroCategoria('rosti')} className={`text-left px-4 py-3 rounded-xl text-xs font-bold transition-all ${filtroCategoria === 'rosti' ? 'bg-orange-600 text-white shadow-md' : 'bg-zinc-950 text-emerald-400 hover:bg-zinc-800'}`}>🥔 Batatô Rösti</button>
 
 
 
@@ -1886,7 +1894,15 @@ export default function GestaoEstoqueProdutos() {
 
 
 
-                          <span className="text-[8px] font-bold uppercase tracking-widest text-orange-400 bg-orange-500/10 px-2 py-0.5 rounded">{item.categoria}</span>
+                          <span className={`text-[8px] font-bold uppercase tracking-widest px-2 py-0.5 rounded ${
+                            (item.categoria || '').toLowerCase().includes('rosti') || (item.categoria || '').toLowerCase().includes('rösti')
+                              ? 'text-emerald-400 bg-emerald-500/10'
+                              : 'text-orange-400 bg-orange-500/10'
+                          }`}>
+                            {(item.categoria || '').toLowerCase().includes('rosti') || (item.categoria || '').toLowerCase().includes('rösti')
+                              ? 'Batatô Rösti'
+                              : item.categoria}
+                          </span>
 
 
 
@@ -2209,6 +2225,10 @@ export default function GestaoEstoqueProdutos() {
 
 
 
+                  <option value="rosti">Batatô Rösti</option>
+
+
+
                   <option value="adicional">Adicional Extra</option>
 
 
@@ -2378,6 +2398,10 @@ export default function GestaoEstoqueProdutos() {
 
 
                   <option value="batata">Batata (Recheio)</option>
+
+
+
+                  <option value="rosti">Batatô Rösti</option>
 
 
 
